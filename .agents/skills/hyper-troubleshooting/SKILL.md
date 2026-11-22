@@ -40,7 +40,7 @@ If the user selects Option C, ask a brief follow-up to confirm whether it is the
 **Fix:**
 1. Halt the Builder Agent.
 2. Ensure `.agentignore` contains `spec/archive/`.
-3. Archive the finished drafts: `python3 .agents/scripts/archive_specs.py --paths <finished files in spec/active/>`.
+3. Archive the finished drafts: `python3 .agents/scripts/archive_specs.py --paths <finished files in spec/active/> --label <mission>`.
 4. Open a completely new agent chat and restart the Builder prompt pointing strictly to the slice `SPEC.md` (or legacy flat MiniPRD) being built.
 
 #### Issue 2: Hypergraph Desynchronization

@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-22
+
+### Added
+- HACF's OpenRig team spec, under `openrig/hacf/`: a seven-seat team (lead, architect, red team,
+  resolve, builder, auditor, scribe) that runs the HACF pipeline one stage per seat.
+- `HACF-install.sh --rig[=DEST]` copies that spec to `openrig/hacf/` in your project (or to DEST)
+  and renames its rig `<slug>-hacf`. It runs only when you ask: an interactive install asks once
+  (default No), and `-y` never copies without the flag. It never writes over an existing path.
+  The copy is yours: the manifest records it (`rig_spec`), an upgrade never refreshes it and
+  uninstall leaves it in place.
+- `openrig/hacf/bin/brief.sh`, which writes a stage brief from the team's run record.
+- `docs/OpenRig-Team.md`: starting a per-project team, what a recorded launch did, the files a
+  launch leaves in the project root, and recovery with `rig up <name> --existing`.
+
+### Changed
+- HACF accepts OpenRig 0.6.13 and 0.7.16: with either one on PATH, HACF calls `rig` (for example
+  `rig proof add`). Another 0.6.x or 0.7.x is not called; HACF writes its files itself and prints a
+  warning. Both versions passed HACF's live contract test on a real rig (0.7.16 installed, 0.6.13
+  run through `npx`), after a recorded comparison of the two (mission R18d).
+- New missions' `mission.yaml` now records `metadata.name`, as OpenRig 0.7.16 writes. Upgrading
+  never rewrites an existing mission.yaml: missions created before 0.6.1 keep their file as it is,
+  without `metadata.name`, and HACF never adds it.
+- With OpenRig 0.7.16, `rig scope slice ls --state shipped` also lists HACF's audited slices
+  (`status: done`); 0.6.13 lists them only under `all`. HACF does not read this listing.
+
+### Fixed
+- An install that selects any IDE now also installs `AGENTS.md` (HACF block only; your own text is
+  never changed), because every IDE's instructions point at it. A plain upgrade adds it to an
+  existing install.
+- The installed `CLAUDE.md`, `AGENTS.md` and `GEMINI.md` now point at HACF's published README
+  instead of a local `README.md` that was never installed. A plain upgrade refreshes the HACF
+  block and leaves your own text alone.
+- The resolve and SOP skills now name `archive_specs.py --paths … --label <mission>`, the
+  documented form. The troubleshooting skill's archive step now passes `--label` too.
+- The pre-commit hook now honours your ruff config's `exclude` and `extend-exclude` for staged files
+  (`--force-exclude`), and `git config hacf.lint false` skips its lint step.
+
+### Known issues
+- A saved v0.5.x `HACF-uninstall.sh` kept outside the project root deletes
+  `<project>/openrig/hacf/` when run. The installer refuses `--rig` while one is at
+  `./HACF-uninstall.sh`, but it cannot see a copy saved elsewhere. Delete such copies; never run
+  them.
+- A launched team was checked only with the shipped `permission_policy: builtin:yolo` and
+  `non_interruptive: true` on OpenRig 0.7.16. The default permission mode is untested.
+- `rig down --delete` leaves `.claude/plugins/openrig-core/` and `.claude/settings.local.json` in
+  the project root (see `docs/OpenRig-Team.md`).
+- A nested ruff config inside a root-excluded tree is still linted by the pre-commit hook; give it
+  its own exclude, or set hacf.lint false (see `docs/Troubleshooting.md`).
+
 ## [0.6.0] - 2026-11-21
 
 ### Upgrade warnings (read first)

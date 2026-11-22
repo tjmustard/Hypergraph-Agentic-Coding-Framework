@@ -38,7 +38,9 @@ Semantics:
   `dirty`) and otherwise changes only the fields it is given, so a repeat is a no-op.
   `--id` may come from `--from-spec` instead: a legacy MiniPRD's `**Hypergraph Node ID:**` and
   `**Parent Node:**` lines (`none` means no parent), or a v6 SPEC.md's frontmatter `node_id`,
-  `parent` and `hacf_touches` (as `files`). `--files` replaces the node's `files`;
+  `parent` and `hacf_touches`, which are merged into `files`: each exact path the node lacks
+  is appended, a glob touch (`*`, `?` or `[`) is skipped and named on stderr, and no file is
+  removed; `--files` with `--from-spec` exits 2. `--files` replaces the node's `files`;
   `--depends-on` and `--member-of` add the ids the edge list lacks; `--spec-refs` adds the
   dot-IDs `spec_refs` lacks, keeping order, and is the only writer of `spec_refs` (R28).
   `--parent X` writes `member_of: [X]` for a Layer or System X, and `implements: [X]` only for
@@ -123,6 +125,9 @@ CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")  # activeContext -> ac
 DOT_ID_RE = re.compile(r"^([A-Z]{2,3})\.(\d+(?:\.\d+){1,4})$")  # schemas.md#spec-frontmatter
 DESCRIPTION_MAX = 2000
 GLOB_CHARS = frozenset("*?[]")
+# A slice touch holding one of these is a glob, which ensure-node --from-spec never stores (R11).
+TOUCH_GLOB_CHARS = frozenset("*?[")
+FILES_AND_FROM_SPEC = "--files replaces files and --from-spec merges them; pass one"
 LEGACY_ID_RE = re.compile(r"^\s*\*\*Hypergraph Node ID:\*\*[ \t]*(.*?)\s*$", re.MULTILINE)
 LEGACY_PARENT_RE = re.compile(r"^\s*\*\*Parent Node:\*\*[ \t]*(.*?)\s*$", re.MULTILINE)
 # repair-text: a `description:` key line, a block-scalar header line, and the characters that
@@ -1076,6 +1081,17 @@ def _require_node(data: dict, node_id: str) -> dict:
     return node
 
 
+def _merge_files(node: dict, add_files: list[str]) -> None:
+    """Append each path of add_files the node's files lack, in order; never remove one."""
+    current = node.get("files") or []
+    if not isinstance(current, list):
+        raise Refused(f"refused: node {node.get('id')} has files that are not a list; fix it")
+    merged = list(current)
+    merged.extend(p for p in _dedupe(add_files) if p not in merged)
+    if merged != current or "files" not in node:
+        node["files"] = merged
+
+
 def _apply_ensure_node(data: dict, args: dict, path: Path) -> str:
     node_id = args["id"]
     if node_id in removed_ids(data):
@@ -1091,6 +1107,8 @@ def _apply_ensure_node(data: dict, args: dict, path: Path) -> str:
             node["associated_file"] = args["associated_file"]
         if args.get("files") is not None:
             node["files"] = list(args["files"])
+        elif args.get("add_files"):
+            node["files"] = _dedupe(args["add_files"])
         node["description"] = args.get("description") or ""
         node["inputs"] = []
         node["outputs"] = []
@@ -1104,6 +1122,8 @@ def _apply_ensure_node(data: dict, args: dict, path: Path) -> str:
                 node[key] = args[key]
         if args.get("files") is not None:
             node["files"] = list(args["files"])
+        elif args.get("add_files"):
+            _merge_files(node, args["add_files"])
     parent_id = args.get("parent")
     if parent_id:
         parent = index.get(parent_id)
@@ -1332,6 +1352,18 @@ def normalize_args(op: str, args: dict) -> dict:
             )
         if args.get("description") is not None and not isinstance(args["description"], str):
             raise UsageError("the description must be a string")
+        add_files = args.get("add_files")
+        if add_files is not None:
+            if args.get("files") is not None:
+                raise UsageError(FILES_AND_FROM_SPEC)
+            if not isinstance(add_files, list):
+                raise UsageError("add_files must be a list of repo-relative paths")
+            for item in add_files:
+                problem = glob_problem(item)
+                if problem is None and TOUCH_GLOB_CHARS & set(item):
+                    problem = "is a glob; only exact paths are merged"
+                if problem:
+                    raise UsageError(f"add_files: {item!r} {problem}")
         keys = (
             "id",
             "dimension",
@@ -1339,6 +1371,7 @@ def normalize_args(op: str, args: dict) -> dict:
             "member_of",
             "depends_on",
             "files",
+            "add_files",
             "associated_file",
             "description",
             "spec_refs",
@@ -1387,9 +1420,11 @@ def _clean_header_value(value: str) -> str | None:
 def read_spec_node(path: Path) -> dict:
     """Return {id, parent, files} from a legacy MiniPRD header or a v6 SPEC.md frontmatter.
 
-    A v6 frontmatter gives `node_id`, `parent` and `hacf_touches` (as files); otherwise the
-    `**Hypergraph Node ID:**` and `**Parent Node:**` lines give id and parent (`none` = no
-    parent). Edges are never inferred from prose.
+    A v6 frontmatter gives `node_id`, `parent` and `hacf_touches` (as files, which
+    ensure-node merges into the node's `files`: exact paths appended when missing, glob
+    touches skipped and named on stderr); otherwise the `**Hypergraph Node ID:**` and
+    `**Parent Node:**` lines give id and parent (`none` = no parent). Edges are never
+    inferred from prose.
     """
     try:
         text = Path(path).read_text(encoding="utf-8")
@@ -2152,7 +2187,7 @@ def cmd_ensure_node(ns: argparse.Namespace) -> int:
     }
     if ns.from_spec:
         spec = read_spec_node(Path(ns.from_spec))
-        for key in ("id", "parent", "files"):
+        for key in ("id", "parent"):
             if spec[key] is None:
                 continue
             if args[key] is not None and args[key] != spec[key]:
@@ -2160,6 +2195,19 @@ def cmd_ensure_node(ns: argparse.Namespace) -> int:
                     f"--from-spec gives {key} {spec[key]!r}, but the flag gives {args[key]!r}"
                 )
             args[key] = spec[key]
+        if spec["files"] is not None:
+            if args["files"] is not None:
+                raise UsageError(FILES_AND_FROM_SPEC)
+            # A slice touch is merged only as an exact path; a glob would claim other nodes' files.
+            args["add_files"] = []
+            for touch in spec["files"]:
+                if TOUCH_GLOB_CHARS & set(touch):
+                    print(
+                        f"ensure-node: skipped glob touch {touch}; set globs with --files",
+                        file=sys.stderr,
+                    )
+                else:
+                    args["add_files"].append(touch)
     if not args["id"]:
         raise UsageError("ensure-node needs --id (or --from-spec)")
     if ns.description_file:

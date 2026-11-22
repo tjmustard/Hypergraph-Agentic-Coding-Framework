@@ -11,6 +11,7 @@ import os
 import pty
 import re
 import select
+import signal
 import subprocess
 import sys
 import time
@@ -76,11 +77,13 @@ def test_fresh_install_noninteractive(project: Path, run_install) -> None:
     assert (project / ".cursor").is_dir()
     assert (project / ".cursorignore").is_file()
     for absent in (
-        ".windsurf", ".clinerules", ".roo", "GEMINI.md", "AGENTS.md",
+        ".windsurf", ".clinerules", ".roo", "GEMINI.md",
         ".rooignore", ".codeiumignore", ".geminiignore", ".mcp.json",
         ".claude/settings.local.json",
     ):  # fmt: skip
         assert not (project / absent).exists(), absent
+    # K7 (R13): any IDE selection also installs AGENTS.md, which CLAUDE.md points at.
+    assert b"<!-- BEGIN HACF MANAGED BLOCK: hacf -->" in (project / "AGENTS.md").read_bytes()
     settings = json.loads((project / ".claude" / "settings.json").read_text(encoding="utf-8"))
     assert "statusLine" not in settings
     hacf_yml = yaml.safe_load((project / ".agents/local/hacf.yml").read_text(encoding="utf-8"))
@@ -236,6 +239,7 @@ def test_consent_prompt_shows_url_and_commit(project: Path, scratch: Path, upstr
             os._exit(127)
     output = b""
     answered = False
+    rig_answered = False
     deadline = time.monotonic() + 240
     try:
         while time.monotonic() < deadline:
@@ -249,11 +253,17 @@ def test_consent_prompt_shows_url_and_commit(project: Path, scratch: Path, upstr
             if not chunk:
                 break
             output += chunk
+            if not rig_answered and b"for a per-project team? [y/N]" in output:
+                os.write(fd, b"n\n")  # slice 7 Task 4: the --rig question comes first
+                rig_answered = True
             if not answered and b"Proceed? [y/N]" in output:
                 os.write(fd, b"n\n")
                 answered = True
     finally:
-        _, status = os.waitpid(pid, 0)
+        done, status = os.waitpid(pid, os.WNOHANG)
+        if done == 0:  # still running past the deadline: kill it so the test fails, never hangs
+            os.kill(pid, signal.SIGKILL)
+            _, status = os.waitpid(pid, 0)
         os.close(fd)
     text = output.decode("utf-8", "replace")
     assert answered, text

@@ -1,8 +1,9 @@
-"""Live contract test: HACF's repo-root workspace against the real rig 0.6.13 (S02 CLI spike).
+"""Live contract test: HACF's repo-root workspace against a real accepted rig (S02 CLI spike).
 
-Opt-in only: markers `live` and `openrig`, and it runs only when HACF_LIVE_OPENRIG=1, which the
-user sets after consenting to download and run `@openrig/cli@0.6.13` (or with `rig` already on
-PATH):
+The accepted versions are hyper_openrig.ACCEPTED_RIG_VERSIONS (rig 0.6.13 and 0.7.16); a version
+joins the set only after this test passes on it. Opt-in only: markers `live` and `openrig`, and it
+runs only when HACF_LIVE_OPENRIG=1, which the user sets after consenting to download and run
+`@openrig/cli@<RIG_VERSION>` (or with an accepted `rig` already on PATH):
 
     HACF_LIVE_OPENRIG=1 uv run --locked pytest -m 'live and openrig' \
         dev/tests/contract/test_openrig_live.py
@@ -146,11 +147,11 @@ def _scaffold(root: Path, mission: str, mission_id: str, today: str) -> Path:
     _write(
         mission_dir / "SPEC.md",
         f"---\nid: {mission_id}\nmission: {mission}\nstage: wip\ncreated: '{today}'\n"
-        "intent: 'Verify the repo-root workspace against rig 0.6.13'\ndepends_on: []\n"
+        "intent: 'Verify the repo-root workspace against an accepted rig'\ndepends_on: []\n"
         "hacf_schema: 1\nhacf_type: SuperPRD\nhacf_status: compiled\nlore_refs: [ADR-0001]\n"
         "---\n\n# SuperPRD: OpenRig spike\n\n## Intent\n\nVerify the repo-root workspace.\n",
     )
-    _write(mission_dir / "mission.yaml", hyper_openrig.render_mission_yaml())
+    _write(mission_dir / "mission.yaml", hyper_openrig.render_mission_yaml(mission))
     _write(
         mission_dir / "PROGRESS.md",
         f"# Progress - {mission}\n\n## Acceptance\n\n- [ ] Scope complete\n"
@@ -260,15 +261,18 @@ def _run_spike(spike: Spike, repo: GitRepo, tmp_path: Path, today: str) -> str |
 
 
 def _version_and_integrity(spike: Spike, repo: GitRepo, tmp_path: Path) -> str | None:
-    """`rig --version` must be the pinned 0.6.13; record the package's npm integrity (R24.8).
+    """`rig --version` must be an accepted version; record that package's npm integrity (R24.8).
 
     `npm view` is not a rig call, so it runs outside the repository with no git check.
     """
     argv = [*spike.prefix, "--version"]
     proc = spike.call("rig-version", argv, cwd=repo.path, repo=repo, timeout=FIRST_CALL_TIMEOUT)
-    spike.check("rig_version_pinned", hyper_openrig.parse_version(proc.stdout) == (0, 6, 13))
+    found = hyper_openrig.parse_version(proc.stdout)
+    accepted = [hyper_openrig.parse_version(v) for v in hyper_openrig.ACCEPTED_RIG_VERSIONS]
+    spike.check("rig_version_pinned", found in accepted)
     spike.check("rig_version_git_clean", _porcelain(repo) == [])
-    package = f"{hyper_openrig.RIG_PACKAGE}@{hyper_openrig.RIG_VERSION}"
+    version = ".".join(map(str, found)) if found else hyper_openrig.RIG_VERSION
+    package = f"{hyper_openrig.RIG_PACKAGE}@{version}"
     proc = spike.call(
         "npm-view-integrity", ["npm", "view", package, "dist.integrity"], cwd=tmp_path
     )

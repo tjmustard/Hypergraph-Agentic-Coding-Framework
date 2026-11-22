@@ -424,9 +424,21 @@ def test_progress_cas_refuses_concurrent_change(
     }
 
 
-def test_mission_status_splice_and_writer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The R29 splice edits only the metadata.status scalar; the writer is compare-and-swap."""
-    rendered = hyper_openrig.render_mission_yaml()
+@pytest.mark.parametrize("shape", ["0.6.13", "0.7.16"])
+def test_mission_status_splice_and_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str
+) -> None:
+    """The R29 splice edits only the metadata.status scalar; the writer is compare-and-swap.
+
+    Run on both mission.yaml shapes (R21a): rig 0.6.13's unnamed template, which every mission
+    created before 0.6.1 carries, and the named shape HACF and rig 0.7.16 write now.
+    """
+    rendered = (
+        (FIXTURES_DIR / "openrig-0.6.13" / "mission.yaml").read_text(encoding="utf-8")
+        if shape == "0.6.13"
+        else hyper_openrig.render_mission_yaml("m")
+    )
+    assert ('  name: "m"\n' in rendered) == (shape == "0.7.16")
     active = hyper_openrig.splice_mission_status(rendered, "active")
     assert active == rendered.replace("  status: planned\n", "  status: active\n", 1)
     assert hyper_openrig.splice_mission_status(active, "active") == active
@@ -601,7 +613,7 @@ def test_proof_c1_closed_sets(spec_repo: GitRepo, tmp_path: Path) -> None:
     assert proc.returncode == 0 and proc.stdout.strip() == hyper_spec.LEGACY_PROOF_NOTICE
     assert snapshot(root) == before
 
-    # A slice without PROOF.md gets one; the pinned rig 0.6.13 is delegated to, with --name.
+    # A slice without PROOF.md gets one; an accepted rig (0.6.13 here) is delegated to, with --name.
     proof_md.unlink()
     bin_dir, log = tmp_path / "bin", tmp_path / "rig.log"
     bin_dir.mkdir()

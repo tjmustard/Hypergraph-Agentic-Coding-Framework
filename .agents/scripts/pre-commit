@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # HACF pre-commit hook — block forbidden internal paths, then lint (installed by HACF-install.sh)
+# Ruff gets --force-exclude, so a staged file the project's ruff config excludes is not linted.
+# `git config hacf.lint false` skips the lint step; the forbidden-path block still runs.
 set -euo pipefail
 
 # --- Block internal/forbidden files (agent_safeguards_setup PRD) ---
@@ -14,6 +16,12 @@ for file in $staged_files; do
         exit 1
     fi
 done
+
+# --- Lint switch: `git config hacf.lint false` skips the lint step (unset or any other value: on) ---
+if [[ $(git config --get hacf.lint </dev/null || true) == false ]]; then
+  echo "⚠️  lint skipped (git config hacf.lint=false)"
+  exit 0
+fi
 
 # --- Lint check: only the staged *.py files (added, copied or modified) ---
 py_files=()
@@ -43,7 +51,7 @@ echo "🔍  ruff lint (${#py_files[@]} staged file(s))... using ${ruff[*]}"
 
 # ruff exits 1 for findings; any other non-zero exit means ruff itself could not run.
 rc=0
-"${ruff[@]}" check -- "${py_files[@]}" || rc=$?
+"${ruff[@]}" check --force-exclude -- "${py_files[@]}" || rc=$?
 if [[ $rc -eq 1 ]]; then
   echo "❌  Lint failed. Run: ${ruff[*]} check -- <staged files>"; exit 1
 elif [[ $rc -ne 0 ]]; then
@@ -51,7 +59,7 @@ elif [[ $rc -ne 0 ]]; then
 fi
 
 rc=0
-"${ruff[@]}" format --check -- "${py_files[@]}" || rc=$?
+"${ruff[@]}" format --check --force-exclude -- "${py_files[@]}" || rc=$?
 if [[ $rc -eq 1 ]]; then
   echo "❌  Format check failed. Run: ${ruff[*]} format -- <staged files>"; exit 1
 elif [[ $rc -ne 0 ]]; then

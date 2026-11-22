@@ -590,7 +590,7 @@ def test_historical_mission_status_complete(tmp_path: Path) -> None:
     try:
         import hyper_openrig
 
-        rendered = hyper_openrig.render_mission_yaml()
+        rendered = hyper_openrig.render_mission_yaml("new")
     finally:
         sys.path.pop(0)
     new_yaml = (project / "missions/new/mission.yaml").read_text(encoding="utf-8")

@@ -38,11 +38,12 @@ Semantics:
 - project update rewrites only an hacf root SPEC.md: `hacf_updated`, `intent` (shared, so
   compare-and-swap) and, with --body-file, the body, which keeps the regenerated missions index.
 - mission create writes SPEC.md (`hacf_type: SuperPRD`, `hacf_status: compiled`), mission.yaml
-  (planned, hyper_openrig's bytes), PROGRESS.md and NOTES.md, and regenerates the root missions
-  index when the root SPEC.md is HACF's. The dot-ID is <PFX>.X.Y[.Z] for release-X.Y[.Z], else
-  <PFX>.99.0.<n>; PFX is `.agents/local/hacf.yml` openrig.id_prefix, default OPR. --from-draft
-  reads the draft's frontmatter `intent` and `lore_refs` and records `hacf_source.draft`. A rerun
-  with the same inputs is a no-op; an existing mission with other content exits 5.
+  (planned, named, hyper_openrig's bytes), PROGRESS.md and NOTES.md, and regenerates the root
+  missions index when the root SPEC.md is HACF's. The dot-ID is <PFX>.X.Y[.Z] for
+  release-X.Y[.Z], else <PFX>.99.0.<n>; PFX is `.agents/local/hacf.yml` openrig.id_prefix,
+  default OPR. --from-draft reads the draft's frontmatter `intent` and `lore_refs` and records
+  `hacf_source.draft`. A rerun with the same inputs is a no-op; an existing mission with other
+  content exits 5.
 - slice create writes SPEC.md (`hacf_type: MiniPRD`, `hacf_status: compiled`, id
   <mission-id>.<NN>), slice.yaml (hyper_openrig's bytes), PROGRESS.md and PROOF.md, appends the
   composition entry with hyper_openrig.add_slice_to_mission (orders 10, 20, ...) and regenerates
@@ -1091,7 +1092,9 @@ def plan_mission(
     )
     return [
         Write(mission_dir / "SPEC.md", None, spec),
-        Write(mission_dir / "mission.yaml", None, hyper_openrig.render_mission_yaml()),
+        Write(
+            mission_dir / "mission.yaml", None, hyper_openrig.render_mission_yaml(mission_dir.name)
+        ),
         Write(mission_dir / "PROGRESS.md", None, progress),
         Write(mission_dir / "NOTES.md", None, notes),
     ]

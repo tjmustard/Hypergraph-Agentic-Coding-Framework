@@ -1157,6 +1157,41 @@ delete_files() {
   echo ""
 }
 
+# report_rig_specs: one report line per manifest rig_spec entry (R4). A copy made by
+# HACF-install.sh --rig is the user's: it is not in `files`, and it is never deleted.
+report_rig_specs() {
+  [ -f "$MANIFEST_REL" ] || return 0
+  local kind rel sha there
+  while IFS=$'\t' read -r kind rel sha there; do
+    case "$kind" in
+      inside)
+        if [ "$there" = "1" ]; then
+          report "rig spec copy at $rel (from $sha) left in place; it is yours"
+        else
+          report "rig spec copy recorded at $rel (from $sha) but no longer there"
+        fi ;;
+      outside) report "a rig spec was copied outside this project at $sha; it is yours" ;;
+    esac
+  done < <(python3 -c '
+import json, os, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        data = json.load(handle)
+except (OSError, ValueError):
+    data = {}
+entries = data.get("rig_spec") if isinstance(data, dict) else None
+for entry in entries if isinstance(entries, list) else []:
+    if not isinstance(entry, dict) or not isinstance(entry.get("commit"), str):
+        continue
+    sha = "".join(c for c in entry["commit"] if c.isalnum())
+    rel = entry.get("path")
+    if entry.get("outside_project") is True:
+        print(f"outside\t-\t{sha}\t-")
+    elif isinstance(rel, str) and rel.isprintable() and "\t" not in rel:
+        print(f"inside\t{rel}\t{sha}\t{int(os.path.isdir(rel))}")
+' "$MANIFEST_REL" </dev/null 2>/dev/null || true)
+}
+
 remove_manifest() {
   [ "$MODE" = "manifest" ] || return 0
   if $DRY_RUN; then
@@ -1239,6 +1274,7 @@ main() {
   remove_merge_drivers           # D2 (R67)
   edit_settings_and_mcp          # Tasks 17-19
   delete_files                   # Task 20
+  report_rig_specs               # R4: a --rig copy is reported, never deleted
   remove_manifest
   remove_self                    # R64: the project's own copy, last
 

@@ -218,3 +218,104 @@ def test_pre_commit_reports_ruff_failure(tmp_git_repo, shims):
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert "ruff could not run (exit 2)" in proc.stdout
     assert "Lint failed" not in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# OPR.0.6.1.8 (E4, US-016): the project's ruff exclusions and the hacf.lint switch
+# ---------------------------------------------------------------------------
+
+EXCLUDING_PYPROJECT = '[tool.ruff]\nextend-exclude = ["docs/prd"]\n'  # no force-exclude
+LINT_SKIPPED = "⚠️  lint skipped (git config hacf.lint=false)"
+
+
+@pytest.fixture
+def excluding_repo(tmp_git_repo):
+    """Return tmp_git_repo with a root ruff config excluding docs/prd, and a .venv/bin/ruff."""
+    tmp_git_repo.write("pyproject.toml", EXCLUDING_PYPROJECT)
+    tmp_git_repo.commit("add the ruff config", "pyproject.toml")
+    add_venv_ruff(tmp_git_repo)
+    return tmp_git_repo
+
+
+def stage(repo, rel, text):
+    """Write rel in repo and stage it."""
+    repo.write(rel, text)
+    repo.git("add", rel)
+
+
+def test_pre_commit_honours_extend_exclude(excluding_repo):
+    """(a) A staged F401 file under an extend-excluded dir passes; one under src/ fails."""
+    stage(excluding_repo, "docs/prd/bad.py", LINT_ERROR)
+    proc = run_hook(excluding_repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "Lint failed" not in proc.stdout
+
+    stage(excluding_repo, "src/bad.py", LINT_ERROR)
+    proc = run_hook(excluding_repo)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "Lint failed" in proc.stdout
+    assert "src/bad.py" in proc.stdout
+    assert "docs/prd/bad.py" not in proc.stdout
+
+
+def test_pre_commit_format_check_honours_extend_exclude(excluding_repo):
+    """(b) A staged format-only violation under an extend-excluded dir passes."""
+    stage(excluding_repo, "docs/prd/ugly.py", "VALUE = {'a':1}\n")
+    proc = run_hook(excluding_repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "Format check failed" not in proc.stdout
+
+
+def test_pre_commit_lint_switch_off(tmp_git_repo, shims):
+    """(c) hacf.lint=false skips ruff with one line; spec/process/ is still blocked."""
+    shim_dir, log = shims
+    ruff_shim = tmp_git_repo.path / ".venv" / "bin" / "ruff"
+    write_script(ruff_shim, f'echo "ruff $*" >> "{log}"\nexit 1\n')
+    tmp_git_repo.git("config", "hacf.lint", "false")
+    stage(tmp_git_repo, "bad.py", LINT_ERROR)
+    proc = run_hook(tmp_git_repo, PATH=shim_path(shim_dir))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert proc.stdout.splitlines() == [LINT_SKIPPED]
+    assert log.read_text(encoding="utf-8") == ""
+
+    stage(tmp_git_repo, "spec/process/x.md", "# Process notes\n")
+    proc = run_hook(tmp_git_repo, PATH=shim_path(shim_dir))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "COMMIT BLOCKED" in proc.stdout
+    assert LINT_SKIPPED not in proc.stdout
+    assert log.read_text(encoding="utf-8") == ""
+
+
+@pytest.mark.parametrize("value", [None, "true", "no", "0"])
+def test_pre_commit_lint_switch_on(lint_repo, value):
+    """(d) hacf.lint unset, true or any value other than false keeps the lint on."""
+    if value is not None:
+        lint_repo.git("config", "hacf.lint", value)
+    stage(lint_repo, "bad.py", LINT_ERROR)
+    proc = run_hook(lint_repo)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "Lint failed" in proc.stdout
+    assert LINT_SKIPPED not in proc.stdout
+
+
+def test_pre_commit_nested_config_with_own_exclude(excluding_repo):
+    """(e) Task 1 variant D: a nested config with exclude = ["*"] is excluded (`ruff check .`)."""
+    excluding_repo.write("docs/prd/ref/pyproject.toml", "[tool.ruff]\nline-length = 88\n")
+    excluding_repo.write("docs/prd/ref/.ruff.toml", 'exclude = ["*"]\n')
+    stage(excluding_repo, "docs/prd/ref/bad.py", LINT_ERROR)
+    proc = run_hook(excluding_repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "Lint failed" not in proc.stdout
+
+
+def test_pre_commit_known_limit_k11_nested_config_is_linted(excluding_repo):
+    """(e) Task 1 variant B, known limit K11 (R19): a bare nested ruff config is still linted.
+
+    `ruff check .` prunes docs/prd, but for an explicit path ruff takes the nested config's
+    (empty) exclusions. If this starts passing, K11 is closed: update the CHANGELOG known issue.
+    """
+    excluding_repo.write("docs/prd/ref/pyproject.toml", "[tool.ruff]\nline-length = 88\n")
+    stage(excluding_repo, "docs/prd/ref/bad.py", LINT_ERROR)
+    proc = run_hook(excluding_repo)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "docs/prd/ref/bad.py" in proc.stdout

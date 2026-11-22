@@ -38,7 +38,8 @@ REQUIRED = {
         "hyper_spec.py lint --mission",
         "hyper_lore.py propose --type decision",
         "at most 5 MiniPRDs or slices per response",
-        "archive_specs.py <Feature_Name>",
+        "archive_specs.py --paths spec/active/Draft_PRD.md spec/active/RedTeam_Report.md "
+        "--label <mission>",
         "WARNING: foreign root item",
         "spec/compiled/SuperPRD_<Feature>.md",
     ),

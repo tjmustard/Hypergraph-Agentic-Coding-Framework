@@ -233,7 +233,7 @@ def _write_missions(root: Path, state: str) -> None:
         return
     mission = missions / "release-1.0"
     mission.mkdir()
-    manifest = hyper_openrig.render_mission_yaml()
+    manifest = hyper_openrig.render_mission_yaml("release-1.0")
     if state == "broken":
         manifest = manifest.replace("slices: []", "slices:\n    - ref: slices/gone/slice.yaml")
     (mission / "mission.yaml").write_text(manifest, encoding="utf-8")
@@ -422,7 +422,7 @@ def test_mission_create_tree_idempotent(tmp_git_repo: GitRepo) -> None:
     assert spec["intent"] == "Ship HACF v0.6.0." and spec["hacf_source"] is None
     assert re.fullmatch(DATE, spec["created"])
     manifest = (mission / "mission.yaml").read_text()
-    assert manifest == hyper_openrig.render_mission_yaml()
+    assert manifest == hyper_openrig.render_mission_yaml("release-0.6.0")
     assert yaml.safe_load(manifest)["metadata"]["status"] == "planned"
     progress = (mission / "PROGRESS.md").read_text()
     assert progress.startswith("# Progress - release-0.6.0\n")

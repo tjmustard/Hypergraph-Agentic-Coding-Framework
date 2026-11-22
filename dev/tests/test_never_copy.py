@@ -27,6 +27,7 @@ NEVER_COPY_PATHS = (
     "missions/release-9.9.9/SPEC.md",
     "exhaust/run.log",
     ".openrig/state.json",
+    "openrig/hacf/rig.yaml",
     "spec/compiled/architecture.yml",
     "tests/fixtures/upstream.txt",
     "dev/tests/upstream.py",
@@ -65,7 +66,7 @@ MAY_EXIST = {
 }
 EXPECTED_ARRAY = (
     "SPEC.md project.yaml workspace.yaml lore_hypergraph.yml .gitattributes lore/ missions/ "
-    "exhaust/ .openrig/ spec/ tests/ dev/ PRDs/ docs/ .agents/local/ .agents/state/ "
+    "exhaust/ .openrig/ openrig/ spec/ tests/ dev/ PRDs/ docs/ .agents/local/ .agents/state/ "
     ".agents/.backup/ .agents/logs/ .agents/memory/ .claude/settings*.json .mcp.json "
     ".cursor/mcp.json .roo/mcp.json .gitignore CHANGELOG.md README.md CITATION.cff "
     "pyproject.toml uv.lock requirements.txt .agent"

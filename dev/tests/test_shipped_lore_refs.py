@@ -30,6 +30,7 @@ SHIPPED_ROOTS = (
     ".roo",
     ".agentignore",
     "HACF-uninstall.sh",
+    "openrig/hacf",
 )
 
 # (file, substring of the line). hyper-grill-docs illustrates a *user's* lore tree with two

@@ -111,10 +111,13 @@ bash HACF-install.sh --dry-run               # print every write, merge and down
 | `--branch=NAME` | Upstream branch (default `main`) |
 | `--source=PATH` | Install from a commit of a local HACF git checkout instead of cloning (see below) |
 | `--ref=REF` | Commit, branch or tag in `--source` (default `HEAD`) |
+| `--rig[=DEST]` | Copy HACF's OpenRig team spec to `openrig/hacf/` (or DEST); never over an existing path |
 
 Each consent flag is the consent for its own action; `-y` never downloads third-party code (the installer still clones the HACF upstream). The upstream changes only through `--repo-url` and `--branch`. The environment overrides `HACF_REPO_URL`, `HACF_BRANCH` and `HACF_UPSTREAM_URL` apply only with `HACF_TEST=1` (the end-to-end tests), and a non-`https://` upstream is refused outside tests. Every consent prompt and log line prints the effective upstream URL and commit.
 
 If you select the codebase-memory-mcp backend, the installer adds it to the tracked `.mcp.json`, `.cursor/mcp.json` and `.roo/mcp.json`, and every teammate who accepts that project server runs it. The entry depends on how the installer installed the server: after the uvx method, or when it installed nothing, the entry runs `uvx codebase-memory-mcp@0.12.1` (exact pin); after the uv-tool or vendor-script method, it runs the unpinned `codebase-memory-mcp` command, so each teammate gets whatever binary of that name is on their PATH. See [docs/Lore.md](docs/Lore.md#mcp-server-entries).
+
+To run HACF with a per-project OpenRig team, see [docs/OpenRig-Team.md](docs/OpenRig-Team.md).
 
 #### Install from a local checkout (unpushed HACF)
 

@@ -108,9 +108,9 @@ Semantics:
     .agents/local/hacf.yml, else the IDE dirs present). CLAUDE.local.md and
     .claude/settings.local.json are never touched.
 - verify runs `hyper_spec.py lint --all`, `hyper_ledger.py validate`, `hyper_lore.py validate`,
-  `hyper_firewall.py check` and, only when `rig --version` is exactly 0.6.13 (hyper_openrig's
-  version rule), `rig scope --workspace . audit --mission <m> --json` per mission. It writes the
-  report into the journal (when there is one) and exits 1 on any finding.
+  `hyper_firewall.py check` and, only when `rig --version` is an accepted rig, 0.6.13 or 0.7.16
+  (hyper_openrig's version rule), `rig scope --workspace . audit --mission <m> --json` per
+  mission. It writes the report into the journal (when there is one) and exits 1 on any finding.
 - move-slice wraps `hyper_scope.py slice move` and repoints the journal's legacy_map.
 - Every subprocess is an argv list with shell=False; HACF tools run as
   `[sys.executable, '.agents/scripts/<tool>.py', ...]` in the project.
@@ -2579,7 +2579,7 @@ VERIFY_CHECKS = (
 
 
 def cmd_verify(ns: argparse.Namespace) -> int:
-    """Task 18: run every validator (and rig's scope audit under rig 0.6.13); exit 1 on findings."""
+    """Task 18: run every validator (and rig's scope audit under an accepted rig); exit 1 on any."""
     top = repo_top()
     checks: list[dict[str, Any]] = []
     for name, *args in VERIFY_CHECKS:
@@ -2589,7 +2589,7 @@ def cmd_verify(ns: argparse.Namespace) -> int:
              "output": (proc.stdout + proc.stderr).strip().splitlines()[-20:]}
         )  # fmt: skip
     rig = hyper_openrig.plan_rig()
-    if rig.use_rig:  # R22.7: exactly the pinned 0.6.13, through S02's adapter
+    if rig.use_rig:  # R22.7: an accepted rig (0.6.13 or 0.7.16), through S02's adapter
         for mission in hyper_spec.mission_dirs(hyper_spec.missions_root(top)):
             argv = hyper_openrig.argv_scope_audit(rig.prefix, top, mission.name)
             proc = hyper_openrig.run_rig(argv, cwd=top)

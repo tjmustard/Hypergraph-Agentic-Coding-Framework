@@ -522,10 +522,86 @@ def test_ensure_node_from_legacy_header(tmp_git_repo, tmp_path):
     proc = _cli(tmp_git_repo, "ensure-node", "--from-spec", str(v6), "--dimension", "Module")
     assert proc.returncode == 0, proc.stderr
     z_node = _node(_read(tmp_git_repo), "z_node")
-    assert z_node["files"] == ["src/z.py", "src/z/**"]
+    assert z_node["files"] == ["src/z.py"]
+    assert "skipped glob touch src/z/**; set globs with --files" in proc.stderr
     assert z_node["edges"]["member_of"] == ["orchestration_layer"]
     args = ("ensure-node", "--from-spec", str(spec), "--id", "other_node")
     assert _cli(tmp_git_repo, *args).returncode == 2
+
+
+def _v6_spec(tmp_path, touches: list[str], node_id: str = "component_ledger") -> Path:
+    """Write a v6 SPEC.md whose frontmatter maps node_id to the given hacf_touches."""
+    spec = tmp_path / "SPEC.md"
+    front = {"node_id": node_id, "parent": "orchestration_layer", "hacf_touches": touches}
+    spec.write_text(f"---\n{yaml.safe_dump(front, sort_keys=False)}---\n# Slice\n", "utf-8")
+    return spec
+
+
+def _seed_files(repo, files: list[str]) -> Path:
+    """Seed the v2 sample ledger with component_ledger's files set to the given list."""
+    data = _sample()
+    _node(data, "component_ledger")["files"] = files
+    return _seed_data(repo, data)
+
+
+def test_ensure_node_from_spec_merges_exact_touches(tmp_git_repo, tmp_path):
+    """--from-spec appends the exact touches a node lacks, keeps its files, skips globs (R11)."""
+    path = _seed_files(tmp_git_repo, ["a.py", "b.py"])
+    spec = _v6_spec(tmp_path, ["b.py", "c.py", "dev/tests/**/*.py"])
+    proc = _cli(tmp_git_repo, "ensure-node", "--from-spec", str(spec))
+    assert proc.returncode == 0, proc.stderr
+    assert "skipped glob touch dev/tests/**/*.py; set globs with --files" in proc.stderr
+    assert _node(_read(tmp_git_repo), "component_ledger")["files"] == ["a.py", "b.py", "c.py"]
+    once = path.read_bytes()
+    proc = _cli(tmp_git_repo, "ensure-node", "--from-spec", str(spec))
+    assert proc.returncode == 0, proc.stderr
+    assert path.read_bytes() == once  # a repeat is byte-identical
+
+
+def test_ensure_node_from_spec_all_glob_touches_keep_files(tmp_git_repo, tmp_path):
+    """A spec whose touches are all globs leaves an existing node's files unchanged."""
+    _seed_files(tmp_git_repo, ["a.py", "b.py"])
+    spec = _v6_spec(tmp_path, ["src/**", "dev/tests/test_?.py", "src/[ab].py"])
+    proc = _cli(tmp_git_repo, "ensure-node", "--from-spec", str(spec))
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stderr.count("ensure-node: skipped glob touch ") == 3
+    assert _node(_read(tmp_git_repo), "component_ledger")["files"] == ["a.py", "b.py"]
+
+
+def test_ensure_node_files_with_from_spec_exits_2(tmp_git_repo, tmp_path):
+    """--files replaces and --from-spec merges: together they exit 2; --files alone replaces."""
+    path = _seed_files(tmp_git_repo, ["a.py", "b.py"])
+    before = path.read_bytes()
+    spec = _v6_spec(tmp_path, ["c.py"])
+    proc = _cli(tmp_git_repo, "ensure-node", "--from-spec", str(spec), "--files", "x.py")
+    assert proc.returncode == 2
+    assert "--files replaces files and --from-spec merges them; pass one" in proc.stderr
+    assert path.read_bytes() == before
+    proc = _cli(tmp_git_repo, "ensure-node", "--id", "component_ledger", "--files", "x.py")
+    assert proc.returncode == 0, proc.stderr
+    assert _node(_read(tmp_git_repo), "component_ledger")["files"] == ["x.py"]
+
+
+def test_ensure_node_from_spec_outbox_records_exact_add_files(tmp_git_repo, tmp_path):
+    """The outbox entry holds add_files (exact paths only); apply-outbox replays it the same."""
+    path = _seed_files(tmp_git_repo, ["a.py", "b.py"])
+    before = path.read_bytes()
+    spec = _v6_spec(tmp_path, ["b.py", "c.py", "dev/tests/**/*.py"])
+    outbox = tmp_path / "outbox"
+    proc = _cli(tmp_git_repo, "ensure-node", "--from-spec", str(spec), HACF_OUTBOX=str(outbox))
+    assert proc.returncode == 0, proc.stderr
+    assert path.read_bytes() == before
+    entry = json.loads((outbox / "000001-ensure-node.json").read_text(encoding="utf-8"))
+    assert entry["args"]["add_files"] == ["b.py", "c.py"]
+    assert entry["args"]["files"] is None
+    proc = _cli(tmp_git_repo, "apply-outbox", str(outbox))
+    assert proc.returncode == 0, proc.stderr
+    replayed = path.read_bytes()
+    path.write_bytes(before)
+    proc = _cli(tmp_git_repo, "ensure-node", "--from-spec", str(spec))
+    assert proc.returncode == 0, proc.stderr
+    assert path.read_bytes() == replayed
+    assert _node(_read(tmp_git_repo), "component_ledger")["files"] == ["a.py", "b.py", "c.py"]
 
 
 def test_ensure_node_list_flags_and_spec_refs(tmp_git_repo):

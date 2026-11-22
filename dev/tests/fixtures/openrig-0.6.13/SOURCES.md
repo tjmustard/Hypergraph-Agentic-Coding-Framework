@@ -7,6 +7,13 @@ extracting each template literal from a shallow clone of that tag (no interpolat
 occur in them). `.agents/scripts/hyper_openrig.py` renders the same bytes, and
 `dev/tests/openrig/test_openrig_adapter.py::test_render_matches_fixture` compares the two.
 
+On 2026-11-22, `project.yaml`, `workspace.yaml` and `slice.yaml` were found byte-identical to the
+templates in the installed `@openrig/cli` 0.7.16 (evidence:
+`missions/release-0.6.1/slices/09-openrig-contract-repin/proof/contract-compare.md`, item (c)).
+`mission.yaml` was not: rig 0.7.16's `mission create` adds `metadata.name` (`missionManifest(name)`,
+`dist/commands/scope.js:30`). This fixture stays the 0.6.13 bytes, which every mission created
+before HACF 0.6.1 carries; `render_mission_yaml(name)` writes the named 0.7.16 shape (mission R21a).
+
 | File | Constant | Source at the tag |
 |---|---|---|
 | `project.yaml` | `PROJECT_MANIFEST` | https://github.com/mvschwarz/openrig/blob/v0.6.13/packages/daemon/src/domain/workspace/default-workspace-scaffold.ts#L20 |

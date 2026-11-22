@@ -1,0 +1,160 @@
+version: "0.2"
+name: hacf
+summary: >
+  A software-development team shaped by the Hypergraph Agentic Coding Framework:
+  one seat per stage of its pipeline — architect, red team, resolve, execute,
+  audit — plus a lead who holds the sequence and a scribe who keeps the docs and
+  the commits true. The framework asks each phase to run in a fresh context
+  window; here each phase *is* a separate seat, so separation between stages is a
+  fact of the topology. The seats themselves persist across features, so each one
+  re-derives the current state from the files rather than from what it remembers.
+
+culture_file: CULTURE.md
+
+docs:
+  - path: README.md
+
+# Start steps shared by every seat; each seat's role file comes from its profile.
+startup:
+  files:
+    - path: startup/context.md
+      delivery_hint: send_text
+      required: true
+    # Seat addresses, the handoff recipe, how to ask the person, and the two record files.
+    # Shared because these are the mechanics every role file was previously restating —
+    # and restating differently.
+    - path: startup/protocol.md
+      delivery_hint: send_text
+      required: true
+  actions:
+    - type: startup_proof
+      value: authenticated
+      idempotent: true
+
+# OpenRig writes its instruction blocks into the working directory.
+# Claude Code seats get them in CLAUDE.local.md, so they stay out of a project's
+# own CLAUDE.md — which belongs to the Hypergraph framework once it is installed.
+managed_blocks:
+  claude-code: CLAUDE.local.md
+
+# Every seat launches with permission prompts off: the pipeline runs unattended
+# across seven seats and an approval prompt in a background seat has nobody to
+# answer it. The README's "Permissions" section says what that means.
+permission_policy: builtin:yolo
+non_interruptive: true
+
+# Where the seats work. Every seat declares `cwd: ../..`: relative to this file's folder,
+# which is the project root when this spec sits at <project>/openrig/hacf/. Launch it in
+# one of three ways:
+#   - A project copy (<project>/openrig/hacf/):
+#       rig up <project>/openrig/hacf/rig.yaml --name <slug>-hacf --cwd <project root>
+#   - A copy outside a project: always pass --cwd <project root>. A relative cwd would
+#     resolve inside the OpenRig home, not in a project.
+#   - HACF's own team, from this repository's copy, works across several projects:
+#       rig up openrig/hacf/rig.yaml --name hacf --cwd <the projects folder>
+# startup/context.md tells each seat which mode it is in (project or parent folder).
+pods:
+  - id: orch
+    label: Coordination
+    summary: Holds the sequence, dispatches each stage and decides when a feature is finished.
+    members:
+      - id: lead
+        agent_ref: "local:agents/hacf"
+        profile: lead
+        runtime: claude-code
+        cwd: ../..
+        startup:
+          files:
+            - path: startup/lead-first-move.md
+              delivery_hint: send_text
+              required: true
+    edges: []
+
+  - id: spec
+    label: Specification Engine
+    summary: Turns an intent into a compiled specification, adversarially and in order.
+    members:
+      - id: architect
+        agent_ref: "local:agents/hacf"
+        profile: architect
+        runtime: claude-code
+        cwd: ../..
+      - id: red-team
+        agent_ref: "local:agents/hacf"
+        profile: red-team
+        runtime: claude-code
+        cwd: ../..
+      - id: resolve
+        agent_ref: "local:agents/hacf"
+        profile: resolve
+        runtime: claude-code
+        cwd: ../..
+    edges:
+      - kind: delegates_to
+        from: architect
+        to: red-team
+      - kind: delegates_to
+        from: red-team
+        to: resolve
+
+  - id: build
+    label: Execution Engine
+    summary: Implements one MiniPRD at a time and verifies the contract against it.
+    members:
+      - id: execute
+        agent_ref: "local:agents/hacf"
+        profile: execute
+        runtime: claude-code
+        cwd: ../..
+      - id: audit
+        agent_ref: "local:agents/hacf"
+        profile: audit
+        runtime: claude-code
+        cwd: ../..
+    edges:
+      # The pipeline runs one way. The fix loop — a failed audit hands the
+      # MiniPRD back to the builder, up to five iterations — is a queue handoff,
+      # not a topology edge: drawing it here would be a cycle, and the graph
+      # describes who dispatches work, not every path a baton can take.
+      - kind: delegates_to
+        from: execute
+        to: audit
+
+  - id: desk
+    label: Record
+    summary: Keeps the documentation honest and prepares the commit.
+    members:
+      - id: scribe
+        agent_ref: "local:agents/hacf"
+        profile: scribe
+        runtime: claude-code
+        cwd: ../..
+    edges: []
+
+# The lead dispatches every stage; the stage-to-stage edges above are the
+# pipeline's actual order, not a shortcut around the lead.
+edges:
+  - kind: delegates_to
+    from: orch.lead
+    to: spec.architect
+  - kind: delegates_to
+    from: orch.lead
+    to: spec.red-team
+  - kind: delegates_to
+    from: orch.lead
+    to: spec.resolve
+  - kind: delegates_to
+    from: orch.lead
+    to: build.execute
+  - kind: delegates_to
+    from: orch.lead
+    to: build.audit
+  - kind: delegates_to
+    from: orch.lead
+    to: desk.scribe
+  - kind: can_observe
+    from: orch.lead
+    to: spec.red-team
+  - kind: can_observe
+    from: orch.lead
+    to: build.audit

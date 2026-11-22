@@ -7,7 +7,7 @@
 > When you create SuperPRDs, MiniPRDs, or architecture nodes, you are documenting
 > **this project**, not the HACF framework itself.
 
-> **For Human Developers:** See `README.md` for the complete usage guide, available slash
+> **For Human Developers:** See HACF's README (<https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework#readme>) for the complete usage guide, available slash
 > commands, and setup instructions.
 
 ---

@@ -145,7 +145,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "openrig": {
         "cli_package": "@openrig/cli",
-        "pinned_version": "0.6.13",
+        "accepted_versions": ["0.6.13", "0.7.16"],
         "id_prefix": "OPR",
         "use_rig_when_present": True,
     },

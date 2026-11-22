@@ -38,10 +38,10 @@ Semantics:
   PROGRESS.md, one appended Outcomes line, and on the first executing event mission.yaml
   `metadata.status` planned -> active (bytes from hyper_openrig.splice_mission_status). Every
   check runs before the first write.
-- proof writes `proof/<name>` with the C1 header (delegated to `rig proof add` under the pinned
-  rig 0.6.13) and lists it in PROOF.md `## Artifacts`. `--candidate-sha auto` is HEAD when the
-  slice's `hacf_touches` are clean, else a snapshot commit from a temp index seeded from HEAD,
-  stored at `refs/hacf/candidates/<slice-id>`; the user's index and work tree are untouched.
+- proof writes `proof/<name>` with the C1 header (delegated to `rig proof add` under an accepted
+  rig, 0.6.13 or 0.7.16) and lists it in PROOF.md `## Artifacts`. `--candidate-sha auto` is HEAD
+  when the slice's `hacf_touches` are clean, else a snapshot commit from a temp index seeded from
+  HEAD, stored at `refs/hacf/candidates/<slice-id>`; the user's index and work tree are untouched.
 - Writes take `$(git rev-parse --git-common-dir)/hacf/locks/spec.lock` and are compare-and-swap
   (hyper_openrig.cas_write: sha256 at read, re-read just before os.replace, exit 5 on a change),
   because rig writes the same files without HACF's locks. With HACF_OUTBOX set, progress writes
@@ -164,9 +164,10 @@ SLICE_H1_PREFIX = "# MiniPRD: "
 TITLE_PREFIXES = ("# MiniPRD: ", "# SuperPRD: ", "# Project - ", "# ")
 MINI_REQUIREMENTS = "## Mini-requirements"
 PROOF_CONTRACT = "## Proof contract"
-# Rig's content rules (scope-audit.ts and scaffold-placeholder.ts @v0.6.13): an authored numbered
-# item (`1.` or `1)`) and an authored checkbox item (`- [ ]`, `- [x]`); a fully bracket-wrapped
-# text is a scaffold placeholder, not authored content.
+# Rig's content rules (scope-audit.ts and scaffold-placeholder.ts @v0.6.13; unchanged at 0.7.16 per
+# release-0.6.1 slice 9 proof/contract-compare.md (f)): an authored numbered item (`1.` or `1)`)
+# and an authored checkbox item (`- [ ]`, `- [x]`); a fully bracket-wrapped text is a scaffold
+# placeholder, not authored content.
 NUMBERED_ITEM_RE = re.compile(r"^\s*\d+[.)]\s+(.+)$")
 CHECKBOX_ITEM_RE = re.compile(r"^\s*-\s*\[[ xX]\]\s*(.*)$")
 PLACEHOLDER_RE = re.compile(r"^\[.*\]$")

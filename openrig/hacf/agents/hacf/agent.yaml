@@ -1,0 +1,139 @@
+name: hacf
+version: "1.0"
+description: >
+  A seat on the hacf rig, a software-development team shaped by the Hypergraph
+  Agentic Coding Framework. The rig member's profile picks the stage: lead,
+  architect, red-team, resolve, execute, audit or scribe. The stage itself is
+  defined by the project's own .agents/skills/hyper-<stage>/SKILL.md, installed
+  by the framework; this manifest supplies the role, the startup files and
+  OpenRig's own skills.
+
+# This rig deliberately bundles no stage skills. The Hypergraph framework installs
+# its skills into each project (.agents/skills/hyper-*/), so a stage's definition
+# lives with the project and moves with the project when the framework is upgraded.
+# OpenRig's own plugin supplies the coordination skills every seat needs: queue
+# handoff, the operating model, refocusing, compaction and restore.
+resources:
+  skills:
+    # Vendored from github.com/tjmustard's eta-skills marketplace (MIT), skills/
+    # adversarial-agent-hardening/ at 6d9c933, 2026-11-09, unmodified. It travels with
+    # this rig rather than depending on a marketplace install on the host, so every
+    # seat can harden an agent definition the same way this rig's own were hardened.
+    - { id: adversarial-agent-hardening, path: bundle-skills/adversarial-agent-hardening }
+  plugins:
+    - id: openrig-core
+      source:
+        kind: local
+        path: "openrig-home:plugins/openrig-core"
+  runtime_resources:
+    # Turns on activity reporting for Claude Code seats.
+    - id: claude-activity-hooks
+      path: runtime/claude-activity-hooks.json
+      runtime: claude-code
+      type: claude_activity_hooks
+
+profiles:
+  lead:
+    summary: Holds the HACF sequence, writes the run record, dispatches each stage and decides when a feature is finished.
+    preferences:
+      runtime: claude-code
+    uses:
+      skills: [adversarial-agent-hardening]
+      plugins: [openrig-core]
+      runtime_resources: [claude-activity-hooks]
+    startup:
+      files:
+        - path: guidance/lead.md
+          delivery_hint: send_text
+          required: true
+      actions: []
+
+  architect:
+    summary: Runs the requirements interview and writes spec/active/Draft_PRD.md.
+    preferences:
+      runtime: claude-code
+    uses:
+      skills: [adversarial-agent-hardening]
+      plugins: [openrig-core]
+      runtime_resources: [claude-activity-hooks]
+    startup:
+      files:
+        - path: guidance/architect.md
+          delivery_hint: send_text
+          required: true
+      actions: []
+
+  red-team:
+    summary: Attacks the draft PRD from a fresh context and writes spec/active/RedTeam_Report.md.
+    preferences:
+      runtime: claude-code
+    uses:
+      skills: [adversarial-agent-hardening]
+      plugins: [openrig-core]
+      runtime_resources: [claude-activity-hooks]
+    startup:
+      files:
+        - path: guidance/red-team.md
+          delivery_hint: send_text
+          required: true
+      actions: []
+
+  resolve:
+    summary: Forces the trade-offs the red team raised and compiles a mission and its slices through hyper_scope.py.
+    preferences:
+      runtime: claude-code
+    uses:
+      skills: [adversarial-agent-hardening]
+      plugins: [openrig-core]
+      runtime_resources: [claude-activity-hooks]
+    startup:
+      files:
+        - path: guidance/resolve.md
+          delivery_hint: send_text
+          required: true
+      actions: []
+
+  execute:
+    summary: Implements one slice precisely and flags the ledger for what it touched.
+    preferences:
+      runtime: claude-code
+    uses:
+      skills: [adversarial-agent-hardening]
+      plugins: [openrig-core]
+      runtime_resources: [claude-activity-hooks]
+    startup:
+      files:
+        - path: guidance/execute.md
+          delivery_hint: send_text
+          required: true
+      actions: []
+
+  audit:
+    summary: Checks one slice against its contract and reconciles the ledger through hyper_ledger.py and hypergraph_updater.py.
+    preferences:
+      runtime: claude-code
+    uses:
+      skills: [adversarial-agent-hardening]
+      plugins: [openrig-core]
+      runtime_resources: [claude-activity-hooks]
+    startup:
+      files:
+        - path: guidance/audit.md
+          delivery_hint: send_text
+          required: true
+      actions: []
+
+  scribe:
+    summary: Updates the documentation records and prepares the commit in the person's own identity, without pushing.
+    preferences:
+      runtime: claude-code
+    uses:
+      skills: [adversarial-agent-hardening]
+      plugins: [openrig-core]
+      runtime_resources: [claude-activity-hooks]
+    startup:
+      files:
+        - path: guidance/scribe.md
+          delivery_hint: send_text
+          required: true
+      actions: []

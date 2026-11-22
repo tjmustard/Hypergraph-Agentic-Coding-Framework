@@ -50,7 +50,7 @@ Wait for the user's response, then provide the exact steps:
 1. Run `/hyper-architect` — begins the requirements extraction interview (creates `Draft_PRD.md` in `spec/active/`).
 2. **Start a new conversation** and run `/hyper-redteam` — adversarial analysis (creates `RedTeam_Report.md` in `spec/active/`).
 3. **Start a new conversation** and run `/hyper-resolve` — resolves trade-offs into PROPOSED lore decisions and compiles a mission under `missions/<mission>/` (mission `SPEC.md` plus one slice `SPEC.md` per module). It writes flat `spec/compiled/` specs only as the fallback when a foreign root item collides.
-4. The resolve agent archives the active drafts with `python3 .agents/scripts/archive_specs.py`.
+4. The resolve agent archives the active drafts with `python3 .agents/scripts/archive_specs.py --paths spec/active/Draft_PRD.md spec/active/RedTeam_Report.md --label <mission>`.
 
 **Phase 2 (Execution):**
 1. **Start a new conversation** and run `/hyper-execute <slice path or dot-id>` on a mission slice, or on a legacy flat `spec/compiled/MiniPRD_*.md`.

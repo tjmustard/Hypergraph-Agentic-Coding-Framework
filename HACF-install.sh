@@ -47,8 +47,11 @@ export PYTHONDONTWRITEBYTECODE=1
 #    blocks: {path: {block id: body sha256}},        HACF managed blocks (hyper_blocks body_sha256)
 #    mcp_entries: {path: {server: entry}},           MCP entries HACF merged
 #    source: {kind: local, commit} | {kind: remote, url, branch, commit},
-#    ides: [id, ..]}                                 the IDE selection (sorted; absent when none
+#    ides: [id, ..],                                 the IDE selection (sorted; absent when none
 #                                                    was ever recorded); an upgrade keeps it
+#    rig_spec: [{path, commit} | {outside_project: true, commit}, ..]}
+#                                                    rig spec copies made by --rig (absent when
+#                                                    none); the copy is the user's, never refreshed
 # `source` is the provenance recorded at install time; `installed_commit` is the authority, and a
 # reader treats a `source.commit` that differs from it as stale. An upgrade with no --source,
 # --repo-url or --branch reuses a recorded local source (the checkout's current HEAD), and one
@@ -74,6 +77,7 @@ Consent flags (each one is the consent for its action):
   --install-code-graph       install codebase-memory-mcp 0.12.1 (uv tool, uvx or vendor script)
   --statusline               add a statusLine running `npx -y ccstatusline@latest`
   --migrate                  print (or, interactively, run) the v0.6.0 migration plan
+  --rig[=DEST]  copy HACF's OpenRig team spec to openrig/hacf/ (or DEST); never over an existing path
 
 Other:
   --firewall=auto|off        render .agentignore into each selected IDE (default auto)
@@ -91,7 +95,7 @@ USAGE
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-HACF_VERSION="0.6.0"
+HACF_VERSION="0.6.1"
 DEFAULT_REPO_URL="https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework.git"
 DEFAULT_BRANCH="main"
 CBM_VERSION="0.12.1"
@@ -128,7 +132,7 @@ INSTRUCTION_FILES=("AGENTS.md" "CLAUDE.md" "GEMINI.md")
 # file not in ROOT_COPY_FILES is refused as well.
 NEVER_COPY=(
   "SPEC.md" "project.yaml" "workspace.yaml" "lore_hypergraph.yml" ".gitattributes"
-  "lore/" "missions/" "exhaust/" ".openrig/"
+  "lore/" "missions/" "exhaust/" ".openrig/" "openrig/"
   "spec/" "tests/"
   "dev/" "PRDs/" "docs/"
   ".agents/local/" ".agents/state/" ".agents/.backup/" ".agents/logs/"
@@ -183,6 +187,8 @@ FLAG_SOURCE=""
 FLAG_REF=""
 SOURCE_GIVEN=false
 REF_GIVEN=false
+RIG_REQUESTED=false    # --rig or --rig=DEST was given
+RIG_DEST=""            # the destination as given (default openrig/hacf)
 
 SOURCE_KIND="remote"   # remote | local (--source)
 SOURCE_REAL=""         # the --source checkout, realpath'd; the only form passed to git
@@ -208,6 +214,11 @@ CODE_GRAPH_BACKEND="none"
 CODE_GRAPH_METHOD=""
 REPORT=()
 DECLINED=()
+RIG_COPY=false         # copy the rig spec this run (--rig, or yes to the interactive question)
+RIG_ABS=""             # the resolved destination (check_rig_dest)
+RIG_REL=""             # its project-relative POSIX path; empty when outside the project
+RIG_SLUG=""            # the project slug; the copy's rig name is <slug>-hacf
+RIG_JSON="[]"          # this run's manifest rig_spec entry, as a JSON list
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -597,16 +608,41 @@ def cmd_jsonget(args):
     return 0
 
 
+def recorded_rig_specs(old):
+    """Return the old manifest's well-formed rig_spec entries (R4), in order."""
+    entries = []
+    listed = old.get("rig_spec")
+    for entry in listed if isinstance(listed, list) else []:
+        if not isinstance(entry, dict) or not isinstance(entry.get("commit"), str):
+            continue
+        if entry.get("outside_project") is True and "path" not in entry:
+            entries.append({"outside_project": True, "commit": entry["commit"]})
+        elif isinstance(entry.get("path"), str) and relative_inside(entry["path"]):
+            entries.append({"path": entry["path"], "commit": entry["commit"]})
+    return entries
+
+
+def relative_inside(rel):
+    """True for a plain relative POSIX path that stays inside the project."""
+    parts = rel.split("/")
+    return bool(rel) and not rel.startswith("/") and ".." not in parts and "" not in parts
+
+
 def cmd_manifest(args):
-    """manifest VERSION COMMIT RECORDS OWNED MCP HOOKS TEMPLATES_DIR SOURCE_JSON IDES: write it.
+    """manifest VERSION COMMIT RECORDS OWNED MCP HOOKS TEMPLATES_DIR SOURCE_JSON IDES RIG_JSON.
 
     SOURCE_JSON is the provenance recorded as the manifest's `source` key: {"kind": "local",
     "commit"} or {"kind": "remote", "url", "branch", "commit"}; never a local path. IDES is the
     space-separated IDE selection: recorded sorted, de-duplicated and known ids only; when it is
     blank (skills and system modes select no IDEs) the old manifest's `ides` is carried forward,
-    and no `ides` key is written when there is none. Never `ides: []`.
+    and no `ides` key is written when there is none. Never `ides: []`. RIG_JSON is this run's
+    `--rig` entry as a JSON list (empty when nothing was copied): `rig_spec` is the old list
+    carried forward, minus inside entries whose directory is gone, plus this run's entry. An
+    inside entry is {"path": <project-relative POSIX path>, "commit"}, an outside one
+    {"outside_project": true, "commit"}; never an absolute path, and no `rig_spec` key when the
+    list is empty. The copies are the user's: nothing here refreshes or checks their content.
     """
-    version, commit, records, owned_path, mcp_path, hooks_path, templates, source_json, ides = args
+    version, commit, records, owned_path, mcp_path, hooks_path, templates, source_json, ides, rig_json = args
     source = json.loads(source_json)
     sys.path.insert(0, os.path.abspath(".agents/scripts"))
     import _runtime
@@ -710,6 +746,14 @@ def cmd_manifest(args):
             manifest["ides"] = selected
     elif isinstance(old.get("ides"), list) and old["ides"]:
         manifest["ides"] = old["ides"]
+    rig_spec = [
+        entry
+        for entry in recorded_rig_specs(old)
+        if entry.get("outside_project") or os.path.isdir(entry["path"])
+    ]
+    rig_spec += json.loads(rig_json)
+    if rig_spec:
+        manifest["rig_spec"] = rig_spec
     data = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
     atomic_write(MANIFEST, data)
     print(f"    ✅  {MANIFEST}: {len(files)} file(s), installed_commit {commit}")
@@ -734,6 +778,76 @@ def cmd_sourcefile(args):
     return 0
 
 
+def cmd_rigdest(args):
+    """rigdest DEST HOME PROJECT FORBIDDEN...: resolve and check a --rig destination (R3).
+
+    Prints `ok\0<resolved>\0<project-relative path or empty>\0` or `refuse\0<reason>\0`.
+    FORBIDDEN are directories DEST may not lie in (git dir, common dir, source, temp dir).
+    """
+    dest, home, project = args[:3]
+    forbidden = [os.path.realpath(path) for path in args[3:] if path]
+    shown = json.dumps(dest, ensure_ascii=True)
+
+    def refuse(reason):
+        sys.stdout.write(f"refuse\0{reason}\0")
+        return 0
+
+    if any(ord(c) < 32 or ord(c) == 127 for c in dest):
+        return refuse("the destination holds a control character")
+    if dest == "~" or dest.startswith("~/"):
+        absolute = os.path.join(home, dest[2:]) if dest != "~" else home
+    elif dest.startswith("~"):
+        return refuse(f"{shown}: only ~ and ~/ are expanded (no ~user)")
+    else:
+        absolute = os.path.join(project, dest)
+    # The nearest existing ancestor, realpath'd, plus the rest; nothing in the rest may exist
+    # in any form (a dangling symlink included).
+    parts = [part for part in absolute.split("/") if part and part != "."]
+    if os.path.lexists(absolute):
+        recorded = {
+            entry["path"]: entry["commit"]
+            for entry in recorded_rig_specs(old_manifest())
+            if "path" in entry
+        }
+        project_real = os.path.realpath(project)
+        resolved = os.path.realpath(absolute)
+        rel = os.path.relpath(resolved, project_real).replace(os.sep, "/")
+        if rel in recorded:
+            return refuse(f"{rel} already copied at {recorded[rel]}; re-run without --rig")
+        return refuse(f"{shown} already exists; --rig never writes over an existing path")
+    base = "/"
+    index = 0
+    while index < len(parts) and os.path.isdir(os.path.join(base, parts[index])):
+        base = os.path.join(base, parts[index])
+        index += 1
+    rest = parts[index:]
+    if ".." in rest:
+        return refuse(f"{shown}: '..' after a directory that does not exist")
+    probe = base
+    for part in rest:
+        probe = os.path.join(probe, part)
+        if os.path.lexists(probe):
+            return refuse(f"{shown}: {json.dumps(probe)} exists and is not a directory")
+    anchor = os.path.realpath(base)
+    resolved = os.path.join(anchor, *rest) if rest else anchor
+    for directory in forbidden:
+        if resolved == directory or resolved.startswith(directory.rstrip("/") + "/"):
+            return refuse(f"{shown} lies inside {json.dumps(directory)}")
+    ancestor = anchor
+    while True:
+        if os.path.lexists(os.path.join(ancestor, "rig.yaml")):
+            return refuse(f"{shown} lies under {json.dumps(ancestor)}, which holds a rig.yaml")
+        if ancestor == "/":
+            break
+        ancestor = os.path.dirname(ancestor)
+    project_real = os.path.realpath(project)
+    rel = ""
+    if resolved.startswith(project_real.rstrip("/") + "/"):
+        rel = os.path.relpath(resolved, project_real).replace(os.sep, "/")
+    sys.stdout.write(f"ok\0{resolved}\0{rel}\0")
+    return 0
+
+
 COMMANDS = {
     "sync": cmd_sync,
     "mcp": cmd_mcp,
@@ -742,6 +856,7 @@ COMMANDS = {
     "jsonget": cmd_jsonget,
     "manifest": cmd_manifest,
     "sourcefile": cmd_sourcefile,
+    "rigdest": cmd_rigdest,
 }
 sys.exit(COMMANDS[sys.argv[1]](sys.argv[2:]) or 0)
 PY
@@ -765,6 +880,9 @@ parse_args() {
       --migrate)               MIGRATE=true ;;
       --statusline)            STATUSLINE=true ;;
       --dry-run)               DRY_RUN=true ;;
+      --rig)                   RIG_REQUESTED=true; RIG_DEST="openrig/hacf" ;;
+      --rig=*)                 RIG_REQUESTED=true; RIG_DEST="${1#--rig=}"
+                               [ -n "$RIG_DEST" ] || usage_error "--rig= needs a directory (or use --rig). Nothing was written." ;;
       --repo-url=*)            FLAG_REPO_URL="${1#--repo-url=}" ;;
       --repo-url)              [ $# -ge 2 ] || usage_error "--repo-url needs a value"; FLAG_REPO_URL="$2"; shift ;;
       --branch=*)              FLAG_BRANCH="${1#--branch=}" ;;
@@ -782,6 +900,12 @@ parse_args() {
   case "$FIREWALL" in auto|off) ;; *) usage_error "--firewall must be auto or off, not '$FIREWALL'" ;; esac
   case "$MODE" in ""|full|skills|system|ide|repair|dry-run) ;; *) usage_error "--mode must be full, skills, system, ide, repair or dry-run, not '$MODE'" ;; esac
   if [ "$MODE" = "dry-run" ]; then DRY_RUN=true; fi
+  if $RIG_REQUESTED && [ -n "$FILES_TARGET" ]; then
+    usage_error "--rig cannot be combined with --files=. Nothing was written."
+  fi
+  if $RIG_REQUESTED && [[ " skills system ide " == *" $MODE "* ]]; then
+    usage_error "--rig cannot be combined with --mode=$MODE. Nothing was written."
+  fi
   if $SOURCE_GIVEN && [ -z "$FLAG_SOURCE" ]; then usage_error "--source needs a non-empty path. Nothing was written."; fi
   if $REF_GIVEN && ! $SOURCE_GIVEN; then usage_error "--ref needs --source. Nothing was written."; fi
   if $SOURCE_GIVEN && { [ -n "$FLAG_REPO_URL" ] || [ -n "$FLAG_BRANCH" ]; }; then
@@ -1361,6 +1485,127 @@ check_payload_links() {
 }
 
 # ---------------------------------------------------------------------------
+# The OpenRig team spec (--rig; mission R3-R5, R7)
+# ---------------------------------------------------------------------------
+RIG_SRC_REL="openrig/hacf"
+
+# saved_v05x_uninstaller: true when ./HACF-uninstall.sh is a saved v0.5.x blob (FLOW 15).
+saved_v05x_uninstaller() {
+  [ -f HACF-uninstall.sh ] && in_list "$(py_sha HACF-uninstall.sh)" "${V05X_UNINSTALLER_SHAS[@]}"
+}
+
+# decide_rig_copy: RIG_COPY from --rig, or (R5) one local question, default N, asked only when
+# interactive, without --rig, with no copy recorded and no saved v0.5.x uninstaller. Asked
+# before check_rig_dest, so a yes is validated before any write. Never prompt_consent.
+decide_rig_copy() {
+  local copies_mode=true
+  [ -z "$FILES_TARGET" ] && [[ " install full repair " == *" $MODE "* ]] || copies_mode=false
+  if $RIG_REQUESTED; then
+    $copies_mode || die "--rig copies only in a full, repair or fresh install, not in $MODE mode. Nothing was written."
+    RIG_COPY=true
+    return 0
+  fi
+  $INTERACTIVE && $copies_mode || return 0
+  [ -z "$(hx jsonget "$MANIFEST_REL" rig_spec </dev/null || true)" ] || return 0
+  saved_v05x_uninstaller && return 0
+  if ask_yn "Copy HACF's OpenRig team spec to openrig/hacf/ for a per-project team?" n; then
+    RIG_COPY=true
+    RIG_DEST="openrig/hacf"
+  fi
+  echo ""
+}
+
+# check_rig_dest: every --rig refusal (R3), before the first project write. Exit 1 with
+# "Nothing was written." Sets RIG_ABS, RIG_REL and RIG_SLUG.
+check_rig_dest() {
+  $RIG_COPY || return 0
+  local refuse="refusing --rig:" payload="$SRC/$RIG_SRC_REL" project link names fields=() field
+  project=$(pwd -P)
+  [ -f "$payload/rig.yaml" ] && [ ! -L "$payload/rig.yaml" ] \
+    || die "$refuse the upstream commit has no $RIG_SRC_REL/rig.yaml. Nothing was written."
+  link=$(find "$payload" -type l -print -quit 2>/dev/null </dev/null || true)
+  if [ -L "$payload" ] || [ -n "$link" ]; then
+    die "$refuse the upstream commit's $RIG_SRC_REL holds a symlink. Nothing was written."
+  fi
+  names=$(grep -c '^name: hacf$' "$payload/rig.yaml" </dev/null || true)
+  [ "$names" = "1" ] || die "$refuse the upstream $RIG_SRC_REL/rig.yaml has ${names:-0} 'name: hacf' lines, not one. Nothing was written."
+  local git_dir="" common_dir="" out
+  out=$(git rev-parse --git-dir 2>/dev/null </dev/null) && git_dir=$(realdir "$project" "$out" 2>/dev/null || true)
+  out=$(git rev-parse --git-common-dir 2>/dev/null </dev/null) && common_dir=$(realdir "$project" "$out" 2>/dev/null || true)
+  while IFS= read -r -d '' field; do fields+=("$field"); done < <(
+    hx rigdest "$RIG_DEST" "$HOME" "$project" "$git_dir" "$common_dir" \
+      "$([ "$SOURCE_KIND" = "local" ] && echo "$SOURCE_REAL")" "$TMP_DIR" </dev/null)
+  [ "${fields[0]:-}" = "ok" ] || die "$refuse ${fields[1]:-could not check the destination}. Nothing was written."
+  RIG_ABS="${fields[1]}"
+  RIG_REL="${fields[2]:-}"
+  if saved_v05x_uninstaller; then
+    die "$refuse a saved v0.5.x uninstaller deletes every path in HACF main, openrig/hacf/ included; replace it first (re-run without --rig and accept the replacement), then re-run with --rig. Nothing was written."
+  fi
+  RIG_SLUG=$(basename -- "$project" | LC_ALL=C tr 'A-Z' 'a-z' | LC_ALL=C sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
+  [ -n "$RIG_SLUG" ] || die "$refuse the project folder's name $(q "$(basename -- "$project")") gives an empty rig name slug. Nothing was written."
+}
+
+# rig_name_copy <payload> <tmp> <name>: give the temp copy the payload directory's mode and
+# replace its rig.yaml's one `name: hacf` line with `name: <name>` (R7). Fails otherwise.
+rig_name_copy() {
+  python3 -c '
+import os, re, sys
+payload, tmp, name = sys.argv[1:]
+os.chmod(tmp, os.stat(payload).st_mode & 0o7777)
+path = os.path.join(tmp, "rig.yaml")
+with open(path, encoding="utf-8", newline="") as handle:
+    text = handle.read()
+new, count = re.subn(r"(?m)^name: hacf$", "name: " + name, text)
+if count != 1:
+    sys.exit("rig.yaml has %d name: hacf lines, not one" % count)
+with open(path, "w", encoding="utf-8", newline="") as handle:
+    handle.write(new)
+' "$@" </dev/null
+}
+
+# copy_rig_spec: the payload's openrig/hacf/ tree only (never hx sync, never the working tree),
+# into a temp sibling of DEST, its one `name: hacf` line renamed, then one rename. On any
+# failure the temp is removed and DEST does not exist. The copy is the user's from then on.
+copy_rig_spec() {
+  $RIG_COPY || return 0
+  local payload="$SRC/$RIG_SRC_REL" parent tmp n name="$RIG_SLUG-hacf" shown project next
+  project=$(pwd -P)
+  parent=$(dirname -- "$RIG_ABS")
+  n=$(find "$payload" -type f </dev/null | wc -l | tr -d ' ')
+  shown="$RIG_ABS"; [ -n "$RIG_REL" ] && shown="$RIG_REL"
+  echo "🧩  OpenRig team spec (--rig):"
+  if $DRY_RUN; then
+    echo "    [DRY-RUN] would copy $RIG_SRC_REL/ ($n files) to $(q "$shown") as rig $name"
+    echo ""
+    return 0
+  fi
+  mkdir -p -- "$parent" || die "could not create $(q "$parent") for the rig spec copy."
+  tmp=$(mktemp -d "$parent/.hacf-rig.XXXXXX") || die "could not create a temp dir in $(q "$parent") for the rig spec copy."
+  if ! { cp -R -p -- "$payload/." "$tmp/" \
+         && rig_name_copy "$payload" "$tmp" "$name" \
+         && [ ! -e "$RIG_ABS" ] && [ ! -L "$RIG_ABS" ] \
+         && mv -T -- "$tmp" "$RIG_ABS"; }; then
+    rm -rf -- "$tmp"
+    die "could not copy the rig spec to $(q "$shown"); nothing was left there."
+  fi
+  echo "    ✅  $RIG_SRC_REL/ ($n files) -> $(q "$shown"), rig name $name"
+  if [ -n "$RIG_REL" ]; then
+    next="rig up --plan $(q "$RIG_REL/rig.yaml") --name $name --cwd $(q "$project")"
+    RIG_JSON=$(python3 -c 'import json,sys; print(json.dumps([{"path": sys.argv[1], "commit": sys.argv[2]}]))' \
+      "$RIG_REL" "$UPSTREAM_SHA" </dev/null)
+    report "Rig spec: copied to $(q "$RIG_REL") as rig $name. It is yours: an upgrade never refreshes it and uninstall leaves it."
+    report "Rig spec: next, $next"
+  else
+    next="rig up --plan $(q "$RIG_ABS/rig.yaml") --name $name --cwd $(q "$project")"
+    RIG_JSON=$(python3 -c 'import json,sys; print(json.dumps([{"outside_project": True, "commit": sys.argv[1]}]))' \
+      "$UPSTREAM_SHA" </dev/null)
+    report "Rig spec: copied outside this project to $(q "$RIG_ABS") as rig $name. It is yours: an upgrade never refreshes it and uninstall leaves it."
+    report "Rig spec: next, $next (--cwd is required: a copy outside the project resolves its relative cwd elsewhere)"
+  fi
+  echo ""
+}
+
+# ---------------------------------------------------------------------------
 # Installation steps
 # ---------------------------------------------------------------------------
 sync_paths() {
@@ -1485,6 +1730,11 @@ install_instruction_files() {
     contains_id "$id" $SELECTED_IDE_IDS || continue
     for file in $(ide_files "$def"); do files+=("$file"); done
   done
+  # K7 (R13): every IDE's instructions point at AGENTS.md, so any non-empty IDE selection
+  # also installs it, once (universal already lists it). It goes through the same decision.
+  if [ -n "${SELECTED_IDE_IDS// /}" ] && ! contains_id AGENTS.md "${files[@]+"${files[@]}"}"; then
+    files+=("AGENTS.md")
+  fi
   [ ${#files[@]} -gt 0 ] || return 0
   echo "📄  Instruction files (only the HACF managed block changes):"
   for file in "${files[@]}"; do
@@ -1734,7 +1984,7 @@ write_manifest() {
   fi
   hx manifest "$HACF_VERSION" "$UPSTREAM_SHA" "$TMP_DIR/files.jsonl" "$TMP_DIR/owned.jsonl" \
     "$TMP_DIR/mcp.jsonl" "$TMP_DIR/hooks.jsonl" "$SRC/.agents/install-templates" "$source_json" \
-    "$SELECTED_IDE_IDS" </dev/null
+    "$SELECTED_IDE_IDS" "$RIG_JSON" </dev/null
   # Task 8: the per-machine source file, ignored through .agents/state/ (managed .gitignore
   # block and the scaffold's .agents/state/.gitignore). A remote install removes a stale one.
   if [ "$SOURCE_KIND" = "local" ]; then
@@ -1871,6 +2121,8 @@ main() {
   trap cleanup EXIT
   clone_upstream                # FLOW 3
   check_payload_links           # F18: before any write, both kinds
+  decide_rig_copy               # R5: --rig, or one local question
+  check_rig_dest                # R3: every --rig refusal, before any project write
   BACKUP_TS="$(date -u +%Y%m%dT%H%M%SZ)"
   : >"$TMP_DIR/files.jsonl"; : >"$TMP_DIR/owned.jsonl"; : >"$TMP_DIR/mcp.jsonl"; : >"$TMP_DIR/hooks.jsonl"
 
@@ -1889,6 +2141,7 @@ main() {
         register_mcp              # FLOW 11
         render_firewall           # FLOW 12
         install_hooks             # FLOW 13
+        copy_rig_spec             # R3: --rig only
         write_manifest            # FLOW 14
         check_saved_uninstaller   # FLOW 15
         run_migration

@@ -117,3 +117,24 @@ Details: [MasterSOP](MasterSOP.md#the-workflow-engine).
 | `hyper_migrate.py rollback` lists drifted paths and restores nothing | Files changed since the apply. Save your edits, then `python3 .agents/scripts/hyper_migrate.py rollback --journal .agents/state/migrations/v0.6.0.json --force`. |
 
 Details: [Migration Rules](MIGRATION_RULES.md#updating-hacf-adr-0010).
+
+## **10\. Git Hooks**
+
+### The pre-commit hook lints a file my ruff config excludes
+
+- **v0.6.0:** HACF's pre-commit hook passed the staged `*.py` paths to ruff explicitly. For explicit
+  paths, ruff ignores `exclude` and `extend-exclude` unless it gets `--force-exclude`, so the hook
+  linted and blocked files the project had excluded.
+- **v0.6.1:** the hook calls `ruff check --force-exclude` and `ruff format --check --force-exclude`, so
+  it lints the staged files that `ruff check .` from the project root would lint. Upgrade to get the
+  new hook. A v0.6.0 workaround (a root `force-exclude = true`, with a nested `.ruff.toml`) keeps
+  working.
+- **Known limit:** a nested ruff config (a `pyproject.toml` with `[tool.ruff]`, a `ruff.toml` or a
+  `.ruff.toml`) inside a root-excluded directory is still linted. For an explicit path, ruff takes
+  the settings from the nearest config, so the root's exclusions never apply to that file. Give the
+  nested directory its own exclusion: a `.ruff.toml` beside the nested config, holding
+  `exclude = ["*"]`.
+- **Skip the lint:** `git config hacf.lint false` turns the hook's lint step off for this repository,
+  and `git config --unset hacf.lint` turns it back on. For a single commit, use
+  `git -c hacf.lint=false commit`. The hook prints `lint skipped (git config hacf.lint=false)`. The
+  forbidden-path check (`spec/process/`) still runs.

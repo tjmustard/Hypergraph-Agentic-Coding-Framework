@@ -11,7 +11,7 @@ Trailhead: start at lore/MAP.md, then SPEC.md, then the active mission under mis
 >
 > Cross-IDE manifest: always-on context for Windsurf, Cursor, Roo Code, GitHub Copilot, Zed and
 > Codex. Bridge files in `.claude/`, `.cursor/`, `.windsurf/`, `.clinerules/` and `.roo/` add
-> tool-specific overrides. Human guide: `README.md`.
+> tool-specific overrides. Human guide: HACF's README, <https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework#readme>.
 
 ---
 
@@ -63,7 +63,7 @@ Entry points by role:
 | Ledger | `hypergraph_updater.py` | blast radius: positional node ids, or `--from-diff <rev-range>` (prints `unmapped`) |
 | Specs | `hyper_spec.py` | resolve, lint, progress, proof and status for SPEC.md and legacy MiniPRDs |
 | Specs | `archive_specs.py` | the only writer of `spec/archive/` (`--miniprd` or `--paths`) |
-| Scopes | `hyper_scope.py`, `hyper_openrig.py` | project, mission and slice scopes; OpenRig manifests (rig 0.6.13) |
+| Scopes | `hyper_scope.py`, `hyper_openrig.py` | project, mission and slice scopes; OpenRig manifests (rig 0.6.13 or 0.7.16) |
 | Lore | `hyper_lore.py`, `hyper_gates.py` | lore graph writer and CANON gate; gate mode and lore-check |
 | Firewall | `hyper_firewall.py`, `hyper_gate_hook.py` | render `.agentignore` into tool rules; the PreToolUse gate hook |
 | Engine | `hyper_engine.py` | parallel workflow engine: preflight, run, status, land, gc |

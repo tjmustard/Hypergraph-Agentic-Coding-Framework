@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""hyper_openrig.py — HACF's only writer of OpenRig manifests, pinned to rig 0.6.13.
+"""hyper_openrig.py — HACF's only writer of OpenRig manifests, for rig 0.6.13 and 0.7.16.
 
-The adapter freezes HACF's contract with OpenRig (github.com/mvschwarz/openrig, tag v0.6.13,
-commit 9eeb2e42) in one module. Normative design: HACF's v0.6.0 design notes (not shipped): OpenRig
-manifests, key ownership and spec frontmatter. The transcribed manifests and their sources live in
-`dev/tests/fixtures/openrig-0.6.13/`; the live contract test is
-`dev/tests/contract/test_openrig_live.py`.
+The adapter freezes HACF's contract with OpenRig (github.com/mvschwarz/openrig) in one module. Its
+accepted set is ACCEPTED_RIG_VERSIONS (rig 0.6.13 and 0.7.16); the templates were transcribed from
+tag v0.6.13, commit 9eeb2e42, and compared against 0.7.16 (release-0.6.1 slice 9). Normative design:
+HACF's v0.6.0 design notes (not shipped): OpenRig manifests, key ownership and spec frontmatter. The
+transcribed manifests and their sources live in `dev/tests/fixtures/openrig-0.6.13/`; the live
+contract test is `dev/tests/contract/test_openrig_live.py`.
 
 Library (for later slices):
 - render_project_yaml(), render_workspace_yaml(), render_mission_yaml(), render_slice_yaml():
-  the v0alpha1 manifests, byte-identical to rig's templates.
+  the v0alpha1 manifests, byte-identical to rig's templates (mission.yaml in rig 0.7.16's named
+  shape; a 0.6.13 mission.yaml without metadata.name stays valid and is never rewritten).
 - validate_mission_composition(), read_mission_members(), add_slice_to_mission(),
   remove_slice_from_mission(): mission.yaml membership under rig's rules. Nothing is cached:
   every call reads mission.yaml from disk, because `rig scope slice create` appends membership
@@ -21,7 +23,7 @@ Library (for later slices):
   rule (R22.7).
 - argv_* builders, run_rig(), rig_slice_create(), rig_slice_close(): rig calls as argv lists with
   a timeout; every artifact-naming call passes --name (R22.4).
-- write_proof_artifact(): delegates to `rig proof add` under the pinned rig, else writes the same
+- write_proof_artifact(): delegates to `rig proof add` under an accepted rig, else writes the same
   C1 header itself.
 
 Every write to a file rig may also write is compare-and-swap (#key-ownership): the bytes read are
@@ -72,9 +74,13 @@ EXIT_USAGE = 2
 EXIT_PARSE = 4
 EXIT_REFUSED = 5
 
-# --- Pinned contract (rig 0.6.13) ----------------------------------------------------------------
-RIG_VERSION = "0.6.13"
-RIG_COMMIT = "9eeb2e42"
+# --- Contract (accepted rig versions) -------------------------------------------------------------
+# HACF delegates to rig only when `rig --version` is one of these (release-0.6.1 slice 9; R18d).
+# A new version joins only after dev/tests/contract/test_openrig_live.py passes on it.
+ACCEPTED_RIG_VERSIONS = ("0.6.13", "0.7.16")
+# The version npx downloads, only with the user's explicit download consent: the newest accepted.
+RIG_VERSION = "0.7.16"
+RIG_COMMIT = "9eeb2e42"  # the source of the transcribed templates (tag v0.6.13)
 RIG_PACKAGE = "@openrig/cli"
 SCHEMA_PROJECT = "openrig.project/v0alpha1"
 SCHEMA_WORKSPACE = "openrig.workspace/v0alpha1"
@@ -93,6 +99,8 @@ SLICE_STATES = ("active", "closed", "shipped", "all")
 MISSION_STATUSES = ("planned", "active", "complete")  # mission.yaml metadata.status (R29)
 
 # hacf_status -> the status rig reads from slice SPEC.md frontmatter (schemas.md#spec-frontmatter)
+# Accepted difference (R21b): rig 0.7.16 lists `done` under `slice ls --state shipped`; 0.6.13
+# lists it only under `all`.
 STATUS_MAP = {
     "compiled": "active",
     "executing": "active",
@@ -427,7 +435,8 @@ def splice_frontmatter(text: str, updates: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Manifests (schemas.md#openrig-manifests), byte-identical to rig 0.6.13's templates
+# Manifests (schemas.md#openrig-manifests), byte-identical to rig's templates: 0.6.13's, and for
+# mission.yaml 0.7.16's missionManifest(name), which adds metadata.name (R21a)
 # ---------------------------------------------------------------------------
 
 _PROJECT_YAML = """\
@@ -488,9 +497,16 @@ def render_workspace_yaml() -> str:
     return _WORKSPACE_YAML
 
 
-def render_mission_yaml() -> str:
-    """Return a new mission's mission.yaml (MISSION_MANIFEST): status planned, no slices."""
-    return _MISSION_YAML
+def render_mission_yaml(name: str) -> str:
+    """Return a new mission's mission.yaml: status planned, no slices, named `name`.
+
+    The bytes of rig 0.7.16's missionManifest(name) (dist/commands/scope.js:30): 0.6.13's
+    MISSION_MANIFEST with `  name: "<name>"` as the first key under `metadata:` (R21a). NAME_RE
+    admits only [A-Za-z0-9._-], so json.dumps quotes it exactly as JSON.stringify does. A 0.6.13
+    mission.yaml (no metadata.name) stays valid; HACF never rewrites it or adds the key.
+    """
+    named = f"metadata:\n  name: {json.dumps(_check_name(name, 'mission'))}\n"
+    return _MISSION_YAML.replace("metadata:\n", named, 1)
 
 
 def render_slice_yaml() -> str:
@@ -1021,23 +1037,27 @@ def parse_version(text: str | None) -> tuple[int, int, int] | None:
 def version_decision(version_text: str | None) -> tuple[str, str | None]:
     """Return (mode, warning) for a `rig --version` output under the version rule.
 
-    delegate: rig is the pinned 0.6.13, so HACF calls it. native: another 0.6.x; HACF does not call
-    it and writes the v0alpha1 manifests and C1 artifacts itself. stop: another major.minor (or
-    an unreadable version); HACF never calls it until a re-pin after the contract test passes.
+    delegate: rig is an accepted version (ACCEPTED_RIG_VERSIONS: 0.6.13 or 0.7.16), so HACF calls
+    it. native: another version with an accepted major.minor (0.6.x or 0.7.x); HACF does not call it
+    and writes the v0alpha1 manifests and C1 artifacts itself. stop: any other major.minor (or an
+    unreadable version); HACF never calls it until the version is accepted after the contract test
+    passes on it.
     """
-    pinned, found = parse_version(RIG_VERSION), parse_version(version_text)
+    accepted = [parse_version(v) for v in ACCEPTED_RIG_VERSIONS]
+    found = parse_version(version_text)
     shown = (version_text or "").strip() or "(no output)"
-    if found == pinned:
+    named = " or ".join(ACCEPTED_RIG_VERSIONS)
+    if found in accepted:
         return "delegate", None
-    if found is not None and found[:2] == pinned[:2]:
+    if found is not None and any(found[:2] == v[:2] for v in accepted):
         return "native", (
-            f"rig {shown} is not the pinned {RIG_VERSION}; HACF does not call it and writes the "
-            "v0alpha1 manifests and C1 artifacts itself"
+            f"rig {shown} is not an accepted version (rig {named}); HACF does not call it and "
+            "writes the v0alpha1 manifests and C1 artifacts itself"
         )
     return "stop", (
-        f"rig {shown} is outside the pinned contract (rig {RIG_VERSION}); HACF never calls it. "
-        "Supporting a new rig version means re-pinning hyper_openrig.py after "
-        "dev/tests/contract/test_openrig_live.py passes on it"
+        f"rig {shown} is outside the pinned contract (rig {named}); HACF never calls it. "
+        "Supporting a new rig version means re-pinning: adding it to ACCEPTED_RIG_VERSIONS in "
+        "hyper_openrig.py after dev/tests/contract/test_openrig_live.py passes on it"
     )
 
 
@@ -1051,7 +1071,7 @@ class RigPlan(NamedTuple):
 
     @property
     def use_rig(self) -> bool:
-        """True only for the pinned rig (mode delegate)."""
+        """True only for an accepted rig (mode delegate)."""
         return self.mode == "delegate"
 
 
@@ -1327,7 +1347,7 @@ def write_proof_artifact(
 ) -> Path:
     """Write proof/<name> with a C1 header and return its path, applying the version rule.
 
-    Under the pinned rig the write is delegated to `rig proof add ... --name <name>`. Otherwise
+    Under an accepted rig the write is delegated to `rig proof add ... --name <name>`. Otherwise
     (no rig, another 0.6.x, another major.minor) HACF writes the same header itself and prints
     the plan's warning, if any, to stderr. An existing artifact is refused either way.
     """
@@ -1668,7 +1688,9 @@ def build_parser() -> argparse.ArgumentParser:
     """Return the CLI parser (no abbreviated flags)."""
     parser = argparse.ArgumentParser(
         prog="hyper_openrig.py",
-        description="Register this repository with a user's OpenRig catalog (rig 0.6.13).",
+        description=(
+            "Register this repository with a user's OpenRig catalog (rig 0.6.13 or 0.7.16)."
+        ),
         allow_abbrev=False,
     )
     sub = parser.add_subparsers(dest="command", metavar="<command>", required=True)
