@@ -1,0 +1,73 @@
+{
+  "_comment": "Expected normalizations of the payload captures in dev/tests/fixtures/recorded/S04/ (test_normalize_fixture). Written from reading those captures, not by running the normalizer. {project} is the project the contract run indexed (verdict.json observations.index_result.project) and {repo_root} the capture's cwd; both are path-derived, so they change with each run.",
+  "09-adapter-index_repository.json": {
+    "capability": "index",
+    "normalized": {"changed_files": [], "impacted": [], "impacted_files": []}
+  },
+  "10-adapter-list_projects.json": {
+    "capability": "list_projects",
+    "projects": [{"name": "{project}", "root": "{repo_root}"}]
+  },
+  "12-adapter-index_status.json": {
+    "capability": "status",
+    "normalized": {"changed_files": [], "impacted": [], "impacted_files": []}
+  },
+  "13-adapter-trace_path.json": {
+    "capability": "symbol_impact",
+    "normalized": {
+      "changed_files": [],
+      "impacted": [
+        {"symbol": "{project}.pkg.caller.use", "file": null, "line": null, "kind": null, "risk": null, "distance": 1}
+      ],
+      "impacted_files": []
+    }
+  },
+  "14-adapter-search_graph.json": {
+    "capability": "search",
+    "normalized": {
+      "changed_files": [],
+      "impacted": [
+        {"symbol": "{project}.pkg.core.helper", "file": "pkg/core.py", "line": 4, "kind": "Function", "risk": null, "distance": null}
+      ],
+      "impacted_files": ["pkg/core.py"]
+    }
+  },
+  "15-adapter-detect_changes.json": {
+    "capability": "diff_impact",
+    "normalized": {
+      "changed_files": ["pkg/core.py"],
+      "impacted": [
+        {"symbol": "{project}.pkg.caller.use", "file": "pkg/caller.py", "line": null, "kind": "Function", "risk": null, "distance": 1}
+      ],
+      "impacted_files": ["pkg/caller.py"]
+    }
+  },
+  "16-detect_changes-base-commit.json": {
+    "capability": "diff_impact",
+    "normalized": {
+      "changed_files": ["pkg/core.py"],
+      "impacted": [
+        {"symbol": "{project}.pkg.caller.use", "file": "pkg/caller.py", "line": null, "kind": "Function", "risk": null, "distance": 1}
+      ],
+      "impacted_files": ["pkg/caller.py"]
+    }
+  },
+  "17-adapter-detect_changes.json": {
+    "capability": "diff_impact",
+    "normalized": {
+      "changed_files": ["pkg/core.py"],
+      "impacted": [
+        {"symbol": "{project}.pkg.caller.use", "file": "pkg/caller.py", "line": null, "kind": "Function", "risk": null, "distance": 1}
+      ],
+      "impacted_files": ["pkg/caller.py"]
+    }
+  },
+  "24-adapter-delete_project.json": {
+    "capability": "delete",
+    "normalized": {"changed_files": [], "impacted": [], "impacted_files": []}
+  },
+  "25-adapter-list_projects.json": {
+    "capability": "list_projects",
+    "projects": []
+  }
+}

@@ -30,9 +30,12 @@ Clear conversation history by **starting a new conversation** in Claude Code:
 2. The user manually starts a new conversation thread (or you can suggest: "You may now `/hyper-clear` by opening a new chat window").
 
 **Specification Retained:**
-- `spec/compiled/architecture.yml` — preserved
-- `spec/compiled/SuperPRD.md` — preserved
-- `spec/compiled/MiniPRD_*.md` — preserved
+- `spec/compiled/architecture.yml` (the component ledger) — preserved
+- Root `SPEC.md` (the system of record) — preserved
+- `missions/` (mission and slice `SPEC.md`, `PROGRESS.md`, `PROOF.md`) — preserved
+- `lore/` and `lore_hypergraph.yml` (decisions, stories, canon) — preserved
+- `.agents/memory/activeContext.md` — preserved (only its Session State is updated)
+- Legacy flat `spec/compiled/MiniPRD_*.md` — preserved (dual-read until v0.7.0)
 - `.agents/` framework code — preserved
 - Performance metrics (heuristics, model overrides) — preserved
 
@@ -58,7 +61,7 @@ Output to user:
 ✅ CONTEXT CLEARED
 ========================================
 Session context flushed.
-Architecture.yml and spec/compiled/ retained.
+Ledger, SPEC.md, missions/, lore/ and activeContext.md retained.
 Ready for next feature cycle.
 
 Idempotency: This is a fresh clear.
@@ -117,9 +120,12 @@ This will:
 | State Type | Preserved? | Details |
 |---|---|---|
 | **Conversation History** | ❌ No | Flushed on /hyper-clear |
-| **architecture.yml** | ✅ Yes | Ground truth preserved |
-| **SuperPRD.md** | ✅ Yes | Specification preserved |
-| **MiniPRD_*.md** | ✅ Yes | All specs preserved |
+| **architecture.yml** | ✅ Yes | Component ledger (ground truth) preserved |
+| **Root SPEC.md** | ✅ Yes | System of record preserved |
+| **missions/** | ✅ Yes | Mission and slice SPEC.md, PROGRESS.md, PROOF.md preserved |
+| **lore/** + **lore_hypergraph.yml** | ✅ Yes | Decisions, stories and canon preserved |
+| **activeContext.md** | ✅ Yes | Preserved; only its Session State is updated |
+| **Legacy MiniPRD_*.md** | ✅ Yes | Flat `spec/compiled/` specs preserved (dual-read until v0.7.0) |
 | **spec/archive/** | ✅ Yes | Historical context preserved |
 | **Performance Metrics** | ✅ Yes | Heuristics for classifier retained |
 | **.agents/** Framework | ✅ Yes | Skills, rules, scripts intact |
@@ -129,7 +135,7 @@ This will:
 
 ## Negative Space (Constraints)
 
-- **DO NOT** delete architecture.yml or spec/compiled/ files.
+- **DO NOT** delete the ledger, root `SPEC.md`, `missions/`, `lore/`, `lore_hypergraph.yml` or legacy `spec/compiled/` files.
 - **DO NOT** delete performance metrics or heuristics.
 - **DO NOT** fail on idempotent re-calls. Make /hyper-clear a no-op if already cleared.
 - **DO NOT** require confirmation from the user.

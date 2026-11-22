@@ -6,7 +6,7 @@ set -euo pipefail
 staged_files=$(git diff --cached --name-only)
 for file in $staged_files; do
     # Define directories you want strictly blocked from version control
-    if [[ $file == spec/process/* ]] || [[ $file == spec/handoffs/* ]]; then
+    if [[ $file == spec/process/* ]]; then
         echo "❌ COMMIT BLOCKED!"
         echo "Error: You are trying to commit a forbidden internal file:"
         echo "  -> $file"
@@ -15,13 +15,47 @@ for file in $staged_files; do
     fi
 done
 
-# --- Lint check ---
-if ! command -v uv &>/dev/null; then
-  echo "⚠️  uv not found — skipping lint check."
+# --- Lint check: only the staged *.py files (added, copied or modified) ---
+py_files=()
+while IFS= read -r -d '' file; do
+    if [[ $file == *.py ]]; then
+        py_files+=("$file")
+    fi
+done < <(git diff --cached --name-only --diff-filter=ACM -z)
+
+if [[ ${#py_files[@]} -eq 0 ]]; then
   exit 0
 fi
 
-echo "🔍  ruff lint..."
-uv run ruff check . || { echo "❌  Lint failed. Run: uv run ruff check ."; exit 1; }
-uv run ruff format --check . || { echo "❌  Format check failed. Run: uv run ruff format ."; exit 1; }
+# --- Resolve ruff: an existing .venv/bin/ruff, else ruff on PATH, else skip ---
+# Git runs this hook from the work-tree root, so only the root .venv is considered;
+# parent directories are never searched. The hook never installs, syncs or downloads.
+if [[ -x .venv/bin/ruff ]]; then
+  ruff=(.venv/bin/ruff)
+elif command -v ruff &>/dev/null; then
+  ruff=(ruff)
+else
+  echo "⚠️  ruff not found (.venv/bin/ruff or PATH) — skipping lint check. HACF never downloads ruff at commit time."
+  exit 0
+fi
+
+echo "🔍  ruff lint (${#py_files[@]} staged file(s))... using ${ruff[*]}"
+
+# ruff exits 1 for findings; any other non-zero exit means ruff itself could not run.
+rc=0
+"${ruff[@]}" check -- "${py_files[@]}" || rc=$?
+if [[ $rc -eq 1 ]]; then
+  echo "❌  Lint failed. Run: ${ruff[*]} check -- <staged files>"; exit 1
+elif [[ $rc -ne 0 ]]; then
+  echo "❌  ruff could not run (exit $rc): ${ruff[*]}"; exit 1
+fi
+
+rc=0
+"${ruff[@]}" format --check -- "${py_files[@]}" || rc=$?
+if [[ $rc -eq 1 ]]; then
+  echo "❌  Format check failed. Run: ${ruff[*]} format -- <staged files>"; exit 1
+elif [[ $rc -ne 0 ]]; then
+  echo "❌  ruff could not run (exit $rc): ${ruff[*]}"; exit 1
+fi
+
 echo "✅  Lint passed."

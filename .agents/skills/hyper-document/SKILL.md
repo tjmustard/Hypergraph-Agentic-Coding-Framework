@@ -158,16 +158,16 @@ Then:
 
 ---
 
-### `.agents/memory/` files
+### Agent memory: `activeContext.md`, `lore/` and root `SPEC.md`
 
-**Purpose:** Agent-facing project context (activeContext, productContext, systemPatterns).
+**Purpose:** Agent-facing project context.
 
 **Update when:** Core project goals, active work, or architectural patterns change.
 
 **Files:**
-- `activeContext.md` — current sprint focus, active MiniPRDs, recent decisions.
-- `productContext.md` — what the product is, who it's for, core value proposition.
-- `systemPatterns.md` — recurring architectural patterns, conventions, anti-patterns.
+- `.agents/memory/activeContext.md` — current sprint focus, the active mission or slices, recent changes.
+- `lore/` — decisions, stories and canon. `lore/MAP.md` is the trailhead. New decisions and patterns are proposed with `python3 .agents/scripts/hyper_lore.py propose`; canon is reached only through `/hyper-lore-approve`, never by editing `lore/CANON.md`.
+- Root `SPEC.md` — the system of record: what the product is, who it's for, its product context. Written through `/hyper-baseline`.
 
 **Style rules:**
 - Written for an agent reading cold — no assumed context.

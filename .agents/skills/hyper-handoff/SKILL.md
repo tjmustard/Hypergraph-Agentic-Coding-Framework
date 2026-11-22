@@ -44,9 +44,11 @@ done
 
 Before writing, read and note paths/URLs for any existing artifacts that capture ground truth. Reference them by path rather than reproducing their content:
 
-- `spec/compiled/architecture.yml` — hypergraph state
-- `spec/active/` — any in-progress PRDs, Red Team reports, or draft specs
-- `spec/compiled/` — finalized SuperPRDs and MiniPRDs
+- `spec/compiled/architecture.yml` — the component ledger (`python3 .agents/scripts/hyper_ledger.py show`)
+- Root `SPEC.md` — the system of record
+- The active mission under `missions/` — `python3 .agents/scripts/hyper_spec.py status` lists missions and slices with their statuses
+- `lore/MAP.md` — the lore trailhead (canon, proposed and stale decisions)
+- `spec/active/` — any in-progress Draft PRDs, Red Team reports, or draft specs
 - `.agents/memory/activeContext.md` — current sprint state and recent decisions
 - Recent git log (`git log --oneline -5`) — commit history
 
@@ -81,9 +83,11 @@ Be specific — vague items like "needs more work" are not useful.>
 
 | Artifact | Path | Status |
 |---|---|---|
-| architecture.yml | spec/compiled/architecture.yml | <clean / has dirty nodes> |
+| Ledger | spec/compiled/architecture.yml | <clean / has dirty nodes> |
+| Root SPEC.md | SPEC.md | <present / missing> |
+| Active mission | missions/<mission>/ | <mission and slice statuses from hyper_spec.py status> |
+| Lore | lore/MAP.md | <proposed or stale items worth noting> |
 | Active specs | spec/active/ | <list files or "empty"> |
-| Compiled specs | spec/compiled/ | <list key files> |
 | activeContext.md | .agents/memory/activeContext.md | <one-line summary> |
 
 ## Suggested Skills for Next Session
@@ -94,7 +98,7 @@ with a one-line reason for each. Choose from:>
 - `/hyper-architect` — if requirements still need extraction
 - `/hyper-redteam` — if a Draft PRD exists and needs adversarial review
 - `/hyper-resolve` — if a Red Team report exists and needs trade-off resolution
-- `/hyper-execute` — if a MiniPRD is ready to implement
+- `/hyper-execute` — if a mission slice (or a legacy flat MiniPRD) is ready to implement
 - `/hyper-audit` — if code was just written and needs verification
 - `/hyper-document` — if documentation is out of sync
 - `/hyper-contextualize` — if agent files may have HACF framing issues
@@ -106,6 +110,8 @@ with a one-line reason for each. Choose from:>
 <One sentence: the single most important thing the next agent should do first.
 Example: "Run /hyper-redteam on spec/active/Draft_PRD.md in a new context window.">
 ```
+
+The handoff document always goes to the OS temp directory from Step 1, never into the workspace.
 
 ---
 

@@ -1,0 +1,76 @@
+# Transcribed CLI contract of codebase-memory-mcp 0.12.1, as hyper_codegraph.py uses it (S04).
+# Two sources: README.md at tag v0.12.1 (fetched read-only on 2026-10-27 UTC with the user's
+# consent; lines cited as `L<n>`) and the contract test's verbatim `cli <tool> --help` captures
+# in dev/tests/fixtures/recorded/S04/ (written by the harness, never by hand). A flag the README
+# does not show is pinned by its help capture alone. test_contract_matches_defaults keeps every
+# flag of .agents/config/code_graph.defaults.yml listed here.
+backend: codebase-memory-mcp
+version: '0.12.1'
+sources:
+  readme:
+    url: https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/v0.12.1/README.md
+    view: https://github.com/DeusData/codebase-memory-mcp/blob/v0.12.1/README.md
+    sha256: f3a94869bb9bf8f3dc113450eeba655a301034c7dfb7be801ee7583034374e8b
+  install_sh:
+    url: https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/v0.12.1/install.sh
+    note: >-
+      Read in the first S04 execute session (MiniPRD_07 stop report, sha256 13049c7c...); not
+      fetched again. Its facts (--skip-config, --dir, --clients, an HTTPS CBM_DOWNLOAD_URL,
+      mandatory SHA-256) are transcribed from dev/design/v0.6.0/schemas.md#code-graph-config.
+  help_captures: dev/tests/fixtures/recorded/S04/
+readme_facts:
+  - fact: Read tools print a compact tree by default; a tool's `--format json` prints the payload JSON, outer `--json` the full MCP envelope.
+    lines: L796
+  - fact: The project value is the `name` returned by list_projects.
+    lines: L810
+  - fact: Hyphenated flags --repo-path, --project, --name-pattern, --function-name, --direction.
+    lines: L807, L811, L812
+  - fact: Omitted rows report totals, `has_more` and a continuation offset or cursor; detect_changes pages changed files, impacted symbols and modules independently.
+    lines: L800
+  - fact: Indexes and config live under CBM_CACHE_DIR (default ~/.cache/codebase-memory-mcp).
+    lines: L943
+  - fact: One-shot `cli` commands connect to the shared coordination daemon, starting one if none is running.
+    lines: L161, L951
+capabilities:
+  index:
+    tool: index_repository
+    flags: ['--repo-path']
+    format_json: false  # R31: --format is not a flag of this tool; it prints one JSON object
+    readme: L807
+    help_capture: 02-help-index_repository.json
+  status:
+    tool: index_status
+    flags: ['--project', '--format']
+    format_json: true
+    readme: L834 (tool table; no flags shown)
+    help_capture: 03-help-index_status.json
+  list_projects:
+    tool: list_projects
+    flags: ['--limit', '--format']
+    format_json: true
+    readme: L808, L818
+    help_capture: 04-help-list_projects.json
+  diff_impact:
+    tool: detect_changes
+    flags: ['--project', '--base-branch', '--changed-limit', '--limit', '--module-limit', '--max-output-tokens', '--format']
+    format_json: true
+    readme: L800, L870 (no flags shown)
+    help_capture: 05-help-detect_changes.json
+  symbol_impact:
+    tool: trace_path
+    flags: ['--project', '--function-name', '--direction', '--format']
+    format_json: true
+    readme: L812
+    help_capture: 06-help-trace_path.json
+  search:
+    tool: search_graph
+    flags: ['--project', '--name-pattern', '--format']
+    format_json: true
+    readme: L811, L819
+    help_capture: 07-help-search_graph.json
+  delete:
+    tool: delete_project
+    flags: ['--project']
+    format_json: false  # R31
+    readme: L833 (tool table; no flags shown)
+    help_capture: 08-help-delete_project.json

@@ -1,0 +1,594 @@
+{
+  ".agentignore": [
+    "52639b720df055f474171be3af928ff4b4c1a66fe9d1a46968e5e75404965a4b"
+  ],
+  ".agents/config/heuristic_rules.yaml": [
+    "239882c974729506dc999abbacf602554d3f52c940f5a5f7c8d1196720fca1ea"
+  ],
+  ".agents/install-templates/AGENTS.md": [
+    "16d9d0ff816587b2a1fd6562bcd524f52ccc2b2e9eaad6a2ebd9426a73781ef2",
+    "418eba1d56b3e3d5d4f2975a21929a0717d84dcd2d6374615c1332542976a146",
+    "c08804f0d1193d8a9bccc5e322778b1dfb85d5c0e1463cf583e15b0489ab3b6b"
+  ],
+  ".agents/install-templates/CLAUDE.md": [
+    "03a36e0baa5a9d786a9519816fb9496ec0480fdd1e5b82de30d659e9756a3e36",
+    "725c649ca51dc723c88db60109084544a9dec295dc12d405a74df640fede34ee"
+  ],
+  ".agents/install-templates/GEMINI.md": [
+    "0d289c99aabe913b44ce2b3a0b855313c5d22dbdad81411ab8c6c91df67d34e4",
+    "ce930880933b53eec9a4c310e086665bbee5ff4af55b8f1c6e71c5248c6b60cc"
+  ],
+  ".agents/rules/git-workflow.md": [
+    "3ef0b097cc661ab8dff3be06bd2a41b8abcdf887ab03d04436de707a787c95cb"
+  ],
+  ".agents/rules/package-management.md": [
+    "e78c059560c9369a9fdab1f5966f7aabc1d4d478dc8caf6756e9682795a3bf08"
+  ],
+  ".agents/rules/python.md": [
+    "3dbd0613faa3166fd8470437c7c4ec99394be71099ecf71c03472bc0c3c0f144",
+    "ab3eb09e3fc8ddf420faace492c41425d6f8e112b1e7e2363fa25f56447c9be8"
+  ],
+  ".agents/rules/security.md": [
+    "805f74bd00d42b04c18882695535ec9e8a806f363eb7a94a14d59bba71bb5081"
+  ],
+  ".agents/rules/testing.md": [
+    "9a294d42bc81b5a0fa4c809ab54590f0139ef751c19fbf5a38c746f822f94b03"
+  ],
+  ".agents/schemas/DESIGN_Template.md": [
+    "087c9eaf2aab377d46998a8ec7742fd9dd219e17ae634236a3a0c6da704493e5"
+  ],
+  ".agents/schemas/META_template.md": [
+    "d12eceb98e0fb027bc509bb63f1c49197f5f686ffe16767cd3ed17e0d2332de8"
+  ],
+  ".agents/schemas/MiniPRD_template.md": [
+    "3b3b363b12a76c973fb43ff976cc0d689a9798f343eaebd722619002c161bba6"
+  ],
+  ".agents/schemas/SuperPRD_Template.md": [
+    "f69459743ec70a4252972bcf45f19c312afc1c34e8fef82e1c33c835dd4988dc"
+  ],
+  ".agents/schemas/final_truth_template.md": [
+    "40625d38f45ef6825834bdb6b5a6558f27da91a97d5d303dadf97ab1aa992811"
+  ],
+  ".agents/schemas/hypergraph_schema.md": [
+    "d58fcd06f59609474cb2dea4c5d33bbafd2387d49f5f4d77bea8aef298ca8e02"
+  ],
+  ".agents/schemas/plan_Template.md": [
+    "393fc3858c941c174895f979397764a0a4317399a76ef0cac0d72c81249852e4"
+  ],
+  ".agents/schemas/project-templates/CHANGELOG.md": [
+    "e897ba51f53fc531450c402d3727357e436417572c3bd01c0b7e1624747769d6"
+  ],
+  ".agents/schemas/project-templates/CITATION.cff": [
+    "f391a0acbe130d1ba27952857a692bcd1874bff97490a8d91aa37a10a2894a40"
+  ],
+  ".agents/schemas/project-templates/CODE_OF_CONDUCT.md": [
+    "34cbe1661fccb93143fe2630ea649b55161e811e5e9deeb0af168c5bc6102caa"
+  ],
+  ".agents/schemas/project-templates/CONTRIBUTING.md": [
+    "241a1744e6521eed42121079991259d4728c413d4727f4fb55db16622504195f"
+  ],
+  ".agents/schemas/project-templates/DEVELOPMENT.md": [
+    "c23c8edc66fa77d8020fcc8bdc32c47bcab5d8ae2da9822e09c49fee3ccefb6a"
+  ],
+  ".agents/schemas/project-templates/README.md": [
+    "e3c1fbe72262c1d732ba3c74a7b87e535e8f0ea72f97acf46e72381f487d0bb7"
+  ],
+  ".agents/schemas/project-templates/SECURITY.md": [
+    "4260cbafbade809bd8031fb1c2e7b8fad89ccbb425543873c3d13801aff1b502"
+  ],
+  ".agents/schemas/project-templates/pyproject.toml": [
+    "4c0df53e99ac245f84bd8d70f2c885d3686dca7058d1959655b2bc80f20ee653",
+    "bcbd4745511031caa96c886c56ef0c3513d0cc3c841494182cc733e680d74562"
+  ],
+  ".agents/schemas/todo_Template.md": [
+    "641f91a43b828bd4b1fff25709494ba8e6e1064973e651e75191b34746a98ecb"
+  ],
+  ".agents/scripts/archive_specs.py": [
+    "57e37442848f83b445adaf538e5c3dbf28626c6e5020bb193e621477bb7c12cb"
+  ],
+  ".agents/scripts/ceiling_enforcer.py": [
+    "797eb512aaf998776e1629b9b9cb78754b9a84002533876b97078dbcd091951b"
+  ],
+  ".agents/scripts/ceiling_resolver.py": [
+    "d53a53abe20061d5f3df3ed968076a6040eb0bb94fb258a6f45dac9d615844fa"
+  ],
+  ".agents/scripts/commit-msg": [
+    "685a350ca6969d08a31474f74c86da308522db5084b1fff8f46e9b6084b2cf90"
+  ],
+  ".agents/scripts/compaction_engine.py": [
+    "b68696688640267b5dbd2044d5318fafbe1d785ee5b6566adac4801511e6f46f"
+  ],
+  ".agents/scripts/heuristic_classifier.py": [
+    "355364a2a9810ebe71d0f6f559fd9dcde0efb59d4c07e01a932309a3d08c1078"
+  ],
+  ".agents/scripts/hyper_daemon.py": [
+    "a22682a24ad034f131e5658a50337ab07ea6ac605f19ab3112cfde206a1e7d64"
+  ],
+  ".agents/scripts/hyper_fix.py": [
+    "b126e1f8f2941155a4c368426bf3afb7d4b79f659454e5ecc09102c76685fdc7"
+  ],
+  ".agents/scripts/hyper_orchestrator.py": [
+    "850627d4df02909ebb5661ca87a3bad6d55d672dda4eb4fe03491c59638de0bf"
+  ],
+  ".agents/scripts/hyper_resolve_conflict.py": [
+    "9cc6b521bada8effe86c5b123f3293849a0aec23e62109274cb874c6ae7d0f86"
+  ],
+  ".agents/scripts/hyper_update_core.py": [
+    "1f0e3f280e91dd243025c5a57f4c180c9dd28f681d73455a44e3859ee40a42c3"
+  ],
+  ".agents/scripts/hyper_update_merge_engine.py": [
+    "4dc9823fcdfd3a77fe1c1de4665a8e5e69ff2c11712a7d4223604633c5eca38a"
+  ],
+  ".agents/scripts/hyper_update_recovery.py": [
+    "31e7cdc568db0a6578c95085c2ddb4f9fb80f9709c77f4eaffb42c434fd3e7d4"
+  ],
+  ".agents/scripts/hyper_update_verification.py": [
+    "3245ac3cc680a246a144d68542a9acfecf5693490dd716a663e72774ec7e3c35"
+  ],
+  ".agents/scripts/hypergraph_updater.py": [
+    "9b7eb96ad00a98eb10292916128f0a5ea76ae8c030dd945f6f124332bf063ef3"
+  ],
+  ".agents/scripts/interrupt_detector.py": [
+    "6560c81e913cf7140edeb806b453c908741b7184fd4d934193b2424794729958"
+  ],
+  ".agents/scripts/meta_loader.py": [
+    "fce0cf22b1b25b80579dcda9215ab20e5d498e361888ff18d3c89052290327ef"
+  ],
+  ".agents/scripts/model_router.py": [
+    "7419377f84aa96b93b56003bae2c54270677044c277fb5c353e88c8a224dabca"
+  ],
+  ".agents/scripts/override_manager.py": [
+    "a272c3cc244176834bfd90db2eb46c237b5b283aa8f6ae1936d78dc5d4838e95"
+  ],
+  ".agents/scripts/pre-commit": [
+    "402b2943408668891c669c0e6a49ae42432a946fc32d7fadd90920a7c48bbff9",
+    "b589bdca3155fb972681d9a82e95a27c3bf9a3c5490d5aaeca5e5d2d64ed45e0"
+  ],
+  ".agents/scripts/pre-push": [
+    "8c3373286f0dc37dc26b22ea75748a5b8963c19ede089c16e308e1da9df00860"
+  ],
+  ".agents/scripts/semantic_graph_merger.py": [
+    "b7a05ef517b77d9142debe88deff6fd9d87050c324dab39dd282940aa54823e1"
+  ],
+  ".agents/scripts/thinking_token_monitor.py": [
+    "3c17f26fdeb89f89cead2d89257d0cd6844a8343fbd89de40260cb5a26915260"
+  ],
+  ".agents/scripts/token_budget_checker.py": [
+    "c7b89248ebb02df935b81e48df4425b79081f126912a8bdbcaed10571e7df4c0"
+  ],
+  ".agents/scripts/token_budget_reconciler.py": [
+    "f6fa0ca3be6e2e46e999336c0e9721d757151a7b62cf1c2db6f3f39fd1351db9"
+  ],
+  ".agents/skills/hyper-architect/SKILL.md": [
+    "e08964aacf5b81b83643e1747e34444c30c3425d39656d52833373d6339d4330"
+  ],
+  ".agents/skills/hyper-audit/SKILL.md": [
+    "527350b6eb7d48a6d625da85a43b797a625f30b0d9ad72d5eaa489a5d6e0a162"
+  ],
+  ".agents/skills/hyper-baseline/SKILL.md": [
+    "7b839dfc6e7539c5efc9231affb9c8a21a23de58b19716889a5dc6980652ff47"
+  ],
+  ".agents/skills/hyper-clear/SKILL.md": [
+    "4bcf76b9b46a10bde2ba699ff9db930139adcc0e3eefbf989284a0010f279544"
+  ],
+  ".agents/skills/hyper-co-research/SKILL.md": [
+    "64d722b6b3c37cd83640b4b19361df40a4b1a3b90578d774f8f067036a079fc4"
+  ],
+  ".agents/skills/hyper-consult-cto/SKILL.md": [
+    "b1e5bf8694ccfe2e89c3185d5269e25d805089cda740c07df8a98eed1dd6b1f2"
+  ],
+  ".agents/skills/hyper-contextualize/META.yml": [
+    "ce8a78f307bcafd7ddb6e426b4edff88ccca3a3c06b1a7d8ae86f64d2dcfad27"
+  ],
+  ".agents/skills/hyper-contextualize/SKILL.md": [
+    "4888261f870d61be0d490afa124c60dc5b5a11650cdae9842d7a1632532a7d4f"
+  ],
+  ".agents/skills/hyper-create-issue/SKILL.md": [
+    "9dfb7318012cfd93683db1c3daba42b431641eac44b3af21a555fdc83f4df220"
+  ],
+  ".agents/skills/hyper-create-skill/SKILL.md": [
+    "0e8abd883b1774daadb8cbfbf7e3a6ebac060340fc5562957e76a6faa558a215"
+  ],
+  ".agents/skills/hyper-create-skill/examples/gemini-gem-example.md": [
+    "e2721a18e87f22fe456d54f23d86c4cd956b3074dc5dd34b275fd7a927927c99"
+  ],
+  ".agents/skills/hyper-create-skill/resources/SKILL_TEMPLATE.md": [
+    "445dc584d84d38563a83271e8201fb36fe3df156dd75b5505af696ea8aeef6db"
+  ],
+  ".agents/skills/hyper-deepdive/SKILL.md": [
+    "b7ec2ae1dbe9178b71a96028e446bc2571bf686bd9dfa191415c162102ca1f55"
+  ],
+  ".agents/skills/hyper-discover/SKILL.md": [
+    "0be2d3ad2af2da9f83bc3086a50161084905868d2035f421c026af43181ec1ea"
+  ],
+  ".agents/skills/hyper-document/SKILL.md": [
+    "ef4d1c053c25481172d29301d78cca33fc82d163630b3e42b9cd784864fa9319"
+  ],
+  ".agents/skills/hyper-execute/SKILL.md": [
+    "61aad00cdfe95777a5a016f0b271a638c31ac92368a3abca5f9fd97dc2e41415"
+  ],
+  ".agents/skills/hyper-grill-docs/ADR-FORMAT.md": [
+    "eb4c07923a2509a849276709852ebe6ef6d0defbb7a150d782495efc39df4589"
+  ],
+  ".agents/skills/hyper-grill-docs/ATTRIBUTION.txt": [
+    "e8924f164c15f8ce9d7be140934389c4c61b2f5ee17597964073a093948b227f"
+  ],
+  ".agents/skills/hyper-grill-docs/CONTEXT-FORMAT.md": [
+    "513039ff37a3715e1c86fd04fcb368285cd0c8e443bdf3f12d2441c3c07755fb"
+  ],
+  ".agents/skills/hyper-grill-docs/META.yml": [
+    "9aee47ba3347ae02ea6a95358055d743433b666796f1e09a77c5501b3206480a"
+  ],
+  ".agents/skills/hyper-grill-docs/SKILL.md": [
+    "cc7db60c414b025e4419d5ee7f67229061b251f3a00ae20e900d15b29c1f5684"
+  ],
+  ".agents/skills/hyper-handoff/ATTRIBUTION.txt": [
+    "5915715ea3967b9c0a6348524bc510d1061c76494a8bb553b50065b222864959"
+  ],
+  ".agents/skills/hyper-handoff/META.yml": [
+    "fa330f0dcc6481610ead02b9d1036179d99b1c09a0dc7a33a83f302bf9837a76"
+  ],
+  ".agents/skills/hyper-handoff/SKILL.md": [
+    "1a68103409f402b27b0ef0c25ee6b933e29bf48aaa0f9bbf8c1b8f5c8c43deb3",
+    "a10c422a211ddf35c529208611f4e822377d27705d9dca5b49927012276242a4"
+  ],
+  ".agents/skills/hyper-init/SKILL.md": [
+    "8ec0112069dded8c804c23f7c7a4978a756ca8abc5ca57c041f73a13c2e36a8d"
+  ],
+  ".agents/skills/hyper-learning-opportunity/SKILL.md": [
+    "cf17b66ce45cd6563b0666f5e47108fe2c69fc01c762db6770959a5e82588976"
+  ],
+  ".agents/skills/hyper-new-workflow/SKILL.md": [
+    "a9b8e7b87fe077f4595d860d4aed890c132bf7c8fc10b5aa305621f008b5f263"
+  ],
+  ".agents/skills/hyper-peer-review/SKILL.md": [
+    "83b549e04e0021dce9f022741ed2f2173a33a7193d3604340ab2f17f30584e99"
+  ],
+  ".agents/skills/hyper-process-document/SKILL.md": [
+    "d099b45c322693cd1a5b786462492911af56476da5352ec1d43d87a9d10c1540",
+    "d746d4d7fb46868346de0c3574d0f2fa778ce0c5abb34c5bb3fe4c4b46d08633"
+  ],
+  ".agents/skills/hyper-prompt-engineer/SKILL.md": [
+    "ebe9770db0b45fed01d29163bc2b1ccb1f8d5fb5969b28cc4ddf331a5d75cfd3"
+  ],
+  ".agents/skills/hyper-publish/META.yml": [
+    "f51d98b8c93b8f260dbefefb9a6e0dca94d817d4d198aef1209527ea1a7ec7b9"
+  ],
+  ".agents/skills/hyper-publish/SKILL.md": [
+    "4bb2bc0a3526d2841c6a9c89cadc403c5b83ec76b85a7237362cc3c79b2e70ab"
+  ],
+  ".agents/skills/hyper-publish/examples/example_commit_messages.md": [
+    "b6d96b4b605bd4c4e0f35ff90bf4e02155f04f0dd6bf29f34c5c9ef896eee349"
+  ],
+  ".agents/skills/hyper-publish/examples/example_pr_description.md": [
+    "e3616903b84974aa51ec5ec8f4db7a144000a6b8ea1c3191469f0f1d752e8e70"
+  ],
+  ".agents/skills/hyper-publish/resources/commit_template.md": [
+    "6d6e9eafaaa1d4134868a6340f6ee99b38806470e5fccdbaf7438d34cfb4fc65"
+  ],
+  ".agents/skills/hyper-publish/resources/pr_description_template.md": [
+    "c097573912582d48be4cc3e3f7c0a2262e824925062ce18b5ce893b2e5849ccb"
+  ],
+  ".agents/skills/hyper-publish/scripts/generate_commit_message.py": [
+    "1a08e72b1b8afa038f949cad05dfb97374c40fce073aacf3a318c7f0bfc2dc8b"
+  ],
+  ".agents/skills/hyper-publish/scripts/generate_pr_description.py": [
+    "6aaa1f1c18a59016768144468c409b4258f1e90cedc7e7ffdbeda754e3509b9e"
+  ],
+  ".agents/skills/hyper-publish/scripts/setup_permissions.py": [
+    "4309ae29fca136005a96c1fb726f501bd0bc5686489390d0e84891693a993796"
+  ],
+  ".agents/skills/hyper-redteam/SKILL.md": [
+    "76f4e49ceb7bd868217c37ecf005d452bceab681b1b6ecb25ce5dc49982d61de"
+  ],
+  ".agents/skills/hyper-refresh-memory/SKILL.md": [
+    "0afe662ffc5a4141ae34bd69ad7e8b88420930e1045da3e8fdd5cb004b2dd968"
+  ],
+  ".agents/skills/hyper-resolve/SKILL.md": [
+    "dc5d908538b5db01fafbee1c5cfff23f128067ae6ec1ebbc9a40dbb755e7db98"
+  ],
+  ".agents/skills/hyper-session-update/SKILL.md": [
+    "bd83a6fa14cf3544c98f916336112beee6c7e8831e257e93b6331386ab857f8e"
+  ],
+  ".agents/skills/hyper-sop/SKILL.md": [
+    "6949cb4883803b09724308c272d9ee907f7d76bc8600238ca16beb24432fbc83"
+  ],
+  ".agents/skills/hyper-status/SKILL.md": [
+    "025fba40f0056cdc9ec42b57712635a12d5ca9ecf8118f83173ce59eb2647f0d"
+  ],
+  ".agents/skills/hyper-stitch-design/SKILL.md": [
+    "7563c609a688b321c377a75343d2670f51dbfcfe2b191f2c07ab8504d811dd9b"
+  ],
+  ".agents/skills/hyper-template-architect/SKILL.md": [
+    "254a2d43c1bd6137ccc5b35f72ba00b60833de84e0a818f01630f6d671708a80"
+  ],
+  ".agents/skills/hyper-troubleshooting/SKILL.md": [
+    "c8ddf9536da33a804475b03a3a9ff9359f85199cb96ebdd32f4609001cdc8c0b"
+  ],
+  ".agents/skills/hyper-tutorial-audit/SKILL.md": [
+    "874fa840ce52ecad4fc3a35881559cb7115e3bfe09cdf532c9bd03e9c7ade1a0"
+  ],
+  ".agents/skills/hyper-tutorial-generator/SKILL.md": [
+    "8597160a0cc7dcf2b1d8c0920848223fd6d653f3302dff2f25e3f4ac4d61036c"
+  ],
+  ".agents/skills/hyper-tutorial-generator/resources/TUTORIAL_TEMPLATE.md": [
+    "e6c27475c42519842f8943d83e123389509897ca17d38d844d317016a91e9ab4"
+  ],
+  ".agents/skills/hyper-tutorial-run/SKILL.md": [
+    "bc003d113eb01e9bcba5cfe3d3f68bad2e4ba842f491d2b1f3f0f53d4893dded"
+  ],
+  ".agents/skills/hyper-update/META.yml": [
+    "6f4449bafd6ef2170c546c91323db852eb575cff85f0a4e9c9b4c43b5410a7af"
+  ],
+  ".agents/skills/hyper-update/SKILL.md": [
+    "2de65ee56c4b8fc2e3621af0d1d3e38815d6dcfb541e90d70b49009b082b15ec"
+  ],
+  ".claude/commands/hyper-architect.md": [
+    "e009f0c40e9bef744ad49df4ffd9feacf491ef3e37252f0cfce13393e3749e18"
+  ],
+  ".claude/commands/hyper-audit.md": [
+    "a04182351539b1c0df99cc3e039fc8f8f85cc0a478e86189384760e2c6103239"
+  ],
+  ".claude/commands/hyper-baseline.md": [
+    "5bc829ea43dff268b218191fd771f76689d6f4c43aa81e12fab55e001b1bfb34"
+  ],
+  ".claude/commands/hyper-clear.md": [
+    "6917b3acc67eb5efae37d4951d53a028fe15560f1600a18b200ebab0f30e23eb"
+  ],
+  ".claude/commands/hyper-co-research.md": [
+    "eec0a50188a091359dff769296cfa5e34e7c0dd380ea45dcb676aa83d1d40ad3"
+  ],
+  ".claude/commands/hyper-consult-cto.md": [
+    "fcab9b4d75421572cb7fbca2fc0671235e9b91adcc24462dff3171cc7564b225"
+  ],
+  ".claude/commands/hyper-contextualize.md": [
+    "40c3614fe531a5590b2faf7f002c4af07b8708955d9cf5f9cd675b53e3634fc3"
+  ],
+  ".claude/commands/hyper-create-issue.md": [
+    "65de96b27ad1d644913f72979ac2200e1e512b7a0fe1f3f3d0e7112776038058"
+  ],
+  ".claude/commands/hyper-create-skill.md": [
+    "ddb25acca59e6f5e9ac53f40783bf599abcbc8918bb47db3d7b052bd24d3709b"
+  ],
+  ".claude/commands/hyper-deepdive.md": [
+    "5516fb57d154e4ae7a06abbb4a560fa49705390cd2b6d5a0ef986ef037279334"
+  ],
+  ".claude/commands/hyper-discover.md": [
+    "d265494b67c28e7e6dccc264bc658b5a3df2fb53460b23c947bceef68cea2664"
+  ],
+  ".claude/commands/hyper-document.md": [
+    "cd1528f512eabc4f3d06274603e2c3da01775b5c18ccac8c4c8d2d4ece7ac528"
+  ],
+  ".claude/commands/hyper-execute.md": [
+    "7440e47bc0ab2571e73c18b9ab47ac401e681891fa51ece73b791ed47e522d1d"
+  ],
+  ".claude/commands/hyper-grill-docs.md": [
+    "2b074671050a876427232a03e885d10d246fb42f90cc76c794f73632852fb2d7"
+  ],
+  ".claude/commands/hyper-handoff.md": [
+    "ee241a9ec680ad60c6eb3f56eda1a6adcd26d7175346971a8badb0dc1ee11a7e"
+  ],
+  ".claude/commands/hyper-learning-opportunity.md": [
+    "a0cd2126521afa862679b7f326e6211ac5816491ffd0a85bd6c9108b8dc8f60d"
+  ],
+  ".claude/commands/hyper-new-workflow.md": [
+    "89df2de5adcbd2a1f102e2c5e412d31abade67db59aa74d066ba948eef6e276f"
+  ],
+  ".claude/commands/hyper-peer-review.md": [
+    "462f8972bdf780eb760c3d5c294ca8b753fbdf648fe8f126a206b7d19d992f1c"
+  ],
+  ".claude/commands/hyper-process-document.md": [
+    "01b0fcf136ad392220509fc7b08ea086604e321b3de17c992a5c4e895d3ce9e3"
+  ],
+  ".claude/commands/hyper-prompt-engineer.md": [
+    "55424e4d475f14a132eca6bcc3f0469eee5d46fb212ca770284666db5ae18621"
+  ],
+  ".claude/commands/hyper-publish.md": [
+    "e26f59db6bb43ce24d8c0ed8043ea97d0f4a53f6db05567fbd3048f83f53782e"
+  ],
+  ".claude/commands/hyper-redteam.md": [
+    "18974aa0bc679cd76e039aec23f63d2f3e7e4d385277f7f6e8a68ba61e30a5de"
+  ],
+  ".claude/commands/hyper-refresh-memory.md": [
+    "a606523ba02b3d66ce85d5c0261427be83df09138d835abdeba95aae85d11320"
+  ],
+  ".claude/commands/hyper-resolve.md": [
+    "bdf8f11d1460f3ecad28225c6b773033c42cdfebc5ac1a1fbbcde8d7e4f290e5"
+  ],
+  ".claude/commands/hyper-session-update.md": [
+    "3226c0dd48f81f2b55460b2a18193af4d805bcddbdfc2d0860be5701a76fd703"
+  ],
+  ".claude/commands/hyper-sop.md": [
+    "700f37329b4c673784688525231acd52b8e5c19f48ab7af36eb89b8d0e79f6c8"
+  ],
+  ".claude/commands/hyper-status.md": [
+    "4b097b93843f58d4090ccb63595a6e99ae890a667861fc22e24dbd8578843258"
+  ],
+  ".claude/commands/hyper-stitch-design.md": [
+    "7678e461a56015bbc8be572812f066ce732a92cbe40486c5ecc0165a9595134d"
+  ],
+  ".claude/commands/hyper-template-architect.md": [
+    "524fd99861b34141fb1a450dae73982938805359e8154e389afcef223d51729f"
+  ],
+  ".claude/commands/hyper-troubleshooting.md": [
+    "108a746783f6bba9d99f5e804003a6260630266e0367f7f26671c6a97f6725d2"
+  ],
+  ".claude/commands/hyper-tutorial-audit.md": [
+    "2e638b9cdfb8c392d6a4062e1fc43f1074a3baf49a39ea5a8cd0126e963335bd"
+  ],
+  ".claude/commands/hyper-tutorial-generator.md": [
+    "4293e9794db7279804d1ee16ab4bd2dcaac4ee16b888a5dceeccc4d02e8dd0e1"
+  ],
+  ".claude/commands/hyper-tutorial-run.md": [
+    "583935e7d597137606604d358a8485d0862926818dd8b2ed4106dd1b8d59009d"
+  ],
+  ".claude/commands/hyper-tutorial.md": [
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  ".claude/commands/hyper-update.md": [
+    "43fbce7577be3b00d681bca584821e0ebf40ea208f25734c3af4bc5fc2518d3b"
+  ],
+  ".clinerules/hypergraph-agent.md": [
+    "8682507ba01cac03db4f2460c5762755ab258995cc0ee3512d06c6ff7b4dc395"
+  ],
+  ".clinerules/package-management.md": [
+    "349db13bc4871dd448025277d6179cc6a4c34e64ed75a6acb8482de70028bc0b"
+  ],
+  ".clinerules/python.md": [
+    "c465993c5a18276a2a916f1ef9c18af5f14181c8ce1dd6625c19b527a4f2ebd2"
+  ],
+  ".clinerules/security.md": [
+    "975d5d9cc1f96eee2992ddefda12949f689f4d3bac1801a843016bbca581abdf"
+  ],
+  ".clinerules/testing.md": [
+    "a65e15a87c1ccc78235b1220176dc9106849614202a0a4d72c7eb383445fb27f"
+  ],
+  ".cursor/rules/hypergraph-agent.mdc": [
+    "d692acf9ff10cce700496304f15e862e1b6bb1abedddc545829619c642b23616"
+  ],
+  ".cursor/rules/package-management.mdc": [
+    "819c8ea2a41a72677807166a1768d1cb556e04f3a4816b294a88b5575f6ab305"
+  ],
+  ".cursor/rules/python.mdc": [
+    "7511073bca71b79c52867dda29bb977cacc36b895c6b7848b832db1049f86d8c"
+  ],
+  ".cursor/rules/security.mdc": [
+    "d849404dd1cb61c7acf3200fea0cd9909ab7abf24c20d289b259ad4f45a6fc9b"
+  ],
+  ".cursor/rules/testing.mdc": [
+    "a6932bb4a4578abf53828ea4c1ed31489263f9da9315b4feaad99ff2198546c4"
+  ],
+  ".roo/rules-code/python.md": [
+    "fe7d7ecede0ebed1a5f0fabc04098ff5defb648ddb3e704f3875e0772bfc7245"
+  ],
+  ".roo/rules-code/testing.md": [
+    "fa6276542565319491db1552a212e89b0f8b71003792e081530870c0ad7cff04"
+  ],
+  ".roo/rules/hypergraph-agent.md": [
+    "12335c77d0b29582449a006a8d4d6a58ea6c218818110b2742b2913e4804a8e3"
+  ],
+  ".roo/rules/package-management.md": [
+    "f998851721c69538915390c701d2ddbf5e35f9febf854ae91e263e8f9c1bb3a5"
+  ],
+  ".roo/rules/security.md": [
+    "062e865fa57e6cae6e0ff84728a32c2f86543325ea4049ff81375b0a9fc76378"
+  ],
+  ".windsurf/rules/hypergraph-agent.md": [
+    "8cbe555fc6dee6050184edc5b281c017920912c96108151b9f9b3cbb1b5f433a"
+  ],
+  ".windsurf/rules/package-management.md": [
+    "39f7f109636c05546c63af9a5fba3358a91c5d268cc249fb529a2cd303e8fe55"
+  ],
+  ".windsurf/rules/python.md": [
+    "908d2499558958bb0d16c2e2222c8084387af3150bb14ab97ee3e613b20b048c"
+  ],
+  ".windsurf/rules/security.md": [
+    "e96262e4be767da4c7c543c879fca1835eb56c6a672588c5863b3b63d6e73d20"
+  ],
+  ".windsurf/rules/testing.md": [
+    "a1b19959296aa0f8a7b1fb0c52f8e81835cc3ae533d9e020fb1e721f3b6bbe44"
+  ],
+  ".windsurf/workflows/hyper-architect.md": [
+    "e009f0c40e9bef744ad49df4ffd9feacf491ef3e37252f0cfce13393e3749e18"
+  ],
+  ".windsurf/workflows/hyper-audit.md": [
+    "9f473296717be92497afdda0f7de657416534bee22c5518f7d6af44845afee38"
+  ],
+  ".windsurf/workflows/hyper-baseline.md": [
+    "5bc829ea43dff268b218191fd771f76689d6f4c43aa81e12fab55e001b1bfb34"
+  ],
+  ".windsurf/workflows/hyper-co-research.md": [
+    "73182f92db15927528d1785ca70871d8fba7fac478e6dc1b6fd0de39dd696961"
+  ],
+  ".windsurf/workflows/hyper-consult-cto.md": [
+    "f26848e59962e5c499a3aee480ba61a548d353c16ad2e8e54038f3b0416e3d81"
+  ],
+  ".windsurf/workflows/hyper-create-issue.md": [
+    "4aaf1f9a9d8cb10a78e0931db994bd1a9cb0350fff3368459dd1771a893e497c"
+  ],
+  ".windsurf/workflows/hyper-create-skill.md": [
+    "813a5c1dc0e5604dd12dd7b95abc6d35ea96a95e79c1a99233cef9fab81e732e"
+  ],
+  ".windsurf/workflows/hyper-deepdive.md": [
+    "f20d3b2e365d2e12e54fe7abd7c20cd09260c8e9214fc71b0493abf49c70ce3b"
+  ],
+  ".windsurf/workflows/hyper-discover.md": [
+    "d265494b67c28e7e6dccc264bc658b5a3df2fb53460b23c947bceef68cea2664"
+  ],
+  ".windsurf/workflows/hyper-document.md": [
+    "63f810c93f4dea4e9205504d88f1cf089a2ae53e9bfb2aa9beca2b58cd5fa807"
+  ],
+  ".windsurf/workflows/hyper-execute.md": [
+    "03948455fe0b259b0accba9b7e0c0027521ea51adbb752b06522a5d215790298"
+  ],
+  ".windsurf/workflows/hyper-learning-opportunity.md": [
+    "008a191ba4fb4fd77a749db4cda431667fa60f7c1addbd8dd1b1a7f2d92b13d5"
+  ],
+  ".windsurf/workflows/hyper-new-workflow.md": [
+    "d927446d57abf3bfa85febf9e9e3a80bef780726784c6158223842ef701d9418"
+  ],
+  ".windsurf/workflows/hyper-peer-review.md": [
+    "a22756aeacc26dffdfd4884dcdddfa2e9cd06c9dd9b08f6cac9e250cc911bb09"
+  ],
+  ".windsurf/workflows/hyper-prompt-engineer.md": [
+    "761399bd319e7c20887fca483b40f8fbe4934145dbf1d3e86f1c58b746396ef8"
+  ],
+  ".windsurf/workflows/hyper-publish.md": [
+    "0a9b795006b10700d8681227d46ffa37df9d7e7b910a0bc06379409031488f8c"
+  ],
+  ".windsurf/workflows/hyper-redteam.md": [
+    "18974aa0bc679cd76e039aec23f63d2f3e7e4d385277f7f6e8a68ba61e30a5de"
+  ],
+  ".windsurf/workflows/hyper-refresh-memory.md": [
+    "f83b4317be7de8ea54156d6b927c82fec0ed7857635d8e4427d2f12f2d448e98"
+  ],
+  ".windsurf/workflows/hyper-resolve.md": [
+    "bdf8f11d1460f3ecad28225c6b773033c42cdfebc5ac1a1fbbcde8d7e4f290e5"
+  ],
+  ".windsurf/workflows/hyper-session-update.md": [
+    "1503ecd6468f2cd183d20666dcf2fa9087fe124e0519d2ea72dcb82a321b82a8"
+  ],
+  ".windsurf/workflows/hyper-sop.md": [
+    "700f37329b4c673784688525231acd52b8e5c19f48ab7af36eb89b8d0e79f6c8"
+  ],
+  ".windsurf/workflows/hyper-status.md": [
+    "11cf96c42762f996415ed0ff05eda75fd69eb506bf782da002cb03bad971e80a"
+  ],
+  ".windsurf/workflows/hyper-stitch-design.md": [
+    "33933db274cf532434dfa7b7d28e3d90535edc1e99c6968a227616b1fd2e2d65"
+  ],
+  ".windsurf/workflows/hyper-template-architect.md": [
+    "b998769a821df218b2bae7710ec0230d9977807ac266b7d729a793abc296da97"
+  ],
+  ".windsurf/workflows/hyper-troubleshooting.md": [
+    "f60254d503a843325bb13d85f00d8735c16d3ec3b336c529efd97222cf412e1e"
+  ],
+  ".windsurf/workflows/hyper-tutorial.md": [
+    "0f0a2e26e33eb6e841abd867d752da29634180ed40385a54cd04699cb681e551"
+  ],
+  ".windsurf/workflows/hyper-update.md": [
+    "43fbce7577be3b00d681bca584821e0ebf40ea208f25734c3af4bc5fc2518d3b"
+  ],
+  "AGENTS.md": [
+    "16d9d0ff816587b2a1fd6562bcd524f52ccc2b2e9eaad6a2ebd9426a73781ef2",
+    "418eba1d56b3e3d5d4f2975a21929a0717d84dcd2d6374615c1332542976a146",
+    "c08804f0d1193d8a9bccc5e322778b1dfb85d5c0e1463cf583e15b0489ab3b6b"
+  ],
+  "CLAUDE.md": [
+    "03a36e0baa5a9d786a9519816fb9496ec0480fdd1e5b82de30d659e9756a3e36",
+    "725c649ca51dc723c88db60109084544a9dec295dc12d405a74df640fede34ee"
+  ],
+  "GEMINI.md": [
+    "0d289c99aabe913b44ce2b3a0b855313c5d22dbdad81411ab8c6c91df67d34e4",
+    "ce930880933b53eec9a4c310e086665bbee5ff4af55b8f1c6e71c5248c6b60cc"
+  ],
+  "releases": [
+    "626a28e",
+    "cd8ae6a",
+    "b3b1634",
+    "329e8f7",
+    "0b19f16",
+    "984ca46"
+  ],
+  "schema": "hacf.legacy-hashes/v1"
+}

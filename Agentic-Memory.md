@@ -75,14 +75,14 @@ To circumvent this limitation, Cline relies on a highly structured memory-bank/ 
 | :---- | :---- | :---- |
 | .clinerules/ | Markdown | Static workspace rules defined by the user (e.g., coding.md, testing.md) to establish baseline operational standards.23 |
 | memory-bank/projectBrief.md | Markdown | The foundation document defining core requirements and overall project scope. Shapes all subsequent files.22 |
-| memory-bank/productContext.md | Markdown | Explains the overarching "why" behind the project, aligning the agent's logic with high-level business requirements.22 |
-| memory-bank/systemPatterns.md | Markdown | Documents architectural decisions, component interactions, and structural constraints established across sessions.22 |
+| memory-bank/ product-context file | Markdown | Explains the overarching "why" behind the project, aligning the agent's logic with high-level business requirements.22 |
+| memory-bank/ system-patterns file | Markdown | Documents architectural decisions, component interactions, and structural constraints established across sessions.22 |
 | memory-bank/techContext.md | Markdown | Details the specific technology stack, environment dependencies, and necessary setup commands.22 |
 | memory-bank/activeContext.md | Markdown | A highly dynamic file continuously tracking the current focus, active tasks, and immediate next steps required for progression.22 |
 | memory-bank/progress.md | Markdown | A read/write log of completed tasks, abandoned tangents, and shifting overall milestones.22 |
 | memory-bank/changelog.md | Markdown | A temporal record of systemic changes designed to prevent regressions in agentic reasoning.22 |
 
-The memory-bank/ protocol functions as an externalized hippocampus for the LLM. The files are organized in a strict, hierarchical dependency graph, visually conceptualized via Mermaid diagrams within the agent's core instructions.22 The projectBrief.md shapes the foundational productContext.md and systemPatterns.md. These static structural files subsequently inform the highly volatile activeContext.md, which ultimately feeds data into the progress.md and changelog.md.22 At the inception of every single task, the agent is instructed that it MUST read all memory bank files; this is not an optional operation.22 This protocol allows the agent to resume complex engineering tasks with perfect temporal continuity, eliminating the "amnesia" that plagues standard conversational AI interfaces.20
+The memory-bank/ protocol functions as an externalized hippocampus for the LLM. The files are organized in a strict, hierarchical dependency graph, visually conceptualized via Mermaid diagrams within the agent's core instructions.22 The projectBrief.md shapes the foundational product-context and system-patterns files. These static structural files subsequently inform the highly volatile activeContext.md, which ultimately feeds data into the progress.md and changelog.md.22 At the inception of every single task, the agent is instructed that it MUST read all memory bank files; this is not an optional operation.22 This protocol allows the agent to resume complex engineering tasks with perfect temporal continuity, eliminating the "amnesia" that plagues standard conversational AI interfaces.20
 
 Roo Code, a highly sophisticated derivative of the Cline architecture, extends this rule-based infrastructure by introducing the concept of "Mode-Specific Instructions." Since Roo Code allows users to dynamically switch between distinct operational personas—such as Architect, Code, and Debug modes—it utilizes specialized, hidden directories to prevent instruction cross-contamination.9
 
@@ -94,6 +94,19 @@ Roo Code, a highly sophisticated derivative of the Cline architecture, extends t
 | \~/.roo/rules/ | Markdown | Global rules stored at the user's OS level, applied universally across all local environments.9 |
 
 This mode-specific routing is a critical advancement in token economy. By mechanically separating the instructions required for high-level system design (rules-architect) from the highly granular constraints required for bug fixing (rules-debug), Roo Code ensures that the token allocation within the prompt is perfectly optimized for the immediate cognitive task.9 This isolation prevents the model from experiencing cognitive overload when attempting to balance macro-architecture rules while simply trying to resolve a localized syntax error.
+
+### **How HACF Applies This (v0.6.0)**
+
+HACF keeps the read/write idea but splits memory by how volatile and how binding it is, and gives each store a deterministic writer:
+
+| Store | What it holds | Written by |
+| :---- | :---- | :---- |
+| `.agents/memory/activeContext.md` | The volatile layer: current focus, recent changes, next steps. | `/hyper-session-update`, `/hyper-refresh-memory` |
+| `lore_hypergraph.yml` and `lore/` | Decisions (ADRs), stories and binding canon; `lore/MAP.md` is the index and `lore/CANON.md` the binding set. | `hyper_lore.py` only; agents propose, a person approves through the CANON gate ([Lore](docs/Lore.md)) |
+| Root `SPEC.md` | The system of record: what the product is and why, including its product context. | `hyper_scope.py`, from `/hyper-baseline` |
+| `spec/compiled/architecture.yml` | The component ledger: structure and dependencies, never guessed. | `hyper_ledger.py` and `hypergraph_updater.py` |
+
+v0.6.0 retired the separate product-context and system-patterns memory templates (decision D9): the product context now lives in the root `SPEC.md`, and the architectural patterns that bind agents live in lore as canon (`lore/CANON.md`). There is no progress file: a slice's status lives in its own `SPEC.md`.
 
 ## **Google Antigravity and Gemini CLI: Progressive Disclosure, Skills, and Brain Architecture**
 

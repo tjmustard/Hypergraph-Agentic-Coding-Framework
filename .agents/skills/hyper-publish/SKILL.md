@@ -30,7 +30,7 @@ This enhanced skill automates the full git commit → push → (optional) PR cre
 
 ### Step 0 — Initialize Permissions (automatic)
 
-Run `python .agents/skills/hyper-publish/scripts/setup_permissions.py` to patch `.claude/settings.json` with pre-approved patterns for `Bash(git *)` and `Bash(gh *)`. This prevents Claude Code from prompting for shell command approval on every invocation.
+Run `python3 .agents/skills/hyper-publish/scripts/setup_permissions.py` to patch `.claude/settings.json` with pre-approved patterns for `Bash(git *)` and `Bash(gh *)`. This prevents Claude Code from prompting for shell command approval on every invocation.
 
 If settings.json is already configured, this step skips silently.
 
@@ -77,7 +77,7 @@ Then stop — do not proceed.
 Run the helper script:
 
 ```bash
-python .agents/skills/hyper-publish/scripts/generate_commit_message.py
+python3 .agents/skills/hyper-publish/scripts/generate_commit_message.py
 ```
 
 The script reads:
@@ -246,7 +246,7 @@ If user selects **Option A**: proceed to Step 9.
 Run the helper script:
 
 ```bash
-python .agents/skills/hyper-publish/scripts/generate_pr_description.py
+python3 .agents/skills/hyper-publish/scripts/generate_pr_description.py
 ```
 
 The script reads:
@@ -364,4 +364,4 @@ Refer to:
 
 **Permissions still prompting:**
 - Run `/hyper-publish` once to auto-patch `.claude/settings.json`
-- Or run manually: `python .agents/skills/hyper-publish/scripts/setup_permissions.py`
+- Or run manually: `python3 .agents/skills/hyper-publish/scripts/setup_permissions.py`

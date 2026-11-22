@@ -1,8 +1,17 @@
 # ADR Format
 
-ADRs live in `docs/adr/` and use sequential numbering: `0001-slug.md`, `0002-slug.md`, etc.
+ADRs are decision nodes of the lore graph. Their bodies live in `lore/ADRs/ADR-NNNN-<slug>.md`, and `hyper_lore.py` allocates the id: never number an ADR by hand.
 
-Create the `docs/adr/` directory lazily — only when the first ADR is needed.
+## Proposing
+
+Agents only propose:
+
+1. Write the body (template below) with the Write tool to a temporary file outside `lore/`.
+2. Run `python3 .agents/scripts/hyper_lore.py propose --type decision --title '<short title>' --body-file <file>`, adding `--anchors-components <ids>`, `--anchors-files <paths>` or `--anchors-symbols <names>` where known. The node starts PROPOSED.
+
+CANON, REJECTED, RETIRED and SUPERSEDED come only through the gate (/hyper-lore-approve), with the user's warrant. To replace a decision, propose the new one with `--supersedes <ID>`; the gate applies it.
+
+Existing `docs/adr/` records are imported with `python3 .agents/scripts/hyper_lore.py import --adr-dirs <dir>` or by the migration, never written.
 
 ## Template
 
@@ -16,15 +25,10 @@ That's it. An ADR can be a single paragraph. The value is in recording *that* a 
 
 ## Optional Sections
 
-Only include these when they add genuine value. Most ADRs won't need them.
+Only include these when they add genuine value. Most ADRs won't need them. Status lives in the lore graph, not in the body.
 
-- **Status** frontmatter (`proposed | accepted | deprecated | superseded by ADR-NNNN`) — useful when decisions are revisited
 - **Considered Options** — only when the rejected alternatives are worth remembering
 - **Consequences** — only when non-obvious downstream effects need to be called out
-
-## Numbering
-
-Scan `docs/adr/` for the highest existing number and increment by one.
 
 ## When to Offer an ADR
 

@@ -1,0 +1,42 @@
+schema: hacf.lore/v1
+id_counters:
+  ADR: 1
+  STORY: 0
+  CANON: 0
+nodes:
+- id: ADR-0001
+  type: decision
+  title: The flat widget stays flat
+  status: PROPOSED
+  origin: agent
+  context: null
+  pointer:
+    path: lore/ADRs/ADR-0001-the-flat-widget-stays-flat.md
+  content_sha256: 58604f61ae647309448983ce73dc68ee872d1c44f3dd2372cd684a2e39fc56a1
+  anchors:
+    components: []
+    files: []
+    symbols: []
+  planned:
+    components: []
+    files: []
+  relates_to: []
+  supersedes: []
+  superseded_by: null
+  stale: false
+  stale_reason: null
+  legacy: null
+  provenance:
+    created_by: agent
+    created_at: '2026-11-01T08:01:05+00:00'
+    source: spec/compiled/MiniPRD_07_FlatWidget.md
+    session_id: null
+    run_id: null
+  approval: null
+  history:
+  - at: '2026-11-01T08:01:05+00:00'
+    from: null
+    to: PROPOSED
+    by: agent
+    warrant: null
+    ref: spec/compiled/MiniPRD_07_FlatWidget.md

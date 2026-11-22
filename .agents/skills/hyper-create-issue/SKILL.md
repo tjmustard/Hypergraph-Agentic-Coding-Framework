@@ -41,7 +41,8 @@ This skill captures a bug, feature request, or improvement as a complete, well-s
    For any remaining gaps (current vs. desired behavior, specific symptoms), ask inline in the same message.
 
 2. **Search for Context**
-   - Check `spec/compiled/architecture.yml` to identify the specific `node_id`s that this issue will affect.
+   - Look up the `node_id`s this issue will affect in the component ledger: `python3 .agents/scripts/hyper_ledger.py impact --files <paths>` for the files involved, or `python3 .agents/scripts/hyper_ledger.py show` for the node list.
+   - When the issue belongs to a mission or slice, cite its dot-id (`python3 .agents/scripts/hyper_spec.py status` lists them).
    - Search the codebase to find the relevant implementation files linked to those nodes.
    - Note any risks, dependencies, or architectural constraints spotted.
 
@@ -50,7 +51,7 @@ This skill captures a bug, feature request, or improvement as a complete, well-s
    - **Title**: Clear, concise, action-oriented
    - **TL;DR**: One-sentence summary
    - **Current State vs. Expected Outcome**: What happens now vs. what should happen
-   - **Relevant Files / Nodes**: Most relevant files and `node_id`s from the hypergraph (max 3)
+   - **Relevant Files / Nodes**: Most relevant files and `node_id`s from the ledger (max 3), plus the mission or slice dot-id when one applies
    - **Risk/Notes**: Architectural constraints, dependencies, or risks (if applicable)
    - **Labels**: Type (`bug`/`feature`/`improvement`), priority (`high`/`normal`/`low`), effort (`small`/`medium`/`large`)
 

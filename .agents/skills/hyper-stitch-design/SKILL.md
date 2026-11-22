@@ -19,7 +19,7 @@ This skill activates a UI/UX Designer and Frontend Specialist persona. It transl
 ### Inputs
 - User prompt describing the desired aesthetic (e.g., "Modern SaaS dashboard", "Brutalist e-commerce").
 - Optional: reference image or URL for style extraction.
-- `spec/compiled/SuperPRD.md` or `MiniPRD_*.md` for functional requirements.
+- Functional requirements from the mission or slice `SPEC.md` (find it with `python3 .agents/scripts/hyper_spec.py resolve <path|dot-id|legacy name>`), or from a legacy flat `spec/compiled/MiniPRD_*.md`.
 
 ### Step 1: Analyze the Aesthetic
 - Identify the desired visual style (e.g., Modern, Brutalist, Corporate, Minimalist).
@@ -53,8 +53,8 @@ Create or update `docs/DESIGN.md` with:
 - Responsive breakpoints
 - Container max-widths
 
-### Step 3: Scope Components to the MiniPRD
-- For each UI element required by the active `MiniPRD_*.md`, create a "Component Spec" entry in `docs/DESIGN.md`.
+### Step 3: Scope Components to the Slice
+- For each UI element required by the active slice `SPEC.md` (or legacy flat MiniPRD), create a "Component Spec" entry in `docs/DESIGN.md`.
 - Include: props, variants, and pseudo-code or detailed visual description.
 
 ### Output

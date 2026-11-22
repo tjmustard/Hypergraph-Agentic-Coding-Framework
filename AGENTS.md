@@ -1,91 +1,92 @@
+Trailhead: start at lore/MAP.md, then SPEC.md, then the active mission under missions/
+
 # Hypergraph Coding Agent Framework — Agent Instructions
 
-> **Cross-IDE manifest.** This file is injected as always-on context by Windsurf, Cursor,
-> Roo Code, GitHub Copilot, and Zed. IDE-specific bridge files in `.claude/`, `.cursor/`,
-> `.windsurf/`, `.clinerules/`, and `.roo/` extend this base with tool-specific overrides.
-> For the human-facing usage guide, see `README.md`.
+> **Cross-IDE manifest (HACF development repo).** Always-on context for Windsurf, Cursor, Roo Code,
+> GitHub Copilot, Zed and Codex. Bridge files in `.claude/`, `.cursor/`, `.windsurf/`, `.clinerules/`
+> and `.roo/` add tool-specific overrides. This is the dev version; the version installed into user
+> projects is `.agents/install-templates/AGENTS.md`. Human guide: `README.md`.
 
 ---
 
-## Single Source of Truth
-
-`.agents/` is the authoritative location for **all** skill, rule, schema, and script content.
-All other IDE directories contain only thin bridge files that reference `.agents/`.
+## Layout (v0.6.0)
 
 ```
-.agents/
-├── skills/     # All skill/command definitions — one directory per skill
-├── schemas/    # Immutable templates (MiniPRD, SuperPRD, hypergraph)
-├── scripts/    # Deterministic state tools (hypergraph_updater.py, archive_specs.py)
-├── rules/      # Always-on coding standards
-└── memory/     # Project context files (activeContext, productContext, systemPatterns)
-
-spec/
-├── active/     # Working drafts — TEMPORARY, will be archived
-├── compiled/   # Ground truth (SuperPRD, MiniPRDs, architecture.yml)
-└── archive/    # Historical — BLOCKED from agent reads (.agentignore)
-
-tests/
-├── candidate_outputs/  # Unverified AI outputs — BLOCKED from agent reads
-└── fixtures/           # Verified regression baselines
+SPEC.md               # project system of record (hacf_type: SystemOfRecord)
+project.yaml          # OpenRig project manifest
+workspace.yaml        # OpenRig workspace manifest
+lore_hypergraph.yml   # lore graph (hacf.lore/v1); written only by hyper_lore.py
+lore/                 # MAP.md (start here), CANON.md, ADRs/, STORIES/, proposed/, canon/
+missions/<mission>/   # SPEC.md (SuperPRD), mission.yaml, slices/<NN-slug>/SPEC.md (MiniPRD)
+spec/                 # HACF workbench
+├── active/           # Draft_PRD.md, RedTeam_Report.md — temporary
+├── compiled/         # architecture.yml (ledger v2); legacy flat MiniPRD_*.md
+├── archive/          # written only by archive_specs.py — BLOCKED from agent reads
+└── process/          # commit-blocked
+tests/candidate_outputs/   # unverified outputs — BLOCKED from agent reads
+tests/fixtures/            # verified baselines, promoted by a person
+.agents/              # skills/, scripts/, schemas/, rules/, config/, install-templates/,
+                      # memory/activeContext.md, local/hacf.yml, state/ (machine-local)
+dev/                  # HACF only, never shipped: tests, scripts (check.sh, v060_gate.py), design
 ```
+
+`.agents/` is the single source of truth for skills, rules, schemas and scripts; the IDE
+directories hold thin bridges to it. Do not copy the `lore/MAP.md` index anywhere: read it.
 
 ---
 
 ## System Mandates
 
 ### 1. Skill Invocation
-When the user invokes a skill command (e.g., `/hyper-architect`, `/hyper-redteam`), read the
-corresponding `.agents/skills/<name>/SKILL.md` and follow its instructions precisely.
+When the user invokes a skill (e.g. `/hyper-architect`), read `.agents/skills/<name>/SKILL.md`
+and follow it precisely. `ls .agents/skills/` lists them.
 
-To discover all available skills:
-```
-ls .agents/skills/
-```
-
-### 2. Autonomous Script Execution
-Execute these deterministic Python scripts when mandated by a skill:
+### 2. Deterministic Scripts
+The interpreter is `python3` in every command. Run a script when a skill mandates it and check
+its exit code and output.
 
 ```bash
-# Propagate blast radius after modifying code:
-python .agents/scripts/hypergraph_updater.py spec/compiled/architecture.yml [node_id_1] [node_id_2]
-
-# Flush active workspace after specification phase completes:
-python .agents/scripts/archive_specs.py [Feature_Name]
+python3 .agents/scripts/hypergraph_updater.py spec/compiled/architecture.yml <node_id> [<node_id> ...]
+python3 .agents/scripts/archive_specs.py --miniprd spec/compiled/MiniPRD_<Module>.md
 ```
 
-Always verify the script completed successfully by checking the exit code and output.
+Entry points by role:
+
+| Role | Entry point | Purpose |
+|---|---|---|
+| Ledger | `hyper_ledger.py` | single writer of `architecture.yml`: init, validate, impact, ensure-node, review-template, apply-review, mark, remove-node |
+| Ledger | `hypergraph_updater.py` | blast radius: positional node ids, or `--from-diff <rev-range>` (prints `unmapped`) |
+| Specs | `hyper_spec.py` | resolve, lint, progress, proof and status for SPEC.md and legacy MiniPRDs |
+| Specs | `archive_specs.py` | the only writer of `spec/archive/` (`--miniprd` or `--paths`) |
+| Scopes | `hyper_scope.py`, `hyper_openrig.py` | project, mission and slice scopes; OpenRig manifests (rig 0.6.13) |
+| Lore | `hyper_lore.py`, `hyper_gates.py` | lore graph writer and CANON gate; gate mode and lore-check |
+| Firewall | `hyper_firewall.py`, `hyper_gate_hook.py` | render `.agentignore` into tool rules; the PreToolUse gate hook |
+| Engine | `hyper_engine.py` | parallel workflow engine: preflight, run, status, land, gc |
+| Migration | `hyper_migrate.py` | v0.5.x to v0.6.0: detect, plan, apply, verify, rollback |
+| Install | `hyper_scaffold.py`, `hyper_blocks.py` | project scaffold; HACF managed blocks in shared files |
 
 ### 3. State Management
-- `spec/compiled/architecture.yml` is the **absolute ground truth** for project state.
-- Write working drafts and reports to `spec/active/`.
-- All generated specs must strictly follow the templates in `.agents/schemas/`.
-- Read existing files before overwriting them.
+- `spec/compiled/architecture.yml` is the ground truth for component state. Never edit it by hand:
+  `hyper_ledger.py` and `hypergraph_updater.py` write it, and `/hyper-audit` reconciles it.
+- Working drafts and reports go to `spec/active/`. Read a file before overwriting it.
+- Specs follow the schemas below; `hyper_spec.py lint` checks them.
 
 ### 4. Interactive Interviews
-When acting as the Architect or Resolution Agent, enforce the **Pacing Loop**:
-ask a MAXIMUM of **2 questions per turn**. Wait for the user's response before proceeding.
+As the Architect or Resolution Agent, enforce the **Pacing Loop**: at most **2 questions per
+turn**, then wait for the answer.
 
 ### 5. No Probabilistic Traversal
-Never guess architectural dependencies. Always rely on `hypergraph_updater.py` output
-to understand the blast radius before executing code modifications.
+Never guess architectural dependencies. Use the updater's or `hyper_ledger.py impact` output.
 
 ### 6. File Lifecycle Rules
-- **Never** write to `spec/archive/` manually — use `archive_specs.py` exclusively.
-- **Never** read from `spec/archive/` or `tests/candidate_outputs/` during agentic tasks
-  (treated as blocked per `.agentignore`).
-- **Never** edit `spec/compiled/architecture.yml` directly — use `/hyper-audit` or `/hyper-discover`.
+- Never write to `spec/archive/` by hand; use `archive_specs.py`.
+- Never read `spec/archive/` or `tests/candidate_outputs/` during agentic tasks (`.agentignore`).
+- Only a person promotes a candidate output into `tests/fixtures/`.
 
 ### 7. Always-On Coding Rules
-Apply the rules in `.agents/rules/` to all code generation:
-
-| Rule File | Scope |
-|---|---|
-| `python.md` | Python style, type hints, architectural constraints |
-| `security.md` | Input validation, secrets management, file system constraints |
-| `testing.md` | Testing standards and patterns |
-| `package-management.md` | Dependency management with `uv` |
-| `git-workflow.md` | Protected branches (`research/*`, `swimlane/*`) and protected paths (`spec/process/`, `spec/handoffs/`) enforced by git hooks |
+Apply `.agents/rules/`: `python.md`, `security.md`, `testing.md`, `package-management.md` (`uv`)
+and `git-workflow.md` (protected branches `research/*`, `swimlane/*`; `spec/process/` is
+commit-blocked by the git hooks).
 
 ### Safe Sandboxing & Automation
 When instructed to write experimental code, test tools, or execute destructive scripts, you must **always checkout a branch prefixed with `research/` or `swimlane/`**.
@@ -94,130 +95,107 @@ These prefixes act as an automatic local sandbox. They are intercepted by a repo
 
 ---
 
+## Binding Constraints (Lore)
+
+`lore/MAP.md` lists the lore nodes; `python3 .agents/scripts/hyper_lore.py list --json` lists them
+as data. They bind every agent:
+- **CANON** nodes are constraints.
+- A **stale CANON** node stays binding until it is retired or superseded.
+- A **PROPOSED** node with `origin: user-decision` binds as a constraint until it is rejected.
+- REJECTED, SUPERSEDED and RETIRED nodes are the graveyard: cite their ids, do not follow them.
+
+Agents propose lore (`propose`, `note`, `stale`); only a person approves it, through
+`/hyper-lore-approve` or `/hyper-audit` Phase 3.5. Lore approvals need **default or acceptEdits**
+permission mode: the gate hook denies the gated verbs (approve, reject, retire, reopen, review) in
+bypassPermissions, dontAsk and plan.
+
+---
+
+## Agent Firewall and Its Limits
+
+`.agentignore` is the source; `hyper_firewall.py render` turns it into Claude Code permission
+rules (`.claude/settings.json`) and best-effort ignore files for the other selected tools.
+
+The rendered Claude Code rules deny Read and Edit of `spec/archive/**` and
+`tests/candidate_outputs/**` (also for recognized Bash file commands such as `cat`, `sed`, `tee`
+and redirect targets), deny Read of `.env`, `node_modules/`, `__pycache__/` and `.git/`, and deny
+Edit of `architecture.yml`, `lore_hypergraph.yml`, `lore/CANON.md`, `lore/canon/**` and the
+mission and slice manifests. Gated `hyper_lore.py` verbs need a confirmation.
+
+Read and Edit denies in bypassPermissions: Enforced (S11 recorded live test, Claude Code 2.1.316).
+
+What the rules do NOT cover:
+- Python or Node subprocesses that open files themselves.
+- Commands that read files without naming them, e.g. `grep -r` from a parent directory.
+
+The firewall is not a security boundary. The CANON gate is procedural and is not a security
+boundary either: its remaining bypasses are a deliberately forged ticket and direct Python writes
+to `lore_hypergraph.yml`. In engine sessions the executor runs with `--setting-sources user`, so
+project settings are not loaded but user-level hooks still run. The bwrap oracle sandbox of the
+engine is Linux-only. OS-level enforcement exists only in the engine's sandboxed phases.
+
+---
+
 ## Available Skills
 
-| Skill | Trigger | Phase | Description |
-|---|---|---|---|
-| `hyper-architect` | `/hyper-architect` | 1 | Requirements interview → Draft_PRD.md |
-| `hyper-redteam` | `/hyper-redteam` | 1 | Adversarial analysis → RedTeam_Report.md |
-| `hyper-resolve` | `/hyper-resolve` | 1 | Trade-off mediation → SuperPRD + MiniPRDs |
-| `hyper-audit` | `/hyper-audit` | 2 | Code verification → reconciles architecture.yml |
-| `hyper-execute` | `/hyper-execute` | 2 | Checks activeContext.md, implements a MiniPRD, updates hypergraph |
-| `hyper-discover` | `/hyper-discover` | -1 | Scans codebase → initializes architecture.yml |
-| `hyper-baseline` | `/hyper-baseline` | -1 | Reverse-engineers system → baseline SuperPRD |
-| `hyper-init` | `/hyper-init` | 0 | Scaffolds standard repository documentation templates |
-| `hyper-clear` | `/hyper-clear` | post-audit | Idempotent context flushing; flushes conversation history while preserving specs and metrics |
-| `hyper-contextualize` | `/hyper-contextualize` | any | Audit and fix installed project agent files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`) to ensure HACF is framed as a development toolchain, preventing framework content from bleeding into project plans and architecture docs |
-| `hyper-sop` | `/hyper-sop` | any | Master SOP guide and phase orientation |
-| `hyper-status` | `/hyper-status` | any | Living Master Plan snapshot |
-| `hyper-consult-cto` | `/hyper-consult-cto` | pre-spec | CTO advisor for architectural decisions |
-| `hyper-co-research` | `/hyper-co-research` | any | Peer-level AI research partner |
-| `hyper-deepdive` | `/hyper-deepdive` | any | Exhaustive First Principles topic research |
-| `hyper-create-skill` | `/hyper-create-skill` | any | Convert a prompt into a new skill |
-| `hyper-new-workflow` | `/hyper-new-workflow` | any | Scaffold a new skill and IDE bridges |
-| `hyper-document` | `/hyper-document` | any | Update README, CHANGELOG, docs/, AGENTS.md, and memory files after any change |
-| `hyper-grill-docs` | `/hyper-grill-docs` | any | Relentless domain-sharpening interview: challenges terminology against CONTEXT.md, cross-references code, stress-tests domain boundaries with concrete scenarios, and writes ADRs inline when decisions are hard-to-reverse, surprising, and trade-off-driven |
-| `hyper-handoff` | `/hyper-handoff` | any | Compact the current conversation into a handoff document (saved to OS temp dir) so a fresh agent can continue the work. Pass an optional argument describing what the next session will focus on. |
-| `hyper-process-document` | `/hyper-process-document` | any | Document the process, methodology, and decisions of the current session as a reproducible narrative saved to spec/process/. Pass an optional title argument. |
-| `hyper-session-update` | `/hyper-session-update` | any | Sync memory with session work |
-| `hyper-update` | `/hyper-update` | any | Smart upgrade framework while preserving customizations |
-| `hyper-refresh-memory` | `/hyper-refresh-memory` | any | Rebuild mental model from codebase |
-| `hyper-troubleshooting` | `/hyper-troubleshooting` | any | Diagnose framework failure states |
-| `hyper-tutorial-run` | `/hyper-tutorial-run` | any | Interactively walk through a tutorial generated by /hyper-tutorial-generator, section by section with Q&A and on-demand code samples |
-| `hyper-tutorial-generator` | `/hyper-tutorial-generator` | any | Generate markdown tutorial from integration test or user-provided files via iterative LLM collaboration |
-| `hyper-tutorial-audit` | `/hyper-tutorial-audit` | any | Run after /hyper-tutorial-run to turn tutorial failures into a structured, constraint-aware goal prompt for a new fix session. Interviews the user about goal and allowed changes; never re-runs tutorial commands. |
-| `hyper-stitch-design` | `/hyper-stitch-design` | any | UI/UX → Design System specification |
-| `hyper-prompt-engineer` | `/hyper-prompt-engineer` | any | Collaborative prompt design |
-| `hyper-template-architect` | `/hyper-template-architect` | any | Reverse-engineer document into template |
-| `hyper-peer-review` | `/hyper-peer-review` | any | Evaluate and triage peer review findings |
-| `hyper-create-issue` | `/hyper-create-issue` | any | Format and file a GitHub issue |
-| `hyper-publish` | `/hyper-publish` | any | AI-proposes commit messages from CHANGELOG; HITL approval gates at each step; optional PR creation with auto-drafted descriptions. Touches git-changed files (mtime), commits, pushes, and optionally creates GitHub PR. |
-| `hyper-learning-opportunity` | `/hyper-learning-opportunity` | any | Structured teaching on any concept |
-
-Full skill instructions: `.agents/skills/hyper-<name>/SKILL.md`
+| Skill | Phase | Description |
+|---|---|---|
+| `hyper-architect` | 1 | Requirements interview → Draft_PRD.md |
+| `hyper-redteam` | 1 | Adversarial analysis → RedTeam_Report.md |
+| `hyper-resolve` | 1 | Trade-off mediation → SuperPRD + MiniPRDs; trade-offs become PROPOSED lore |
+| `hyper-execute` | 2 | Implements one MiniPRD, updates the ledger |
+| `hyper-audit` | 2 | Verifies the build, reconciles the ledger, runs the lore gate |
+| `hyper-lore-approve` | any | Gated review of PROPOSED and stale CANON lore nodes |
+| `hyper-discover` | -1 | Scans the codebase → initializes the ledger |
+| `hyper-baseline` | -1 | Reverse-engineers the system → baseline SuperPRD |
+| `hyper-init` | 0 | Scaffolds standard repository docs |
+| `hyper-clear` | post-audit | Flushes conversation context, keeps specs and metrics |
+| `hyper-contextualize` | any | Frames HACF as a toolchain in installed instruction files |
+| `hyper-sop` | any | Master SOP and phase orientation |
+| `hyper-status` | any | Master Plan snapshot |
+| `hyper-consult-cto` | pre-spec | CTO advisor for architectural decisions |
+| `hyper-co-research` | any | Peer research partner |
+| `hyper-deepdive` | any | First-principles topic research |
+| `hyper-create-skill` | any | Turn a prompt into a skill |
+| `hyper-new-workflow` | any | Scaffold a skill and its IDE bridges |
+| `hyper-document` | any | Update README, CHANGELOG, docs/ and AGENTS.md after a change |
+| `hyper-grill-docs` | any | Domain-sharpening interview; hard decisions become lore ADRs |
+| `hyper-handoff` | any | Compact the conversation into a handoff document in the OS temp dir |
+| `hyper-process-document` | any | Record the session's process to spec/process/ |
+| `hyper-session-update` | any | Sync activeContext.md and propose lore from session work |
+| `hyper-refresh-memory` | any | Rebuild the mental model from the codebase |
+| `hyper-update` | any | Upgrade HACF, keeping customizations |
+| `hyper-troubleshooting` | any | Diagnose framework failures |
+| `hyper-tutorial-generator` / `-run` / `-audit` | any | Generate, walk through and audit tutorials |
+| `hyper-stitch-design` | any | UI/UX → design system spec |
+| `hyper-prompt-engineer` | any | Collaborative prompt design |
+| `hyper-template-architect` | any | Reverse-engineer a document into a template |
+| `hyper-peer-review` | any | Triage peer review findings |
+| `hyper-create-issue` | any | File a GitHub issue |
+| `hyper-publish` | any | Proposed commits and PRs with approval gates |
+| `hyper-learning-opportunity` | any | Structured teaching |
 
 ---
 
-## Cost Optimization: Hybrid Model Orchestration
+## Models
 
-### Model Routing
-
-Skills automatically route to the optimal Claude model tier based on metadata:
-
-- **Haiku** (2k thinking ceiling): Routine, deterministic tasks. ~70% cost savings.
-- **Sonnet** (10k thinking ceiling): Tactical reasoning, trade-off analysis. ~50% cost savings.
-- **Opus** (20k thinking ceiling): Strategic decisions, adversarial analysis.
-
-**Configuration**: Each skill has a `.agents/skills/hyper-<name>/META.yml` file specifying its assigned model:
-
-```yaml
-assigned_model: haiku
-model_version: "claude-haiku-4-5-20251001"
-max_thinking_tokens: 2000  # Optional per-skill override
-```
-
-### Manual Overrides
-
-Temporarily override a skill's model assignment:
-
-```bash
-# Single execution only (resets after)
-/hyper-config set-model /hyper-execute sonnet --scope single_run
-
-# Permanent (until manually reverted)
-/hyper-config set-model /hyper-execute sonnet --scope permanent --reason "Debugging complex case"
-
-# Revert to default
-/hyper-config revert-override /hyper-execute
-```
-
-### Token Enforcement
-
-- **Thinking Token Ceilings**: Enforced per model; execution halts with warning if exceeded. Per-skill overrides available via META.yml.
-- **Output Token Budgets**: 50k ceiling per task. MiniPRDs exceeding this are flagged for splitting.
-- **Variance Tracking**: Post-execution reconciliation logs estimated vs. actual tokens. Deviations >20% flagged for investigation.
+Model ids come from the `models` map of `.agents/config/orchestration.yml`: opus `claude-opus-5-5`,
+sonnet `claude-sonnet-5-5`, haiku `claude-haiku-5-5`, fable `claude-fable-5-1`. `phase_models`
+picks the engine's execute and audit models. A skill's optional `META.yml` names its
+`assigned_model` tier and `model_version`.
 
 ---
 
-## Framework Upgrade & Maintenance
+## Framework Updates
 
-### Update your framework: `/hyper-update`
-
-This command safely upgrades your Hypergraph Framework installation while preserving customizations to CLAUDE.md, AGENTS.md, and IDE rules files. All replaced/merged files are backed up before mutation with timestamped directories in `.agents/.backup/`.
-
-**How it works:**
-1. Fetches the latest upstream framework from GitHub
-2. Verifies upstream commit with GPG signature (security-first)
-3. Auto-updates framework files (.agents/skills/, .agents/scripts/, spec/, tests/)
-4. Guides you through section-by-section merging of sensitive files (CLAUDE.md, AGENTS.md, IDE rules)
-5. Creates timestamped backups before any file mutation
-6. Logs all operations for audit trail
-
-**Example usage:**
-```bash
-/hyper-update
-```
-
-### Restore from backup: `/hyper-recover`
-
-Restore a file from a previous backup without manual file copying.
-
-**List available backups:**
-```bash
-/hyper-recover --list
-```
-
-**Restore a specific file from a specific date:**
-```bash
-/hyper-recover --file=CLAUDE.md --date=2026-05-04
-```
-
-Before restoring, the command creates a meta-backup of your current version, so you can always roll back.
-
-**Backup retention policy:**
-- Backups are retained for 30 days
-- Old backups are automatically removed on the next `/hyper-update` run
-- Check backup ages and expiration dates in the upgrade summary
+`/hyper-update` upgrades HACF and keeps your edits to instruction files and settings; replaced
+files are backed up under `.agents/.backup/`. Update integrity follows ADR-0010:
+- HACF releases are unsigned in v0.6.x. An unsigned upstream needs explicit consent in a terminal
+  (the prompt, or `--allow-unsigned`), which shows the effective URL and commit and is logged to
+  `.agents/logs/update-consent.jsonl`; it is refused under `-y`, without a TTY and under
+  `HACF_AUTONOMOUS=1`. A non-descendant upstream needs `--allow-downgrade`.
+- Any future release signing will use SSH signatures only.
+- Never import a signing key into a global keyring.
 
 ---
 
@@ -227,140 +205,81 @@ Before restoring, the command creates a meta-backup of your current version, so 
 Phase -1 (Brownfield): /hyper-discover → /hyper-baseline
 Phase  1 (Spec):       /hyper-architect → /hyper-redteam → /hyper-resolve → archive_specs.py
 Phase  2 (Build):      /hyper-execute → hypergraph_updater.py → /hyper-audit
-Phase  3 (Novel):      Human review → tests/fixtures/ → update MiniPRD
+Phase  3 (Novel):      human review → tests/fixtures/ → update the spec
 ```
 
-Each phase boundary requires a **fresh context window** to prevent cross-contamination
-between adversarial agents (Red Team must not see Architect's conversation history).
+Each phase boundary needs a **fresh context window**: the Red Team must not see the Architect's
+conversation.
 
 ---
 
-## Schema Definitions (Persistent Rules)
+## Schema Definitions
 
-**Note:** These schemas are embedded in `AGENTS.md` to reduce per-message token overhead and ensure a single source of truth across all IDE integrations (Claude Code, Gemini CLI, Cursor, etc.).
-For the historical/deprecated versions, see `.agents/schemas/` directory.
+### v0.6.0 documents (SPEC.md)
+SuperPRDs and MiniPRDs are document types inside `SPEC.md` files with YAML frontmatter
+(`hacf_schema: 1`; `hacf_type: SystemOfRecord | SuperPRD | MiniPRD`). Writers: `hyper_scope.py`;
+lint: `hyper_spec.py lint`.
+- Mission `missions/<m>/SPEC.md`, `hacf_type: SuperPRD`: `# SuperPRD: <Feature>`, `## Intent`,
+  sections 1-8 below, `## Slices` (generated), `## Status`.
+- Slice `missions/<m>/slices/<NN-slug>/SPEC.md`, `hacf_type: MiniPRD` (keys include `node_id`,
+  `parent`, `hacf_status`, `hacf_touches`, `hacf_oracle`, `lore_refs`): `# MiniPRD: <Module>`,
+  `## Intent`, `## 1. The Confidence Mandate`, `## Mini-requirements` (numbered US-NNN),
+  `## 3. Implementation Plan (Task List)`, `## 4. The Negative Space (Constraints)`,
+  `## Proof contract` (`- [ ]` tests), `## Source material`, `## Intent visual`, `## Status`,
+  `## Dependencies`.
 
-### SuperPRD Schema
-
-SuperPRD (Super Product Requirements Document) is the comprehensive specification for a feature.
-Use this template when compiling a full feature specification from architect and red team input.
-
-**Structure:**
+### SuperPRD sections
 ```
 # SuperPRD: [Feature Name]
-
-## 1. Introduction & Goals
-- Problem Statement: [Why are we building this?]
-- Solution Overview: [High-level approach]
-- Target Audience: [Who is this for?]
-
-## 2. Confidence Mandate
-- Confidence Score: [1-10] (must be calculated before proceeding)
-- Clarifying Questions: [List any open questions]
-
-## 3. Scope
-- In-Scope: [Features included]
-- Out-of-Scope: [Explicitly excluded features]
-
-## 4. User Stories (Atomic)
-| ID | User Story | Acceptance Criteria | Priority |
-| US-001 | As [User], I want [Action] so that [Outcome] | 1. Criterion A<br>2. Criterion B | High |
-
-## 5. Technical Specifications
-- Architecture & Resolved Trade-offs: [System design + trade-off log]
-- System Graph Blast Radius: [Affected nodes in architecture.yml]
-- Execution Checklist: [List of MiniPRDs to execute]
-- API Contracts / Schema: [Type definitions]
-- Dependencies: [Libraries/frameworks]
-
-## 6. Negative Constraints
-- **DO NOT** [Anti-pattern 1]
-- **DO NOT** [Anti-pattern 2]
-
+## 1. Introduction & Goals      (problem, solution overview, audience)
+## 2. Confidence Mandate        (score 1-10, clarifying questions)
+## 3. Scope                     (in scope, out of scope)
+## 4. User Stories (Atomic)     | ID | User Story | Acceptance Criteria | Priority |
+## 5. Technical Specifications  (architecture and trade-offs, blast radius, execution checklist, contracts, dependencies)
+## 6. Negative Constraints      (- **DO NOT** ...)
 ## 7. Risks & Mitigation
-- Risk 1: [Description] → Mitigation: [Action]
-
 ## 8. Success Metrics
-- [Metric 1]
-- [Metric 2]
 ```
 
----
-
-### MiniPRD Schema
-
-MiniPRD (Mini Product Requirements Document) is a modular, executable specification for a single
-feature module. Generate one MiniPRD per independent task.
-
-**Structure:**
+### Legacy flat MiniPRD (dual-read)
+`spec/compiled/MiniPRD_<Module>.md` files are still read:
 ```
 # MiniPRD: [Module Name]
-
 **Hypergraph Node ID:** [node_id]
 **Parent Node:** [parent_node_id]
-
-## 1. The Confidence Mandate
-- Confidence Score: [1-10] (required before implementation)
-- Clarifying Questions: [If < 9, list questions needed]
-
-## 2. Atomic User Stories
-- US-001: As [User Type], I want [Action] so that [Value]
-- US-002: ...
-
-## 3. Implementation Plan (Task List)
-- [ ] Task 1: [Specific, <10 min effort]
-- [ ] Task 2: ...
-
+## 1. The Confidence Mandate          (score 1-10; questions if < 9)
+## 2. Atomic User Stories             (- US-001: As [User], I want [Action] so that [Value])
+## 3. Implementation Plan (Task List) (- [ ] Task 1: <10 min each)
 ## 4. The Negative Space (Constraints)
-- **DO NOT** [Anti-pattern]
-- **DO NOT** [Architectural violation]
-
-## 5. Integration Tests & Verification
-- Test 1 (Deterministic): [Input] → [Expected Output]
-- Test 2 (Novel): [Input] → [Candidate Artifact routing]
+## 5. Integration Tests & Verification (Deterministic → expected output; Novel → candidate routing)
 ```
 
----
-
-### Hypergraph Schema (architecture.yml)
-
-The hypergraph is a YAML file (`spec/compiled/architecture.yml`) that tracks system dependencies as a directed acyclic graph.
-
-**Node Structure:**
+### Component ledger v2 (`spec/compiled/architecture.yml`)
+`schema: hacf.ledger/v2`; single writer `hyper_ledger.py` (`validate` lints it).
 ```yaml
 nodes:
-  - id: [unique_identifier]
-    dimension: [System | Module | Atomic]  # Layer of abstraction
-    status: [clean | dirty | needs_review]  # Build state
-    associated_file: [path_to_source]  # MiniPRD, source code, or doc
-    description: [semantic_purpose]  # What this node does
-    inputs:
-      - data_type: [type_name]
-        source_id: [upstream_node_id]
-    outputs:
-      - data_type: [type_name]
-        target_id: [downstream_node_id]
-    edges:
-      depends_on: [list_of_node_ids]  # Architectural dependencies
-      implements: [list_of_node_ids]  # Hierarchical link (Atomic→Module)
+  - id: component_id              # ^[a-z][a-z0-9_]{1,63}$
+    dimension: Module             # System | Layer | Module | Atomic
+    status: clean                 # clean | dirty | needs_review
+    associated_file: path
+    files: ['glob']               # what the node owns
+    description: >-
+      ...
+    inputs:  [{data_type: x, source_id: node} | {data_type: x, external: label}]
+    outputs: [{data_type: x, target_id: node} | {data_type: x, external: label}]
+    edges: {depends_on: [], implements: [], member_of: []}
+    spec_refs: [OPR.0.6.0.2]
+    provenance: {...}
+    review: {...}
+removed_nodes: [{id, reason, slice, commit}]   # append-only tombstones
 ```
-
-**Status Values:**
-- `clean` — Implementation verified against specification; ready for use
-- `dirty` — Recently modified; awaiting audit review
-- `needs_review` — Dependent on modified node; blast-radius mark
+`clean`: verified; `dirty`: modified, awaiting audit; `needs_review`: in a changed node's blast
+radius (implements parents and reverse depends_on; `member_of` is not traversed).
 
 ---
 
 ## Migration Notice
 
-**Effective:** 2026-05-03  
-**Deadline:** 2026-06-17 (6-week deprecation period)
-
-All `.agents/schemas/` files have been migrated to `AGENTS.md` to reduce per-message context overhead and provide a single source of truth across all IDEs.
-Old files marked with `.deprecated` suffix; will be deleted after 2026-06-17.
-
-**For Developers:**
-- Update custom skills to reference "AGENTS.md: Schema Definitions" instead of `.agents/schemas/` files
-- See `docs/MIGRATION_RULES.md` for detailed migration guide
-- CI lint will enforce AGENTS.md-only references post-deadline
+v0.6.0 moves specs to `SPEC.md` scopes under `missions/` and lore to `lore/`
+(`hyper_migrate.py`). Legacy flat MiniPRDs are dual-read until v0.7.0, and no earlier than
+2027-01-31; after that, migrate them with `python3 .agents/scripts/hyper_migrate.py apply`.

@@ -1,6 +1,6 @@
 ---
 name: process-document
-description: Documents the process, methodology, and decisions of the current session as a reproducible narrative. Saves to spec/process/ in the workspace so the journey can be understood and recreated by others.
+description: Documents the process and methodology of the current session as a reproducible narrative. Saves to spec/process/, the commit-blocked workbench, so the journey can be understood and recreated by others; decisions and field notes go to lore instead.
 trigger: /hyper-process-document
 argument-hint: "Brief title for this process document (e.g. 'Dynamic Workflow Engine')"
 ---
@@ -10,6 +10,8 @@ argument-hint: "Brief title for this process document (e.g. 'Dynamic Workflow En
 Write a process document that captures the *how* of this session — the problem, approach, decisions, and steps taken — so that someone reading it cold can understand and reproduce the results.
 
 This is distinct from `/hyper-handoff`, which is forward-looking (context for a new agent to continue). This document is retrospective and human-readable: institutional knowledge capture.
+
+`spec/process/` is the commit-blocked workbench: the pre-commit hook refuses anything under it. Decisions and field notes do not belong there. Record each decision as a PROPOSED lore node with `python3 .agents/scripts/hyper_lore.py propose --type decision --title '<title>' --body-file <file>`, and each field note with `python3 .agents/scripts/hyper_lore.py note --mission <mission dir> --text '<note>'` (or `note --legacy --source <MiniPRD path>` for a legacy flat spec). The process document may cite the lore ids it produced.
 
 ---
 
@@ -58,6 +60,7 @@ git diff HEAD~5..HEAD --name-only
 
 - Read `.agents/memory/activeContext.md` — current sprint state and recent decisions
 - List `spec/active/` — any in-progress PRDs or artifacts touched this session
+- Run `python3 .agents/scripts/hyper_spec.py status` — the missions and slices worked on this session
 - Recall the conversation: what problems were raised, what approaches were tried, what choices were made and why
 
 ---
@@ -99,17 +102,21 @@ What was the sequencing rationale?>
 - The outcome or observation
 
 Example format:
-1. Ran `/hyper-discover` to initialize the hypergraph from the existing codebase, because no
-   architecture.yml existed yet. Result: spec/compiled/architecture.yml created with 12 nodes.
-2. Ran `/hyper-architect` to extract requirements — identified 3 key user stories and 2 constraints.
+1. Ran `/hyper-discover` to build the component ledger from the existing codebase, because no
+   ledger existed yet (it ran `python3 .agents/scripts/hyper_ledger.py init` first). Result:
+   spec/compiled/architecture.yml populated with 12 nodes.
+2. Ran `/hyper-architect` to extract requirements — identified 3 key user stories and 2 constraints;
+   `/hyper-resolve` then compiled them into a mission under missions/ and proposed 2 lore decisions.
 3. Noticed the session naming hook was outputting raw text instead of JSON; traced the issue to
    SKILL.md step 3 which lacked an envelope wrapper. Fixed by wrapping output in hookSpecificOutput.>
 
 ## Key Decisions & Rationale
 
-| Decision | Alternatives Considered | Reason Chosen |
-|---|---|---|
-| <what was decided> | <what else was considered> | <why this was selected> |
+<Summarize only; each decision itself is proposed to lore (see above). Cite its lore id.>
+
+| Decision | Alternatives Considered | Reason Chosen | Lore id |
+|---|---|---|---|
+| <what was decided> | <what else was considered> | <why this was selected> | <ADR-NNNN or "none"> |
 
 ## Artifacts Created / Modified
 

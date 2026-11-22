@@ -1,0 +1,186 @@
+{
+  "schema": "hacf.migration-plan/v1",
+  "include_archived": false,
+  "chain": true,
+  "actions": [
+    {
+      "step": 1,
+      "op": "scaffold"
+    },
+    {
+      "step": 2,
+      "op": "project-spec",
+      "source": "spec/compiled/SuperPRD.md",
+      "target": "SPEC.md",
+      "intent": "Demo billing baseline"
+    },
+    {
+      "step": 3,
+      "op": "mission-create",
+      "mission": "missions/demo-billing-service",
+      "id": "OPR.99.0.1",
+      "intent": "Demo billing service",
+      "source": "spec/compiled/SuperPRD_demo.md"
+    },
+    {
+      "step": 3,
+      "op": "mission-create",
+      "mission": "missions/legacy-unassigned",
+      "id": "OPR.99.0.2",
+      "intent": "Legacy MiniPRDs that no SuperPRD Execution Checklist names",
+      "source": null
+    },
+    {
+      "step": 5,
+      "op": "slice-create",
+      "mission": "missions/legacy-unassigned",
+      "slice": "missions/legacy-unassigned/slices/01-invoices",
+      "id": "OPR.99.0.2.1",
+      "source": "spec/compiled/MiniPRD_01_Invoices.md",
+      "legacy_order": 1,
+      "intent": "Invoices",
+      "node_id": "invoices",
+      "parent": "billing",
+      "depends_on": [],
+      "hacf_status": "compiled"
+    },
+    {
+      "step": 5,
+      "op": "slice-create",
+      "mission": "missions/legacy-unassigned",
+      "slice": "missions/legacy-unassigned/slices/02-payments",
+      "id": "OPR.99.0.2.2",
+      "source": "spec/compiled/MiniPRD_02_Payments.md",
+      "legacy_order": 2,
+      "intent": "Payments",
+      "node_id": "payments",
+      "parent": "billing",
+      "depends_on": [
+        "OPR.99.0.2.1"
+      ],
+      "hacf_status": "compiled"
+    },
+    {
+      "step": 5,
+      "op": "slice-create",
+      "mission": "missions/legacy-unassigned",
+      "slice": "missions/legacy-unassigned/slices/03-reports",
+      "id": "OPR.99.0.2.3",
+      "source": "spec/compiled/MiniPRD_Reports.md",
+      "legacy_order": 3,
+      "intent": "Reports",
+      "node_id": "reports",
+      "parent": "billing",
+      "depends_on": [
+        "OPR.99.0.2.2"
+      ],
+      "hacf_status": "compiled"
+    },
+    {
+      "step": 6,
+      "op": "ledger-repair",
+      "target": "spec/compiled/architecture.yml"
+    },
+    {
+      "step": 6,
+      "op": "ledger-migrate-v2",
+      "target": "spec/compiled/architecture.yml"
+    },
+    {
+      "step": 7,
+      "op": "adr-scan",
+      "dirs": [
+        "docs/adr",
+        "services/billing/docs/adr"
+      ],
+      "skipped": []
+    },
+    {
+      "step": 7,
+      "op": "adr-import",
+      "target": "docs/adr",
+      "context": null
+    },
+    {
+      "step": 7,
+      "op": "adr-import",
+      "target": "services/billing/docs/adr",
+      "context": "services/billing"
+    },
+    {
+      "step": 8,
+      "op": "product-context",
+      "source": ".agents/memory/productContext.md",
+      "target": "SPEC.md"
+    },
+    {
+      "step": 8,
+      "op": "system-patterns",
+      "source": ".agents/memory/systemPatterns.md"
+    },
+    {
+      "step": 8,
+      "op": "lore-index"
+    },
+    {
+      "step": 9,
+      "op": "instruction-file",
+      "target": "AGENTS.md"
+    },
+    {
+      "step": 9,
+      "op": "instruction-file",
+      "target": "CLAUDE.md"
+    },
+    {
+      "step": 9,
+      "op": "instruction-file",
+      "target": "GEMINI.md"
+    },
+    {
+      "step": 9,
+      "op": "blocks",
+      "files": [
+        ".gitignore",
+        ".agentignore"
+      ]
+    },
+    {
+      "step": 9,
+      "op": "drivers-check"
+    },
+    {
+      "step": 9,
+      "op": "firewall",
+      "ides": [
+        "claude"
+      ],
+      "settings": true
+    },
+    {
+      "step": 10,
+      "op": "archive",
+      "paths": [
+        "spec/compiled/MiniPRD_01_Invoices.md",
+        "spec/compiled/MiniPRD_02_Payments.md",
+        "spec/compiled/MiniPRD_Reports.md",
+        "spec/compiled/SuperPRD.md",
+        "spec/compiled/SuperPRD_demo.md"
+      ],
+      "label": "v060_migrated"
+    }
+  ],
+  "legacy_map": {
+    "spec/compiled/MiniPRD_01_Invoices.md": "missions/legacy-unassigned/slices/01-invoices/SPEC.md",
+    "spec/compiled/MiniPRD_02_Payments.md": "missions/legacy-unassigned/slices/02-payments/SPEC.md",
+    "spec/compiled/MiniPRD_Reports.md": "missions/legacy-unassigned/slices/03-reports/SPEC.md"
+  },
+  "twins": [],
+  "unclassified": [],
+  "not_imported": [
+    "spec/archive/MiniPRD_00_Setup_AUDITED.md"
+  ],
+  "reports": [
+    "1 archived MiniPRD(s) not imported; --include-archived imports them"
+  ]
+}

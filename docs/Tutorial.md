@@ -1,6 +1,6 @@
 # **Hypergraph Coding Agent Framework: A Practical Walkthrough**
 
-This tutorial demonstrates exactly how to use the Hypergraph Coding Agent Framework template by walking through a real-world scenario: **Adding an Email Newsletter Subscription feature** to an existing system.
+This tutorial demonstrates exactly how to use the Hypergraph Coding Agent Framework template (v0.6.0) by walking through a real-world scenario: **Adding an Email Newsletter Subscription feature** to an existing system.
 
 ## **The Scenario**
 
@@ -55,10 +55,12 @@ Which path do we take for V1?
 
 **You:** Option B for now.
 
-*(The Resolution Agent compiles the final SuperPRD and MiniPRD\_Newsletter.md into spec/compiled/. It then instructs you to run the archival script. You run it in your terminal, and the active drafts are safely archived.)*
+Option B also becomes a PROPOSED lore decision. It binds no agent until you approve it with `/hyper-lore-approve`.
+
+*(The Resolution Agent compiles the mission through the scope manager: `missions/newsletter/SPEC.md` is the SuperPRD and `missions/newsletter/slices/01-subscribe-form/SPEC.md` is the slice, the MiniPRD. `hyper_spec.py lint` passes. It then asks you to archive the workbench, and you run the command in your terminal.)*
 
 ```bash
-python .agents/scripts/archive_specs.py Newsletter_Feature
+python3 .agents/scripts/archive_specs.py --paths spec/active/Draft_PRD.md spec/active/RedTeam_Report.md --label Newsletter_Feature
 ```
 
 ## **Phase 2: The Execution Engine**
@@ -67,24 +69,24 @@ python .agents/scripts/archive_specs.py Newsletter_Feature
 
 You open a **fresh chat context**.
 
-**You:** `/hyper-execute spec/compiled/MiniPRD_Newsletter.md`
+**You:** `/hyper-execute missions/newsletter/slices/01-subscribe-form/SPEC.md`
 
-*(The skill reads the MiniPRD, writes the HTML form and the backend API route, then automatically runs `hypergraph_updater.py`. The script flags `database_module` and `homepage_ui` in `architecture.yml` as `status: needs_review`. The skill halts and instructs you to open a new context for `/hyper-audit`.)*
+*(The skill resolves the spec with `hyper_spec.py resolve`, writes the HTML form and the backend API route, then runs `hypergraph_updater.py` on the slice's node. The updater marks `newsletter_module` `dirty` in `architecture.yml`, and the nodes it reaches, such as `database_module` and `homepage_ui`, `needs_review`. The skill halts and tells you to open a new context for `/hyper-audit`.)*
 
 ### **Step 5: /hyper-audit**
 
-You wait for the Builder to completely finish. You open a **fresh chat context**.
+You wait for the Builder to finish completely. You open a **fresh chat context**.
 
-**You:** /hyper-audit spec/compiled/MiniPRD\_Newsletter.md
+**You:** `/hyper-audit missions/newsletter/slices/01-subscribe-form/SPEC.md`
 
-*(The Auditor reads the code, verifies the honeypot was implemented correctly, and checks the deterministic tests. It then reads `architecture.yml`, sees the `needs_review` flags, and rewrites the YAML definitions to include the new `POST /subscribe` data flow. It resets the status to `clean`, then moves `MiniPRD_Newsletter.md` from `spec/compiled/` to `spec/archive/` so it won't surface in future `/hyper-execute` runs.)*
+*(The Auditor reads the code, verifies the honeypot, and runs the slice's deterministic tests. It reconciles the `needs_review` nodes through `hyper_ledger.py review-template` and `apply-review`, adding the new `POST /subscribe` data flow, never editing the YAML by hand. It records the QA proof, marks the slice audited, and runs the lore gate.)*
 
 **Auditor Agent:**
 
 `[VERIFICATION: PASSED]`
 
-`[AUDIT COMPLETE & HYPERGRAPH RECONCILED]`
+`[AUDIT COMPLETE & LEDGER RECONCILED]`
 
-`[MINIPRD ARCHIVED]`
+**Feature Complete.** You have built a secure, audited feature without writing a line of code yourself.
 
-**Feature Complete.** You have successfully built a secure, audited feature without writing a single line of code yourself.
+To build slices in parallel instead, run `python3 .agents/scripts/hyper_engine.py run`, which runs every mission's slices (or every legacy MiniPRD when there are no missions), and land the result with `hyper_engine.py land <run_id>` ([MasterSOP](MasterSOP.md#the-workflow-engine)).

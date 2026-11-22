@@ -16,12 +16,15 @@ This skill immediately outputs the current Living Master Plan — the complete, 
 
 ## How to use it
 
-Read the following files to compile the current state:
+Read the following sources (all read only) to compile the current state:
 - `.agents/memory/activeContext.md` — current focus and next steps
-- `.agents/memory/productContext.md` — product goals and decisions
-- `.agents/memory/systemPatterns.md` — architectural patterns
-- `spec/compiled/architecture.yml` — hypergraph state
-- `spec/compiled/SuperPRD.md` — system of record
+- root `SPEC.md` — the system of record: intent, baseline and product context
+- `lore/MAP.md` — the lore map: canon, proposed, stale, graveyard and where things live
+- `python3 .agents/scripts/hyper_spec.py status --json` — missions and slices with their statuses
+- `python3 .agents/scripts/hyper_lore.py list --json` — every lore node with its status, `stale` flag and `binding`
+- `spec/compiled/architecture.yml` — hypergraph state (read only)
+
+Legacy project: when there is no root `SPEC.md`, `hyper_spec.py status --json` lists only v6 missions, so also list the legacy flat specs in `spec/compiled/` (`SuperPRD_*.md`, `MiniPRD_*.md`) as the plan. A missing source is reported as missing, not guessed.
 
 Then output the Living Master Plan immediately, covering all sections without compressing or summarizing older milestones:
 
@@ -36,9 +39,11 @@ A high-level roadmap where any immediate tasks are broken down into clear atomic
 
 ### Known Constraints & Open Questions
 Limitations, barriers, and uncertainties that affect execution. Include both technical constraints and product unknowns.
+Binding lore, cited by id (R23): CANON nodes, stale CANON nodes (binding until retired or superseded) and PROPOSED nodes with `origin: user-decision` (binding until rejected); `list --json` marks them `binding: true`.
 
 ### The Graveyard
 A strict, exhaustively detailed log of:
+- REJECTED, SUPERSEDED and RETIRED lore nodes, each with its id and warrant
 - Failed code iterations and why they failed
 - Discarded architectural approaches and what ruled them out
 - Disproven hypotheses and the evidence against them

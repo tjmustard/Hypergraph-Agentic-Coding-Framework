@@ -14,9 +14,18 @@
 
 ## For Gemini CLI: System Mandates
 
-Read `AGENTS.md` for the full framework system mandates that apply to all IDEs.
+Read `AGENTS.md` for the full framework system mandates that apply to all IDEs. Its first line is
+the trailhead: start at `lore/MAP.md`, then `SPEC.md`, then the active mission under `missions/`.
+AGENTS.md also lists the lore nodes that bind you and the stated limits of the agent firewall.
 
 **Gemini CLI-specific overrides and additions:**
+
+### v0.6.0 Notes
+- Run every framework script with `python3`, never a bare `python`.
+- Gemini CLI has no PreToolUse gate hook, so a gated lore verb (approve, reject, retire, reopen,
+  review) asks for a confirmation in the terminal: the user types the node id. Without a terminal
+  it is refused.
+- `.geminiignore` is rendered from `.agentignore` as a context filter, not a security boundary.
 
 ### Tool Names
 When skills say "read/write/run/edit a file," use these Gemini CLI tools:
@@ -33,13 +42,15 @@ When skills say "read/write/run/edit a file," use these Gemini CLI tools:
 Activate skills via the `activate_skill` tool, using the skill names defined in
 `.agents/skills/`. Each skill directory contains a `SKILL.md` with full instructions.
 
-Available skills: `hyper-architect`, `hyper-audit`, `hyper-baseline`, `hyper-clear`, `hyper-co-research`,
-`hyper-consult-cto`, `hyper-create-issue`, `hyper-create-skill`, `hyper-deepdive`, `hyper-discover`,
-`hyper-document`, `hyper-execute`, `hyper-init`, `hyper-learning-opportunity`, `hyper-new-workflow`,
-`hyper-peer-review`, `hyper-prompt-engineer`, `hyper-publish`, `hyper-redteam`, `hyper-refresh-memory`,
-`hyper-resolve`, `hyper-session-update`, `hyper-sop`, `hyper-status`, `hyper-stitch-design`,
-`hyper-template-architect`, `hyper-troubleshooting`, `hyper-tutorial`, `hyper-tutorial-generator`,
-`hyper-update`
+Available skills: `hyper-architect`, `hyper-audit`, `hyper-baseline`, `hyper-clear`,
+`hyper-co-research`, `hyper-consult-cto`, `hyper-contextualize`, `hyper-create-issue`,
+`hyper-create-skill`, `hyper-deepdive`, `hyper-discover`, `hyper-document`, `hyper-execute`,
+`hyper-grill-docs`, `hyper-handoff`, `hyper-init`, `hyper-learning-opportunity`,
+`hyper-lore-approve`, `hyper-new-workflow`, `hyper-peer-review`, `hyper-process-document`,
+`hyper-prompt-engineer`, `hyper-publish`, `hyper-redteam`, `hyper-refresh-memory`, `hyper-resolve`,
+`hyper-session-update`, `hyper-sop`, `hyper-status`, `hyper-stitch-design`,
+`hyper-template-architect`, `hyper-troubleshooting`, `hyper-tutorial-audit`,
+`hyper-tutorial-generator`, `hyper-tutorial-run`, `hyper-update`
 
 ### Safe Sandboxing & Automation
 When instructed to write experimental code, test tools, or execute destructive scripts, you must **always checkout a branch prefixed with `research/` or `swimlane/`**.

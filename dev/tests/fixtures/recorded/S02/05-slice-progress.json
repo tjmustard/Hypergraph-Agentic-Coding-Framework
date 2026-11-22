@@ -1,0 +1,29 @@
+{
+  "step": "slice-progress",
+  "argv": [
+    "npx",
+    "-y",
+    "--package=@openrig/cli@0.6.13",
+    "rig",
+    "scope",
+    "--workspace",
+    "/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo",
+    "slice",
+    "progress",
+    "01-adapter-spike",
+    "--mission",
+    "release-0.6.0",
+    "--add",
+    "Spike row added by rig",
+    "--json"
+  ],
+  "cwd": "/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo",
+  "exit_code": 0,
+  "stdout": "{\n  \"ok\": true,\n  \"progress\": {\n    \"scope\": \"slice\",\n    \"name\": \"01-adapter-spike\",\n    \"target\": \"/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo/missions/release-0.6.0/slices/01-adapter-spike/PROGRESS.md\",\n    \"kind\": \"progress\",\n    \"operation\": \"add\",\n    \"status\": \"active\",\n    \"changed\": true\n  }\n}\n",
+  "stderr": "",
+  "rig_version": "0.6.13 (9eeb2e42)",
+  "captured_at": "2026-10-26T05:10:02+00:00",
+  "git_status_after": [
+    " M missions/release-0.6.0/slices/01-adapter-spike/PROGRESS.md"
+  ]
+}

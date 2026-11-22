@@ -1,7 +1,15 @@
 # Hypergraph Coding Agent Framework — Agent Instructions
 # Always active
 
-Read `AGENTS.md` for all system mandates.
+Trailhead: start at lore/MAP.md, then SPEC.md, then the active mission under missions/
+
+Read `AGENTS.md` and adhere to all system mandates defined there, including its stated firewall
+limits.
 
 When a skill is invoked (e.g., "architect", "redteam"), read `.agents/skills/<name>/SKILL.md`
 and follow its instructions precisely.
+
+- Run every framework script with `python3`, never a bare `python`.
+- Binding lore constraints (listed in `lore/MAP.md`): CANON nodes bind; a stale CANON node stays
+  binding until it is retired or superseded; a PROPOSED node with `origin: user-decision` binds
+  until it is rejected.

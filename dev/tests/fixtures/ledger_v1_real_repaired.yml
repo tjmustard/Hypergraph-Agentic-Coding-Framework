@@ -1,0 +1,543 @@
+nodes:
+- id: orchestration_layer
+  dimension: Layer
+  status: clean
+  associated_file: .agents/
+  description: Abstract orchestration layer. All framework modules depend on this
+    layer. Represents the shared infrastructure (config, env, locks, logging) available
+    to every agent script.
+  inputs: []
+  outputs: []
+  edges:
+    depends_on: []
+    implements: []
+- id: hypergraph_updater
+  dimension: Module
+  status: clean
+  associated_file: .agents/scripts/hypergraph_updater.py
+  description: Manages hypergraph blast-radius propagation and provenance staging lifecycle.
+    Supports three subcommands (blast-radius, write-provenance, merge-provenance, cleanup-provenance)
+    with exclusive fcntl locks on all YAML and staging file writes. Marks directly modified
+    nodes as dirty and transitively marks dependent/implementing nodes as needs_review.
+  inputs:
+  - data_type: modified_node_ids
+    source_id: hyper_execute_runner
+  - data_type: architecture_yaml
+    source_id: filesystem
+  - data_type: provenance_staging_metadata
+    source_id: hyper_daemon
+  outputs:
+  - data_type: updated_architecture_yaml
+    target_id: filesystem
+  - data_type: provenance_staging_files
+    target_id: provenance_staging_dir
+  edges:
+    depends_on:
+    - orchestration_layer
+    implements: []
+- id: context_clearing
+  dimension: Module
+  status: clean
+  associated_file: .agents/skills/hyper-clear/SKILL.md
+  description: Clears conversation history between feature cycles. Idempotent, preserves
+    specifications and hypergraph. Triggered manually via /hyper-clear or automatically
+    post-audit.
+  inputs:
+  - data_type: command_trigger
+    source_id: user_or_post_audit_hook
+  outputs:
+  - data_type: session_state_update
+    target_id: activeContext
+  - data_type: log_message
+    target_id: user_interface
+  edges:
+    depends_on:
+    - orchestration_layer
+    implements: []
+- id: context_compaction
+  dimension: Module
+  status: clean
+  associated_file: .agents/scripts/compaction_engine.py
+  description: Collapses /hyper-resolve debate transcripts into Final Truth documents
+    preserving trade-off reasoning (architect & red team positions, resolution, risks,
+    mitigations). Archives full transcript with metadata and retention policy. Auto-recovers
+    if /hyper-resolve interrupted.
+  inputs:
+  - data_type: debate_transcript
+    source_id: hyper_resolve_output
+  - data_type: recovery_trigger
+    source_id: hyper_execute_interrupt_check
+  outputs:
+  - data_type: final_truth_document
+    target_id: spec_compiled
+  - data_type: archived_transcript
+    target_id: spec_archive
+  - data_type: recovery_status
+    target_id: execution_context
+  edges:
+    depends_on:
+    - orchestration_layer
+    implements: []
+- id: model_router
+  dimension: Module
+  status: clean
+  associated_file: .agents/scripts/model_router.py
+  description: Routes skills to appropriate Claude model tiers (Opus/Sonnet/Haiku)
+    based on META.yml metadata and heuristic classification rules. Detects missing
+    metadata and falls back to Opus with warning. Verifies version compatibility (warns
+    on retired models). Supports temporary user overrides. Non-blocking fallback ensures
+    graceful degradation.
+  inputs:
+  - data_type: skill_metadata
+    source_id: skill_meta_yml
+  - data_type: heuristic_rules
+    source_id: heuristic_rules_yaml
+  - data_type: user_override
+    source_id: user_command
+  outputs:
+  - data_type: routing_decision
+    target_id: execution_engine
+  - data_type: warning_log
+    target_id: logging_system
+  - data_type: classifier_suggestion
+    target_id: developer_ui
+  edges:
+    depends_on:
+    - orchestration_layer
+    implements: []
+- id: rules_migration
+  dimension: Module
+  status: clean
+  associated_file: CLAUDE.md
+  description: Consolidates static schemas (SuperPRD, MiniPRD, Hypergraph) from spec/schemas/
+    into CLAUDE.md to reduce per-message context token overhead (~10-15% reduction).
+    Provides 6-week backward compatibility period until 2026-06-17. Updates skill
+    references (hyper-architect, hyper-template-architect). Adds deprecation headers
+    to old files. Includes migration guide (docs/MIGRATION_RULES.md) with before/after
+    examples. Ensures gradual adoption without breaking changes.
+  inputs:
+  - data_type: schema_definitions
+    source_id: spec_schemas_directory
+  - data_type: skill_references
+    source_id: skill_md_files
+  outputs:
+  - data_type: migrated_schemas
+    target_id: claude_md
+  - data_type: deprecation_markers
+    target_id: spec_schemas_directory
+  - data_type: migration_guide
+    target_id: docs_migration_rules_md
+  - data_type: updated_skill_references
+    target_id: skill_md_files
+  edges:
+    depends_on: []
+    implements: []
+- id: skill_metadata
+  dimension: Module
+  status: clean
+  associated_file: .agents/scripts/meta_loader.py
+  description: Manages per-skill metadata including model assignment, version pinning,
+    and thinking token ceiling overrides. Provides MetaLoader for reading/validating
+    META.yml, OverrideManager for model overrides (single_run/permanent), and CeilingResolver
+    for token ceiling management. Supports schema validation and fallback defaults.
+  inputs:
+  - data_type: meta_yml_files
+    source_id: skills_directory
+  outputs:
+  - data_type: skill_metadata_object
+    target_id: model_router
+  - data_type: override_status
+    target_id: execution_context
+  - data_type: token_ceiling
+    target_id: reasoning_engine
+  edges:
+    depends_on:
+    - orchestration_layer
+    - model_router
+    implements: []
+- id: thinking_token_monitor
+  dimension: Module
+  status: clean
+  associated_file: .agents/scripts/thinking_token_monitor.py
+  description: Monitors thinking token usage and enforces model-tier ceilings (Opus
+    20k, Sonnet 10k, Haiku 2k). Detects ceiling breaches, emits terminal alerts with
+    recovery suggestions (task splitting, temporary overrides). Integrates with skill
+    metadata for per-skill override support. Logs utilization metrics for observability.
+  inputs:
+  - data_type: skill_metadata
+    source_id: skill_metadata
+  - data_type: execution_tokens
+    source_id: reasoning_engine
+  outputs:
+  - data_type: ceiling_decision
+    target_id: execution_engine
+  - data_type: breach_alert
+    target_id: user_interface
+  - data_type: utilization_metrics
+    target_id: observability_layer
+  edges:
+    depends_on:
+    - orchestration_layer
+    - skill_metadata
+    implements: []
+- id: token_budget_enforcer
+  dimension: Module
+  status: clean
+  associated_file: .agents/scripts/token_budget_checker.py
+  description: Enforces output token budgets per MiniPRD (50k ceiling). Estimates
+    tokens using heuristic formula (code_lines/40 + doc_pages*500 + test_cases*100),
+    flags oversized tasks with split suggestions, reconciles estimated vs. actual
+    post-execution, and tracks variance for estimation model accuracy.
+  inputs:
+  - data_type: miniprd_metadata
+    source_id: miniprd_files
+  - data_type: execution_output_tokens
+    source_id: execution_engine
+  outputs:
+  - data_type: budget_check_result
+    target_id: execution_context
+  - data_type: split_suggestions
+    target_id: developer_ui
+  - data_type: variance_metrics
+    target_id: observability_layer
+  edges:
+    depends_on:
+    - orchestration_layer
+    implements: []
+- id: hyper_update
+  dimension: Module
+  status: clean
+  associated_file: .agents/skills/hyper-update/SKILL.md
+  description: Interactive smart-upgrade command. Fetches latest upstream framework,
+    auto-updates non-sensitive files (skills, specs, tests), and guides user through
+    section-by-section (###-level) collaborative merge of sensitive customizable files
+    (CLAUDE.md, AGENTS.md, IDE rules). Backs up any replaced or merged file to .agents/.backup/YYYY-MM-DD/.
+  inputs:
+  - data_type: upstream_repo_clone
+    source_id: github_remote
+  - data_type: local_sensitive_files
+    source_id: filesystem
+  - data_type: command_trigger
+    source_id: user
+  outputs:
+  - data_type: updated_framework_files
+    target_id: filesystem
+  - data_type: backup_snapshot
+    target_id: agents_backup_dir
+  - data_type: merge_report
+    target_id: user_interface
+  edges:
+    depends_on:
+    - orchestration_layer
+    implements: []
+- id: hyper_update_core_logic
+  dimension: Atomic
+  status: clean
+  associated_file: .agents/scripts/hyper_update_core.py
+  description: Orchestrates 5-phase framework upgrade. (A) Fetches upstream via shallow
+    clone and verifies GPG signature on HEAD commit; fails-fast if signature invalid
+    or GPG unavailable. (B) Acquires exclusive mutex lock (.agents/.hyper-update.lock),
+    released in finally block on any error. (C) Byte-compares upstream vs. local files
+    to detect changes in auto-update dirs/files and sensitive dirs/files. (D) Auto-copies
+    auto-update files/directories (.agents/skills/, .agents/scripts/, .agents/schemas/,
+    spec/, tests/, .agentignore) without user prompt. (E) Pre-flight validation via
+    git status --porcelain to detect uncommitted changes in sensitive paths; returns
+    early with preflight_warning status if found, allowing recovery before merge phase.
+    Outputs JSON with upgrade_result, sensitive_files list, commit_sha, and upstream_dir
+    for merge engine consumption.
+  inputs:
+  - data_type: command_trigger
+    source_id: hyper_update
+  - data_type: project_root_path
+    source_id: filesystem
+  - data_type: upstream_repository_url
+    source_id: configuration
+  outputs:
+  - data_type: upgrade_result_json
+    target_id: hyper_update
+  - data_type: sensitive_files_with_changes
+    target_id: hyper_update_merge_engine
+  - data_type: upstream_directory_path
+    target_id: hyper_update_merge_engine
+  - data_type: auto_updated_files
+    target_id: filesystem
+  - data_type: gpg_verified_status
+    target_id: hyper_update
+  edges:
+    depends_on:
+    - orchestration_layer
+    - hyper_update_upstream_verification
+    implements:
+    - hyper_update
+- id: hyper_update_upstream_verification
+  dimension: Atomic
+  status: clean
+  associated_file: .agents/scripts/hyper_update_verification.py
+  description: Upstream verification and backup lifecycle management. (A) Checks GPG
+    binary availability before signature verification; fails-fast with installation
+    guidance if missing. Provides reusable verify_upstream_commit(commit_sha) method
+    for signature verification. (B) Implements 30-day backup retention policy; auto-deletes
+    backups older than 30 days on each upgrade. (C) Logs audit trail (JSON format)
+    to .agents/logs/hyper-update.log with commit SHA, GPG status, cleanup count. (D)
+    Implements log rotation; keeps last 10 log files, deletes older ones when size
+    exceeds 1MB. (E) Provides backup age warnings (within 2 days of expiration) for
+    user awareness.
+  inputs:
+  - data_type: upstream_repo_state
+    source_id: hyper_update_core_logic
+  - data_type: local_backup_directory
+    source_id: filesystem
+  outputs:
+  - data_type: gpg_availability_check
+    target_id: hyper_update_core_logic
+  - data_type: signature_verification_method
+    target_id: hyper_update_core_logic
+  - data_type: backup_cleanup_manifest
+    target_id: filesystem
+  - data_type: audit_log_entry
+    target_id: agents_logs_dir
+  - data_type: backup_age_warnings
+    target_id: user_interface
+  edges:
+    depends_on:
+    - orchestration_layer
+    implements: []
+- id: hyper_update_merge_engine
+  dimension: Atomic
+  status: clean
+  associated_file: .agents/scripts/hyper_update_merge_engine.py
+  description: >-
+    Manages per-file merging of sensitive upstream files with interactive
+    user approval. (A) Prompts user for Replace/Merge/Skip action per file, showing
+    5-line diff preview. (B) Parses markdown into sections by ### heading while preserving
+    code blocks (tracks in_code_block state across triple backticks). (C) For each
+    differing section, prompts Keep local / Accept upstream / Edit manually; silently
+    approves unchanged sections. (D) Assembles approved sections and validates syntax
+    (yaml.safe_load for .yml/.yaml; counts backticks for markdown delimiters). (E)
+    On validation failure, prompts Keep original / Re-merge / Accept anyway. Backs
+    up original file before replace/merge via _backup_file(). Returns (success bool,
+    final_content or None) and updates changes tracking dict (replaced/merged/skipped
+    counts). Generates human-readable summary report showing file counts and action breakdown.
+  inputs:
+  - data_type: sensitive_file_list
+    source_id: hyper_update_core_logic
+  - data_type: upstream_file_content
+    source_id: filesystem
+  - data_type: local_file_content
+    source_id: filesystem
+  - data_type: user_approval_prompt_response
+    source_id: user_interface
+  outputs:
+  - data_type: merged_file_content
+    target_id: filesystem
+  - data_type: merge_result_tuple
+    target_id: hyper_update
+  - data_type: backup_files
+    target_id: agents_backup_dir
+  - data_type: summary_report_text
+    target_id: user_interface
+  edges:
+    depends_on:
+    - orchestration_layer
+    - hyper_update_core_logic
+    implements: []
+- id: hyper_update_recovery
+  dimension: Atomic
+  status: clean
+  associated_file: .agents/scripts/hyper_update_recovery.py
+  description: Backup management and interrupt recovery. (A) Creates timestamped backup
+    directories (ISO 8601 UTC) with lazy initialization on first mutation. (B) Backs
+    up files before Replace/Merge, verifying file size > 0. (C) Saves merge state
+    to .merge-in-progress.lock (JSON format) after each section approval. (D) Detects
+    interrupted merges, prompts resume/restart, handles stale locks (>24hrs). (E)
+    Provides restore operations with meta-backup of current version; lists available
+    backups by date.
+  inputs:
+  - data_type: file_mutation_request
+    source_id: hyper_update_merge_engine
+  - data_type: merge_section_approval
+    source_id: hyper_update_merge_engine
+  - data_type: restore_request
+    source_id: hyper_recover_command
+  outputs:
+  - data_type: backup_directory
+    target_id: filesystem
+  - data_type: merge_state_lock
+    target_id: filesystem
+  - data_type: restore_confirmation
+    target_id: user_interface
+  - data_type: backup_list
+    target_id: user_interface
+  edges:
+    depends_on:
+    - orchestration_layer
+    - hyper_update_merge_engine
+    implements: []
+- id: hyper_orchestrator
+  dimension: Module
+  status: clean
+  associated_file: .agents/scripts/hyper_orchestrator.py
+  description: Parallel workflow orchestrator orchestrating SuperPRD/MiniPRD execution.
+    Fans SuperPRD/MiniPRD pairs to isolated branches via ThreadPoolExecutor (max 8 workers),
+    spawns one Anthropic API call per pair, enforces global fcntl mutex, validates startup
+    (API key, disk space, branch collisions), enforces context overflow guards (95% limit),
+    writes provenance staging files post-execution, runs sequential rebase pipeline with
+    conflict resolution, and maintains 50-entry FAILED_WORKFLOWS rotation with data retention
+    warnings.
+  inputs:
+  - data_type: superprd_directory
+    source_id: user_invocation
+  - data_type: miniprd_files
+    source_id: superprd_directory
+  - data_type: anthropic_api_key
+    source_id: environment
+  - data_type: max_workers_flag
+    source_id: user_invocation
+  - data_type: max_api_calls_flag
+    source_id: user_invocation
+  outputs:
+  - data_type: feature_branches
+    target_id: git_repository
+  - data_type: failed_workflow_entries
+    target_id: spec_active_failed_workflows
+  - data_type: structured_jsonl_log
+    target_id: agents_logs
+  - data_type: provenance_staging_files
+    target_id: provenance_staging_dir
+  - data_type: merged_architecture_yaml
+    target_id: filesystem
+  edges:
+    depends_on:
+    - orchestration_layer
+    - model_router
+    - hyper_daemon
+    - semantic_graph_merger
+    - hyper_resolve_conflict
+    - hypergraph_updater
+    implements: []
+- id: hyper_daemon
+  dimension: Module
+  status: clean
+  associated_file: .agents/scripts/hyper_daemon.py
+  description: Execute\u2192Audit\u2192Oracle\u2192Fix autonomous loop (max 5 iterations). Supports
+    orchestrated mode (--orchestrated called by hyper_orchestrator with precomputed
+    API response) and standalone mode. Enforces pytest --collect-only pre-flight (NO_TESTS_COLLECTED),
+    AST-based spec drift detection at 40% interface change threshold, stop_reason guard
+    via hyper_fix (TOKEN_OVERRUN), and hard 5-iteration cap (delegates ORACLE_FAILURE
+    recording to hyper_fix).
+  inputs:
+  - data_type: miniprd_path
+    source_id: hyper_orchestrator
+  - data_type: superprd_name
+    source_id: hyper_orchestrator
+  - data_type: api_response_id
+    source_id: hyper_orchestrator
+  - data_type: orchestrated_mode_flag
+    source_id: hyper_orchestrator
+  outputs:
+  - data_type: implemented_code_files
+    target_id: git_branch
+  - data_type: failed_workflow_entry
+    target_id: spec_active_failed_workflows
+  - data_type: exit_code
+    target_id: hyper_orchestrator
+  edges:
+    depends_on:
+    - orchestration_layer
+    - hyper_fix
+    implements: []
+- id: hyper_fix
+  dimension: Module
+  status: clean
+  associated_file: .agents/scripts/hyper_fix.py
+  description: >-
+    Bug fix agent triangulating SuperPRD + MiniPRD + pytest error trace.
+    Enforces prompt injection hardening (XML tag wrapping), pre-call token estimation
+    with 95% context ceiling guard (ContextOverflowError), post-API stop_reason guard
+    (max_tokens=TOKEN_OVERRUN exit 3), AST-based spec drift detection (>40% symbol
+    change = SPEC_DRIFT), and records ORACLE_FAILURE when iteration cap reached. Parses
+    LLM response for '# FILE: path' + fenced code block pairs and writes patches to disk.
+  inputs:
+  - data_type: miniprd_path
+    source_id: hyper_daemon
+  - data_type: error_log_path
+    source_id: hyper_daemon
+  - data_type: superprd_path
+    source_id: hyper_daemon
+  - data_type: branch_name
+    source_id: hyper_daemon
+  - data_type: iteration_number
+    source_id: hyper_daemon
+  outputs:
+  - data_type: patched_code_files
+    target_id: git_branch
+  - data_type: failed_workflow_entry
+    target_id: spec_active_failed_workflows
+  - data_type: exit_code
+    target_id: hyper_daemon
+  edges:
+    depends_on:
+    - orchestration_layer
+    implements: []
+- id: hyper_resolve_conflict
+  dimension: Module
+  status: clean
+  associated_file: .agents/scripts/hyper_resolve_conflict.py
+  description: AI conflict resolver for git rebase conflicts in supported file types.
+    Enforces file-type whitelist ({.py, .md, .json, .toml}), blocks architecture.yml/yaml
+    unconditionally, binary detection via UTF-8 decode, prompt injection hardening via
+    XML tags, 600s API timeout, post-API stop_reason guard (max_tokens=RESOLVER_MALFORMED_RESPONSE),
+    JSON decode guard, confidence_score integer assertion (0-100), hardcoded 85-threshold
+    confidence gate, post-resolution syntax validation (ast.parse/.yaml.safe_load/json.loads),
+    and write-only-on-pass semantics.
+  inputs:
+  - data_type: conflicted_file_path
+    source_id: hyper_orchestrator
+  - data_type: branch_name
+    source_id: hyper_orchestrator
+  - data_type: superprd_name
+    source_id: hyper_orchestrator
+  - data_type: miniprd_path
+    source_id: hyper_orchestrator
+  outputs:
+  - data_type: resolved_file
+    target_id: git_branch
+  - data_type: failed_workflow_entry
+    target_id: spec_active_failed_workflows
+  - data_type: exit_code
+    target_id: hyper_orchestrator
+  edges:
+    depends_on:
+    - orchestration_layer
+    implements: []
+- id: semantic_graph_merger
+  dimension: Module
+  status: clean
+  associated_file: .agents/scripts/semantic_graph_merger.py
+  description: >-
+    Deterministic YAML merger for architecture.yml rebase conflicts. Supports
+    1-arg (conflicted file with git markers) and 3-arg (main/branch/output) modes. Never
+    uses AI. Enforces file-type guard (architecture prefix or .yml/.yaml), exclusive
+    fcntl locks on reads/writes, extension normalization (.yml/.yaml canonical resolution),
+    pre-merge backup with restore on failure, node ID conflict policy (identical=deduplicate,
+    differing=REBASE_CONFLICT abort), post-merge schema validation (4 checks: YAML parse,
+    duplicate IDs, depends_on references, required fields).
+  inputs:
+  - data_type: conflicted_file_path
+    source_id: git_rebase
+  - data_type: main_yaml
+    source_id: git_repository
+  - data_type: branch_yaml
+    source_id: git_repository
+  outputs:
+  - data_type: merged_yaml
+    target_id: git_repository
+  - data_type: failed_workflow_entry
+    target_id: spec_active_failed_workflows
+  - data_type: exit_code
+    target_id: hyper_orchestrator
+  edges:
+    depends_on:
+    - orchestration_layer
+    - hypergraph_updater
+    implements: []

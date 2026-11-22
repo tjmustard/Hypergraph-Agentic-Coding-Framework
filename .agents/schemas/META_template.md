@@ -16,7 +16,7 @@ assigned_model: [model_tier]
 
 # Optional: pin to specific model version
 # If omitted, uses current version from heuristic_rules.yaml
-# model_version: "claude-haiku-4-5-20251001"
+# model_version: "claude-haiku-5-5"
 
 # Optional: override max thinking tokens
 # max_thinking_tokens: 8192
@@ -40,7 +40,7 @@ assigned_model: [model_tier]
 | **name** | Yes | string | Skill identifier (e.g., "hyper-architect") |
 | **description** | Yes | string | One-line description of skill purpose |
 | **assigned_model** | Yes | enum | Model tier: haiku, sonnet, opus |
-| **model_version** | No | string | Specific model ID (e.g., "claude-opus-4-7") |
+| **model_version** | No | string | Specific model ID (e.g., "claude-opus-5-5") |
 | **max_thinking_tokens** | No | integer | Override default thinking token limit |
 | **tool_calls** | No | integer | Expected number of tool invocations |
 | **reasoning_intensity** | No | enum | Reasoning depth: none, low, medium, high, very_high |
@@ -60,7 +60,7 @@ name: hyper-status
 description: Display current Living Master Plan and project status
 
 assigned_model: haiku
-model_version: "claude-haiku-4-5-20251001"
+model_version: "claude-haiku-5-5"
 max_thinking_tokens: 1024
 
 tool_calls: 2
@@ -80,7 +80,7 @@ name: hyper-audit
 description: Verify written code against its strict requirements and reconcile the Hypergraph memory
 
 assigned_model: sonnet
-model_version: "claude-sonnet-4-6"
+model_version: "claude-sonnet-5-5"
 max_thinking_tokens: 8192
 
 tool_calls: 5
@@ -101,7 +101,7 @@ name: hyper-redteam
 description: Stress-test the Draft PRD for security, scalability, and logic flaws
 
 assigned_model: opus
-model_version: "claude-opus-4-7"
+model_version: "claude-opus-5-5"
 max_thinking_tokens: 100000
 
 tool_calls: 10
@@ -159,7 +159,7 @@ Meta.yml can pin to a specific model version:
 
 ```yaml
 assigned_model: haiku
-model_version: "claude-haiku-4-5-20251001"
+model_version: "claude-haiku-5-5"
 ```
 
 ModelRouter checks version compatibility:

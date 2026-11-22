@@ -17,11 +17,11 @@
 | `src/` | Core logic and application code. |
 | `tests/` | Pytest fixtures and integration tests. |
 | `scratch/` | Utility scripts and manual verification tools. |
-| `spec/` | Hypergraph specifications (MiniPRDs and `architecture.yml`) used by the AI coding agent framework. |
+| `spec/` | The HACF workbench: `active/` drafts and `compiled/architecture.yml` (the component ledger). Specs live in the root `SPEC.md` and `missions/`, decisions in `lore/`. |
 | `docs/` | User-facing documentation and tutorials. |
 
 **Development Workflow:**
 
 This project utilizes `uv` as its strict package manager. 
 - Use `uv add <package>` to modify dependencies.
-- Use `uv run pytest` to execute the test suite.
+- Use `uv run --locked pytest` to execute the test suite.

@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-21
+
+### Upgrade warnings (read first)
+- **Delete any saved copy of `HACF-uninstall.sh`** from your project and your downloads before you upgrade. A saved v0.5.x uninstaller deletes every project file whose path also exists in the HACF repository, including same-named user files such as `.gitattributes` (your Git LFS rules), `lore_hypergraph.yml`, `SPEC.md`, `project.yaml`, `workspace.yaml` and `docs/*`. Use the uninstaller the v0.6.0 installer writes, or download it fresh.
+- **Re-download the installer.** A saved v0.5.x `HACF-install.sh` aborts at `tests/`, because the v0.6.0 repository no longer tracks `spec/` or `tests/`.
+- **Releases are unsigned.** v0.6.x ships no release signatures, and any future signing will be SSH-only. A v0.5.x `git verify-commit` cannot verify SSH signatures without a pinned allowed-signers file, so the v0.5.x GPG update path (and its directory-replacing `rmtree`) stays disarmed. Never import a release key globally.
+- **URL and branch overrides need flags.** `HACF-install.sh --repo-url/--branch`, `HACF-uninstall.sh --repo-url/--branch` and `/hyper-update --upstream-url/--ref` are the only override paths; the `HACF_REPO_URL`, `HACF_BRANCH` and `HACF_UPSTREAM_URL` environment variables are honored only with `HACF_TEST=1`, and non-`https://` URLs are refused without it. Upstream signers are pinned locally on first trust; a change to the pinned set needs interactive consent.
+- **Unattended unsigned updates are refused.** `--allow-unsigned` is refused without a TTY or under `HACF_AUTONOMOUS=1`, so CI cannot update HACF while releases are unsigned. `hyper_migrate.py apply` likewise needs a TTY confirmation, or `--yes` outside `HACF_AUTONOMOUS=1`.
+
+### Added
+- **OpenRig 0.6.13 topology**: missions and slices at the repo root (`SPEC.md`, `project.yaml`, `workspace.yaml`, `missions/<mission>/slices/<slice>/`), read, linted and tracked by `hyper_spec.py`; scopes with root-collision detection and a DAG in `hyper_scope.py`; `hyper_openrig.py` as the single pinned manifest writer (dot-IDs, prefix `OPR`). Legacy flat MiniPRDs are still read through v0.6.x.
+- **Component ledger** `hyper_ledger.py`: the single, locked, validated, non-regressive writer of `architecture.yml` (`hacf.ledger/v2`), with edge editing and JSON review patches that replace the free-text audit rewrite. `hypergraph_updater.py` keeps its positional CLI and gains `--from-diff`.
+- **Optional code graph** `hyper_codegraph.py` (codebase-memory-mcp 0.12.1, off by default).
+- **Lore hypergraph**: `lore_hypergraph.yml`, immutable `lore/canon/` bodies, generated `lore/MAP.md` and `lore/CANON.md`, `hyper_lore.py`, and `/hyper-lore-approve` for one-node-at-a-time approval by the user.
+- **Agent firewall** `hyper_firewall.py`: renders `.agentignore` into Claude Code deny and ask rules plus a PreToolUse hook for gated lore verbs, and best-effort ignore files for Windsurf, Cursor and Roo. It is not a security boundary outside the sandboxed engine.
+- **Headless engine** `hyper_engine.py` and `hyper_executors.py`: one git worktree and a sandboxed `claude -p` per slice, an integrator, and an explicit `land` that refuses ledger drift; `hyper_gates.py` for pipeline gates.
+- **Migration** `hyper_migrate.py` (`detect`, `plan`, `apply`, `rollback`): journaled, backed up and byte-identically reversible conversion of v0.5.x specs (archived ones included) into missions.
+- **Uninstaller** driven by `.agents/hacf-manifest.json`, with a legacy-hash fallback for v0.5.x installs.
+- **Install from a local checkout**: `HACF-install.sh --source=PATH [--ref=REF]` installs one commit of a local HACF git checkout (never its working tree; uncommitted changes warn and are not installed), and `HACF-uninstall.sh --source=PATH [--ref=REF]` takes HACF's code from one. `--ref` defaults to `HEAD` for the installer and to the manifest's `installed_commit` for the uninstaller; `--source` cannot be combined with `--repo-url` or `--branch`.
+- **Manifest `source` and `ides` keys**: `.agents/hacf-manifest.json` records `source` as `{kind: local, commit}` or `{kind: remote, url, branch, commit}` (never a local path) and the IDE selection as `ides`.
+- **Per-machine source file** `.agents/state/install/source.json` (gitignored): the absolute path, ref and commit of a `--source` install. A later remote install removes it.
+- **A project uninstaller**: the installer writes `./HACF-uninstall.sh` into the project and records it in the manifest; upgrades refresh it; uninstall deletes it last, after the manifest, and only when it is unchanged.
+- The recorded live-test fixtures `dev/tests/fixtures/recorded/S04/18-21-*.json`, `dev/tests/fixtures/recorded/S08/01-09-*.json` and `dev/tests/fixtures/recorded/S11/01-09-*.json` keep the absolute paths of the machine they were recorded on, unedited, because they are evidence.
+
+### Changed
+- **`--ides` is honored under `-y`**: a non-interactive install configures only the tools you name.
+- **The statusLine (`npx -y ccstatusline@latest`) is installed only with `--statusline`**; `-y` never downloads third-party code.
+- **No Cline ignore file**: `.clineignore` is deprecated and no longer rendered.
+- **Slice and mission ids use the prefix `OPR`** (for example `OPR.0.6.0.29`).
+- **Installer, `/hyper-update` and uninstaller are consent-first and manifest-driven**: per-file sync that never deletes unknown files, managed blocks with an exact grammar that leave OpenRig's blocks untouched, no silent append to customized instruction files (a `*.hacf-v0.6.0.md` sidecar instead), and merge-driver attributes in `.git/info/attributes` instead of a tracked root `.gitattributes`.
+- **The HACF repository no longer tracks `spec/` or `tests/`**; its own specs now live in `missions/`.
+- `/hyper-orchestrator` and the daemon are thin wrappers over the engine.
+- **The installed pre-commit hook never runs `uv` or downloads**: it takes ruff from `.venv/bin/ruff`, else from `PATH`, else skips the lint with a warning.
+- **Upgrades keep the recorded IDE selection**: under `-y` an upgrade without `--ides` configures the IDEs in the manifest's `ides`; interactively, the prompt is prefilled with them (Enter keeps them).
+- **Plain uninstall and upgrade use the recorded local source**: in a project installed with `--source`, `HACF-uninstall.sh` and `HACF-install.sh` with no `--source`, `--repo-url` or `--branch` use the checkout in `.agents/state/install/source.json`, and refuse (changing nothing) when it is missing or no longer matches the install.
+- **Shipped files no longer cite HACF's internal design ids.**
+- **An empty `--ides=` on an upgrade keeps the recorded selection** under `-y`, or prefills it interactively, like no `--ides` at all (before 0.6.0 it meant all IDEs).
+- The managed `.gitignore` block also ignores HACF's bytecode (`.agents/**/__pycache__/`); an upgrade adds the line. The installer and uninstaller write no bytecode, and uninstall deletes HACF's `__pycache__` directories (only those holding nothing but `.pyc` files).
+- Uninstall removes the `merge.hacf-lore` and `merge.hacf-generated` git config sections (unless you changed them), and deletes `<git-common-dir>/info/attributes` when it held only HACF's block; `--dry-run` lists both.
+
+### Removed
+- `hyper_fix.py` (replaced by the engine's executors), Final Truth, the unfilled memory templates and the `spec/handoffs/` rule.
+- The deprecated templates `.agents/schemas/MiniPRD_template.md`, `.agents/schemas/SuperPRD_Template.md` and `.agents/schemas/hypergraph_schema.md` (their schemas live in `AGENTS.md`).
+
+### Known issues
+1. HACF's lock files stay in `<git-common-dir>/hacf/locks/`: `lore.lock`, `spec.lock` and `migrate.lock`, empty files inside `.git` that git never tracks. A normal install plus uninstall leaves `lore.lock` and `spec.lock`, and a refused or failed `hyper_migrate.py apply` leaves `migrate.lock`. Deleting a lock file would race a process holding or waiting on it, so neither the commands nor the uninstaller remove them. Delete `<git-common-dir>/hacf/` by hand when no HACF command is running.
+2. `/hyper-update` after a local-source install refuses, because the installed commit is not in the upstream's history: `upstream <url> @ <commit> does not descend from the installed commit <installed_commit> (a downgrade or a rewritten history); rerun with --allow-downgrade to accept it`. **Do not use `--allow-downgrade` for this**: it turns off rollback protection. Re-run `HACF-install.sh --source=<checkout>` instead. The refusal clears once the installed commit is in the history of the upstream `main`.
+3. `.agents/state/install/source.json` stays after uninstall, because the uninstaller never deletes `.agents/state/`.
+4. Narrowing `--ides` on an upgrade does not remove the files of the IDEs left out.
+5. The installer and `/hyper-update` do not cover local sources the same way: `/hyper-update` has no `--source`.
+6. A fresh install that selects Claude Code (with the default `--firewall=auto`) writes `.claude/settings.json` twice, a merge and then the firewall render, and the render backs up the just-merged copy to `.agents/.backup/<timestamp>/.claude/settings.json`. That backup is safe to delete.
+
 ## [0.5.9] - 2026-07-23
 
 ### Changed

@@ -1,7 +1,7 @@
 name: contextualize
 description: Audits and fixes HACF agent instruction files in installed projects.
 assigned_model: haiku
-model_version: "claude-haiku-4-5-20251001"
+model_version: "claude-haiku-5-5"
 max_thinking_tokens: 2048
 reasoning_intensity: medium
 output_determinism: high

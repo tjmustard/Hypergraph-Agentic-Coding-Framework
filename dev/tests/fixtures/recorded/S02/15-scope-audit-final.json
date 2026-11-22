@@ -1,0 +1,23 @@
+{
+  "step": "scope-audit-final",
+  "argv": [
+    "npx",
+    "-y",
+    "--package=@openrig/cli@0.6.13",
+    "rig",
+    "scope",
+    "--workspace",
+    "/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo",
+    "audit",
+    "--mission",
+    "release-0.6.0",
+    "--json"
+  ],
+  "cwd": "/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo",
+  "exit_code": 0,
+  "stdout": "{\n  \"ok\": true,\n  \"mission\": {\n    \"name\": \"release-0.6.0\",\n    \"railStatus\": \"present\",\n    \"frontmatterError\": null,\n    \"findings\": []\n  },\n  \"slices\": [\n    {\n      \"name\": \"01-adapter-spike\",\n      \"railStatus\": \"present\",\n      \"frontmatterError\": null,\n      \"findings\": [\n        {\n          \"kind\": \"mini_requirements_missing_or_malformed\",\n          \"severity\": \"low\",\n          \"path\": \"/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo/missions/release-0.6.0/slices/01-adapter-spike/SPEC.md\",\n          \"message\": \"`## Mini-requirements` carries no numbered items (`1. \u2026`) \u2014 the one-glance requirement tier is where approval starts.\",\n          \"remediation\": \"Add `## Mini-requirements` to SPEC.md with a numbered list of observable outcomes (for a small slice this may be the whole specification).\"\n        },\n        {\n          \"kind\": \"proof_contract_missing_or_malformed\",\n          \"severity\": \"low\",\n          \"path\": \"/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo/missions/release-0.6.0/slices/01-adapter-spike/SPEC.md\",\n          \"message\": \"`## Proof contract` carries no checkbox deliverables (`- [ ] \u2026`) for proof to pair against.\",\n          \"remediation\": \"Add `## Proof contract` to SPEC.md with one checkbox line per promised deliverable, written as an observable outcome (conventions SSOT: docs/reference/sdlc-conventions.md (installed: $OPENRIG_HOME/reference/sdlc-conventions.md)).\"\n        }\n      ]\n    }\n  ],\n  \"graph\": {\n    \"mission\": {\n      \"id\": \"OPR.0.6.0\",\n      \"name\": \"release-0.6.0\",\n      \"dependsOn\": []\n    },\n    \"nodes\": [],\n    \"ready\": [],\n    \"waiting\": [],\n    \"advisories\": []\n  },\n  \"totalFindings\": 2\n}\n",
+  "stderr": "",
+  "rig_version": "0.6.13 (9eeb2e42)",
+  "captured_at": "2026-10-26T05:10:09+00:00",
+  "git_status_after": []
+}

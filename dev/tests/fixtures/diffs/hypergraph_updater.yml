@@ -1,0 +1,13 @@
+# Golden diff scenario (R21), replayed by test_from_diff_golden_fixtures in
+# dev/tests/ledger/test_updater_compat.py: one commit writes each `changes` path with its
+# placeholder content on top of the real ledger fixture migrated to v2, then
+# `hypergraph_updater.py --from-diff HEAD^..HEAD --json` must print `expected`.
+description: >-
+  The updater's own file maps to hypergraph_updater; semantic_graph_merger and
+  hyper_orchestrator depend on it, and member_of orchestration_layer is not traversed.
+changes:
+  .agents/scripts/hypergraph_updater.py: "# S01c golden diff scenario: placeholder content\n"
+expected:
+  nodes: [hypergraph_updater]
+  blast_radius: [hyper_orchestrator, hypergraph_updater, semantic_graph_merger]
+  unmapped: []

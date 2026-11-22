@@ -1,0 +1,15 @@
+# Golden diff scenario (R21); see hypergraph_updater.yml for how it is replayed.
+description: >-
+  hyper_update_core.py maps to the Atomic node hyper_update_core_logic, whose blast radius
+  reaches its implements parent hyper_update and the depends_on chain
+  hyper_update_merge_engine -> hyper_update_recovery.
+changes:
+  .agents/scripts/hyper_update_core.py: "# S01c golden diff scenario: placeholder content\n"
+expected:
+  nodes: [hyper_update_core_logic]
+  blast_radius:
+    - hyper_update
+    - hyper_update_core_logic
+    - hyper_update_merge_engine
+    - hyper_update_recovery
+  unmapped: []

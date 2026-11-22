@@ -14,9 +14,17 @@
 
 ## For Claude Code: System Mandates
 
-Read `AGENTS.md` for the full framework system mandates that apply to all IDEs.
+Read `AGENTS.md` for the full framework system mandates that apply to all IDEs. Its first line is
+the trailhead: start at `lore/MAP.md`, then `SPEC.md`, then the active mission under `missions/`.
+AGENTS.md also lists the lore nodes that bind you and the stated limits of the agent firewall.
 
 **Claude Code-specific overrides and additions:**
+
+### v0.6.0 Notes
+- Run every framework script with `python3`, never a bare `python`.
+- Lore approvals (`/hyper-lore-approve`, `/hyper-audit` Phase 3.5) need the **default or
+  acceptEdits** permission mode; in bypassPermissions, dontAsk or plan the gate hook denies them
+  (switch with Shift+Tab and retry).
 
 ### Tool Names
 When skills say "read/write/run/edit a file," use these Claude Code tools:

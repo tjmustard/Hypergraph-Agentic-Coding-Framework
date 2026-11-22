@@ -1,0 +1,17 @@
+{
+  "step": "rig-version",
+  "argv": [
+    "npx",
+    "-y",
+    "--package=@openrig/cli@0.6.13",
+    "rig",
+    "--version"
+  ],
+  "cwd": "/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo",
+  "exit_code": 0,
+  "stdout": "0.6.13 (9eeb2e42)\n",
+  "stderr": "",
+  "rig_version": "0.6.13 (9eeb2e42)",
+  "captured_at": "2026-10-26T05:09:58+00:00",
+  "git_status_after": []
+}

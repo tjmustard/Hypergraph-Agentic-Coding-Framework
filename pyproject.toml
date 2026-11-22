@@ -1,15 +1,32 @@
 [project]
 name = "hypergraph-coding-agent-framework"
-version = "0.5.9"
+version = "0.6.0"
 description = "A multi-agent AI coding framework using hypergraph state management."
 requires-python = ">=3.11"
 
 [tool.ruff]
 line-length = 100
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "D"]
 ignore = ["D100", "D104"]
+
+# v0.6.0 S00 (R13): the 12 legacy scripts later slices modify were formatted and safely autofixed
+# once; each entry freezes only the codes that file still violates. Never add other paths here.
+[tool.ruff.lint.per-file-ignores]
+".agents/scripts/hyper_update_verification.py" = ["D107", "D205", "D415", "E501", "F841"]
+".agents/scripts/hyper_orchestrator.py" = ["D101", "D103", "D205", "E402", "E501", "F841"]
+".agents/scripts/hyper_daemon.py" = ["D101", "D205", "D415", "E501"]
+".agents/scripts/hyper_update_merge_engine.py" = ["D107", "D205", "D415", "E501", "F841"]
+".agents/scripts/hyper_resolve_conflict.py" = ["D103", "D205", "D415", "E501"]
+".agents/scripts/token_budget_checker.py" = ["D105", "D415", "E501"]
+".agents/scripts/token_budget_reconciler.py" = ["D105", "D415", "E501"]
+".agents/scripts/semantic_graph_merger.py" = ["D205"]
+".agents/scripts/archive_specs.py" = ["D103", "F841"]
+".agents/scripts/hypergraph_updater.py" = ["D103", "D205"]
+".agents/scripts/hyper_update_core.py" = ["D107", "D415", "F841"]
+".agents/scripts/model_router.py" = ["D107", "D415", "E501"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -20,7 +37,20 @@ known-first-party = ["agents"]
 [tool.ruff.format]
 quote-style = "double"
 
+[tool.pytest.ini_options]
+testpaths = ["dev/tests"]
+addopts = "-p no:cacheprovider"
+markers = [
+    "live: runs a real external tool; opt-in, needs the user's consent",
+    "openrig: live test against the OpenRig CLI (rig or npx); opt-in, needs consent",
+    "codegraph: live test against codebase-memory-mcp; opt-in, needs consent",
+    "claude: live test that runs the claude CLI and spends money; opt-in, needs consent",
+    "sandbox: live test of the Claude sandbox; opt-in, needs consent",
+]
+
 [dependency-groups]
 dev = [
     "ruff>=0.15.19",
+    "pytest>=8",
+    "pyyaml>=6",
 ]

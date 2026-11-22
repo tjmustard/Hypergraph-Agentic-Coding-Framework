@@ -1,0 +1,11 @@
+# BEGIN HACF MANAGED BLOCK: agentignore
+# Best-effort, rendered from .agentignore by HACF; not a security boundary.
+spec/archive/
+tests/candidate_outputs/
+node_modules/
+.env
+__pycache__/
+.git/
+spec/archive/
+tests/candidate_outputs/
+# END HACF MANAGED BLOCK: agentignore

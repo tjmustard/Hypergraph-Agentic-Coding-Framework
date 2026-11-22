@@ -1,0 +1,222 @@
+schema: hacf.lore/v1
+id_counters:
+  ADR: 1
+  STORY: 1
+  CANON: 3
+nodes:
+- id: CANON-0001
+  type: canon
+  title: Alpha writes through the engine
+  status: CANON
+  origin: agent
+  context: null
+  pointer:
+    path: lore/canon/CANON-0001.md
+  content_sha256: b14a42a31a255109ab4f7fb4793c78861faab97e807dd30d8115106aa6f4962a
+  anchors:
+    components:
+    - alpha_engine
+    files:
+    - src/alpha.py
+    symbols: []
+  planned:
+    components: []
+    files: []
+  relates_to: []
+  supersedes: []
+  superseded_by: null
+  stale: false
+  stale_reason: null
+  legacy: null
+  provenance:
+    created_by: agent
+    created_at: '2026-10-21T12:00:00+00:00'
+    source: S99
+    session_id: null
+    run_id: null
+  approval:
+    approved_by: Fixture User <fixture@example.invalid>
+    approved_at: '2026-10-21T12:00:00+00:00'
+    warrant: The fixture user approved CANON-0001.
+    warrant_sha256: 49e56be1e59ca09710d7acc78313eba404b811466c0a3cca3162142e9f3b767d
+    method: tty-confirm
+    content_sha256: b14a42a31a255109ab4f7fb4793c78861faab97e807dd30d8115106aa6f4962a
+    nonce: '00000000000000000000000000000001'
+  history:
+  - at: '2026-10-21T12:00:00+00:00'
+    from: null
+    to: PROPOSED
+    by: agent
+    warrant: null
+    ref: S99
+  - at: '2026-10-21T12:00:00+00:00'
+    from: PROPOSED
+    to: CANON
+    by: Fixture User <fixture@example.invalid>
+    warrant: The fixture user approved CANON-0001.
+    ref: approve nonce 00000000000000000000000000000001
+- id: CANON-0002
+  type: canon
+  title: Beta is append-only
+  status: CANON
+  origin: agent
+  context: null
+  pointer:
+    path: lore/canon/CANON-0002.md
+  content_sha256: 538c05572cbdeb85541a18e5af904b8aaad899d6404c5addea8d5d2895927f7b
+  anchors:
+    components:
+    - beta_store
+    files:
+    - src/beta.py
+    symbols: []
+  planned:
+    components: []
+    files: []
+  relates_to: []
+  supersedes: []
+  superseded_by: null
+  stale: false
+  stale_reason: null
+  legacy: null
+  provenance:
+    created_by: agent
+    created_at: '2026-10-21T12:00:00+00:00'
+    source: S99
+    session_id: null
+    run_id: null
+  approval:
+    approved_by: Fixture User <fixture@example.invalid>
+    approved_at: '2026-10-21T12:00:00+00:00'
+    warrant: The fixture user approved CANON-0002.
+    warrant_sha256: bbb86b8791611960122a80eaa2d57609d96d1d7db9cdf6f442b5c0dae4cc4f35
+    method: tty-confirm
+    content_sha256: 538c05572cbdeb85541a18e5af904b8aaad899d6404c5addea8d5d2895927f7b
+    nonce: '00000000000000000000000000000002'
+  history:
+  - at: '2026-10-21T12:00:00+00:00'
+    from: null
+    to: PROPOSED
+    by: agent
+    warrant: null
+    ref: S99
+  - at: '2026-10-21T12:00:00+00:00'
+    from: PROPOSED
+    to: CANON
+    by: Fixture User <fixture@example.invalid>
+    warrant: The fixture user approved CANON-0002.
+    ref: approve nonce 00000000000000000000000000000002
+- id: ADR-0001
+  type: decision
+  title: Replace the alpha and beta canon
+  status: PROPOSED
+  origin: user-decision
+  context: null
+  pointer:
+    path: lore/ADRs/ADR-0001-replace-the-alpha-and-beta-canon.md
+  content_sha256: 74a5898c99d52cd371190ee815f94c3bf1adb327c064c0f8e57695512b24486c
+  anchors:
+    components:
+    - alpha_engine
+    files: []
+    symbols: []
+  planned:
+    components:
+    - delta_future
+    files:
+    - src/delta.py
+  relates_to:
+  - STORY-0001
+  supersedes:
+  - CANON-0001
+  - CANON-0002
+  superseded_by: null
+  stale: false
+  stale_reason: null
+  legacy: null
+  provenance:
+    created_by: agent
+    created_at: '2026-10-21T12:00:00+00:00'
+    source: S99
+    session_id: null
+    run_id: null
+  approval: null
+  history:
+  - at: '2026-10-21T12:00:00+00:00'
+    from: null
+    to: PROPOSED
+    by: agent
+    warrant: null
+    ref: S99
+- id: STORY-0001
+  type: story
+  title: First run
+  status: PROPOSED
+  origin: agent
+  context: null
+  pointer:
+    path: lore/STORIES/STORY-0001-first-run.md
+  content_sha256: 2bee3188a21cdde346ccb79dbe324a0ffec86fc5503f81d6165166c7f134541d
+  anchors:
+    components: []
+    files: []
+    symbols: []
+  planned:
+    components: []
+    files: []
+  relates_to: []
+  supersedes: []
+  superseded_by: null
+  stale: false
+  stale_reason: null
+  legacy: null
+  provenance:
+    created_by: agent
+    created_at: '2026-10-21T12:00:00+00:00'
+    source: S99
+    session_id: null
+    run_id: null
+  approval: null
+  history:
+  - at: '2026-10-21T12:00:00+00:00'
+    from: null
+    to: PROPOSED
+    by: agent
+    warrant: null
+    ref: S99
+- id: CANON-0003
+  type: canon
+  title: Gamma waits
+  status: PROPOSED
+  origin: agent
+  context: null
+  pointer:
+    path: lore/proposed/CANON-0003.md
+  content_sha256: d135c26fbb7b7989fd01707a9a5757edff1880db86c7affc2094ab6ea902ad8d
+  anchors:
+    components: []
+    files: []
+    symbols: []
+  planned:
+    components: []
+    files: []
+  relates_to: []
+  supersedes: []
+  superseded_by: null
+  stale: false
+  stale_reason: null
+  legacy: null
+  provenance:
+    created_by: agent
+    created_at: '2026-10-21T12:00:00+00:00'
+    source: S99
+    session_id: null
+    run_id: null
+  approval: null
+  history:
+  - at: '2026-10-21T12:00:00+00:00'
+    from: null
+    to: PROPOSED
+    by: agent
+    warrant: null
+    ref: S99

@@ -1,0 +1,31 @@
+{
+  "synthetic": true,
+  "note": "Hand-made claude -p --output-format json results for subtypes no S08 or S11 capture shows (MiniPRD_14 Question 2). Shapes follow the recorded success results in recorded/S11/; every case here stays UNVERIFIED.",
+  "cases": {
+    "error_max_turns": {
+      "exit_code": 1,
+      "expect": "turns_exceeded",
+      "stdout": {"type": "result", "subtype": "error_max_turns", "is_error": true, "num_turns": 81, "session_id": "synthetic-max-turns", "total_cost_usd": 1.25, "permission_denials": [], "api_error_status": null}
+    },
+    "error_max_budget_usd": {
+      "exit_code": 1,
+      "expect": "budget_exceeded",
+      "stdout": {"type": "result", "subtype": "error_max_budget_usd", "is_error": true, "num_turns": 12, "session_id": "synthetic-budget", "total_cost_usd": 5.02, "permission_denials": [], "api_error_status": null}
+    },
+    "error_during_execution": {
+      "exit_code": 1,
+      "expect": "executor_error",
+      "stdout": {"type": "result", "subtype": "error_during_execution", "is_error": true, "num_turns": 3, "session_id": "synthetic-error", "total_cost_usd": 0.04, "permission_denials": [], "api_error_status": null}
+    },
+    "rate_limited": {
+      "exit_code": 1,
+      "expect": "rate_limited",
+      "stdout": {"type": "result", "subtype": "success", "is_error": true, "num_turns": 1, "result": "API Error: 429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\"}}", "session_id": "synthetic-rate-limit", "total_cost_usd": 0, "permission_denials": [], "api_error_status": 429}
+    },
+    "auth": {
+      "exit_code": 1,
+      "expect": "executor_auth",
+      "stdout": {"type": "result", "subtype": "success", "is_error": true, "num_turns": 1, "result": "Invalid API key · Please run /login", "session_id": "synthetic-auth", "total_cost_usd": 0, "permission_denials": [], "api_error_status": 401}
+    }
+  }
+}

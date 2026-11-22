@@ -4,95 +4,150 @@
 
 **Core Paradigm:** Spec-First, Deterministic Memory, Automated Auditing
 
-This standard operating procedure dictates the exact sequence of operations for generating, executing, and auditing software utilizing the Hypergraph Coding Agent Framework architecture. Do not deviate from the sequence. Bypassing the specification or auditing phases will result in context collapse, hallucinated requirements, and system graph corruption.
+This standard operating procedure dictates the exact sequence of operations for generating, executing, and auditing software with the Hypergraph Coding Agent Framework (HACF) v0.6.0. Do not deviate from the sequence. Bypassing the specification or auditing phases leads to context collapse, hallucinated requirements and a corrupted component ledger.
+
+Every script command below uses `python3`. Each phase boundary needs a **fresh context window**.
+
+## Where things live (v0.6.0)
+
+| Path | What it is |
+|---|---|
+| `SPEC.md` | The project's system of record |
+| `missions/<mission>/SPEC.md` | One mission per feature: its SuperPRD |
+| `missions/<mission>/slices/<NN-slug>/SPEC.md` | One slice per module: its MiniPRD |
+| `spec/compiled/architecture.yml` | The component ledger (`hacf.ledger/v2`), written only by `hyper_ledger.py` and `hypergraph_updater.py` |
+| `lore_hypergraph.yml`, `lore/` | Decisions, stories and canon; see [Lore](Lore.md) |
+| `spec/active/` | The workbench: `Draft_PRD.md`, `RedTeam_Report.md` |
+| `spec/archive/` | Written only by `archive_specs.py`; agents never read it |
+
+**Legacy flat specs (dual-read):** flat `spec/compiled/MiniPRD_*.md` files from v0.5.x are still read by every pipeline skill and script, with a warning, until v0.7.0 (no earlier than 2027-01-31). Move them with `hyper_migrate.py` ([Migration Rules](MIGRATION_RULES.md#migrating-specs-to-v060)).
 
 ## **Phase \-1: Legacy Onboarding (Brownfield Projects Only)**
 
-If you are implementing this framework in an existing repository, you must map the territory before starting Phase 1\.
+If you are adopting the framework in an existing repository, map the territory before starting Phase 1.
 
-1. **Initialize the Hypergraph:** Execute /hyper-discover. The agent will scan your code and populate spec/compiled/architecture.yml.  
-2. **Review the Map:** Open the YAML file. Verify that the major modules and dependencies were captured correctly.  
-3. **Baseline the System:** Execute /hyper-baseline. The agent will generate the first SuperPRD.md.  
-4. **Verification:** Read the SuperPRD.md. If it accurately reflects what your software does today, you are ready to proceed to **Phase 1: Step 1 (/hyper-architect)** to add your first new feature.
+1. **Initialize the ledger:** Execute `/hyper-discover`. The agent scans your code and populates `spec/compiled/architecture.yml` through `hyper_ledger.py`.
+2. **Review the map:** `python3 .agents/scripts/hyper_ledger.py show` prints the summary. Verify that the major modules and dependencies were captured.
+3. **Baseline the system:** Execute `/hyper-baseline`. The agent writes the root `SPEC.md` (the System of Record) through `hyper_scope.py project init` or `project update`.
+4. **Verification:** Read `SPEC.md`. If it accurately reflects what your software does today, proceed to **Phase 1, Step 1 (`/hyper-architect`)**.
 
 ## **Phase 0: System Initialization**
 
-### **Greenfield Project Setup**
-
-1. **Clone the Template:** Clone this repository into your target directory. It contains the required `.agents/` tooling and empty `.gitkeep` directories.
-2. **Environment Validation:** Ensure Python 3 is installed. Install the PyYAML dependency required for graph traversal:
-   ```bash
-   pip install pyyaml
-   ```
-3. **Execution Permissions:** Ensure the deterministic scripts are executable:
-   ```bash
-   chmod +x .agents/scripts/hypergraph_updater.py
-   chmod +x .agents/scripts/archive_specs.py
-   ```
+1. **Install into your own repository:** run `git init` in your project directory (if it is not a git repository yet), then run the installer from the project root, as the [README](../README.md#new-project) shows. Never clone HACF as your project root.
+2. **What the installer leaves:** `.agents/` (skills, scripts, schemas, rules, config), the IDE bridges, the HACF blocks in `AGENTS.md`, `CLAUDE.md` and `GEMINI.md`, the git hooks, and the project scaffold: `SPEC.md`, `project.yaml`, `workspace.yaml`, `missions/`, and an empty lore graph with `lore/MAP.md` and `lore/CANON.md` (created by `python3 .agents/scripts/hyper_lore.py init` when no graph exists; an existing graph is kept).
+3. **Runtime:** Python 3.10 or newer with PyYAML. The installer's `--install-deps` consents to `pip install --user pyyaml` when it is missing.
 
 ## **Phase 1: The Specification Engine**
 
-This phase is entirely conversational. It is designed to extract constraints, map the blast radius of changes, and force architectural trade-offs *before* a single line of code is written.
+This phase is conversational. It extracts constraints, maps the blast radius of changes and forces architectural trade-offs *before* a line of code is written.
 
 ### **Step 1: Requirements Extraction (/hyper-architect)**
 
-1. Open your agentic IDE (Antigravity/Cursor/Claude Code).  
-2. Execute the /hyper-architect command.  
-3. **The Pacing Loop:** The agent will ask a maximum of 2 questions per turn. Answer them thoroughly. Do not attempt to skip phases.  
-4. **Artifact:** The agent will generate Draft\_PRD.md in the spec/active/ directory.
+1. Open your agentic IDE (Claude Code, Antigravity, Cursor, Windsurf, Cline, Roo).
+2. Execute `/hyper-architect`.
+3. **The Pacing Loop:** the agent asks at most 2 questions per turn. Answer them thoroughly.
+4. **Artifact:** `spec/active/Draft_PRD.md`.
 
 ### **Step 2: Adversarial Analysis (/hyper-redteam)**
 
-1. **CRITICAL:** Open a **New Context Window** (or clear the agent session). Do not let the Red Team agent read the Architect's conversation history.  
-2. Execute the /hyper-redteam command.  
-3. The agent will read Draft\_PRD.md (and architecture.yml if this is an iterative update) to hunt for vulnerabilities, data contract collisions, and missing Non-Functional Requirements (NFRs).  
-4. **Artifact:** The agent will generate RedTeam\_Report.md in spec/active/.
+1. **CRITICAL:** open a **new context window**. The Red Team must not read the Architect's conversation.
+2. Execute `/hyper-redteam`.
+3. The agent reads `Draft_PRD.md` (and the ledger, for an iterative update) to hunt for vulnerabilities, data contract collisions and missing non-functional requirements.
+4. **Artifact:** `spec/active/RedTeam_Report.md`.
 
 ### **Step 3: Trade-off Resolution (/hyper-resolve)**
 
-1. Open a **New Context Window**.  
-2. Execute the /hyper-resolve command.  
-3. The agent will read the Draft PRD and Red Team Report. It will present you with forced trade-offs (Option A vs. Option B) for every vulnerability found.  
-4. **Artifact Generation:** Upon completion, the agent will compile the final SuperPRD.md and the granular MiniPRD\_\[Module\].md files, saving them to spec/compiled/.  
-5. **Memory Flush:** The agent will instruct you to execute the archival script. Run it to clear the active workspace:
+1. Open a **new context window**.
+2. Execute `/hyper-resolve`.
+3. The agent presents a forced trade-off (Option A vs. Option B) for every finding. Each decided trade-off becomes a PROPOSED lore node, which only a person approves (`/hyper-lore-approve`).
+4. **Compilation:** the agent creates the mission and its slices through the scope manager: `hyper_scope.py mission create` writes `missions/<mission>/SPEC.md` (the SuperPRD) and `hyper_scope.py slice create` writes one `missions/<mission>/slices/<NN-slug>/SPEC.md` per module (the MiniPRDs). `python3 .agents/scripts/hyper_spec.py lint --mission missions/<mission>` must pass. If a foreign root item blocks the scaffold, it writes flat legacy specs to `spec/compiled/` instead and says so.
+5. **Memory flush:** archive the workbench, so the next feature starts clean:
    ```bash
-   python .agents/scripts/archive_specs.py [Feature_Name]
+   python3 .agents/scripts/archive_specs.py --paths spec/active/Draft_PRD.md spec/active/RedTeam_Report.md --label <Feature_Name>
    ```
+
+`python3 .agents/scripts/hyper_scope.py dag` prints the live slices in dependency order; `python3 .agents/scripts/hyper_spec.py status` lists missions and slices with their statuses.
 
 ## **Phase 2: The Execution Engine (The Build Loop)**
 
-This phase maps to the actual writing of syntax. It is governed by a strict state-machine boundary and deterministic graph traversal.
+Build each slice by hand with the two skills below, one slice at a time, or let the [workflow engine](#the-workflow-engine) run every mission's slices in parallel.
 
 ### **Step 1: The Builder (/hyper-execute)**
 
-1. Open a **New Context Window**.
-2. Execute: `/hyper-execute spec/compiled/MiniPRD_[Target].md`
-   The skill reads the MiniPRD, implements the code precisely, and automatically runs `hypergraph_updater.py` before halting.
-3. **Wait for the skill to fully complete** before proceeding to Step 2. Do NOT run `/hyper-audit` in the same context window.
+1. Open a **new context window**.
+2. Execute `/hyper-execute <spec>`, where `<spec>` is a slice `SPEC.md` (by path or dot-id) or a legacy `spec/compiled/MiniPRD_*.md`. The skill resolves it with `hyper_spec.py resolve`, implements every task, and marks the touched ledger nodes with `hypergraph_updater.py` before halting.
+3. **Wait for the skill to finish** before Step 2. Never run `/hyper-audit` in the same context window.
 
 ### **Step 2: Contract Verification (/hyper-audit)**
 
-1. **CRITICAL:** Ensure `/hyper-execute` has completely finished. *Parallel execution will corrupt the YAML graph.*
-2. Open a **New Context Window**.
-3. Execute: `/hyper-audit spec/compiled/MiniPRD_[Target].md`
-4. The Auditor evaluates the code against the strict MiniPRD constraints.
-5. **Reconciliation:** If the code passes, the Auditor rewrites the `needs_review` nodes in `architecture.yml` to match the new inputs/outputs, resets their status to `clean`, and moves the MiniPRD to `spec/archive/` to prevent it from surfacing in future `/hyper-execute` runs.
+1. **CRITICAL:** `/hyper-execute` must have finished. *Two builders at once corrupt the ledger.*
+2. Open a **new context window**.
+3. Execute `/hyper-audit <spec>`.
+4. The Auditor evaluates the code against the spec's constraints and runs its tests.
+5. **Reconciliation:** on a pass, the Auditor reconciles the `needs_review` nodes through `hyper_ledger.py review-template` and `apply-review` (never a hand edit), records the proof with `hyper_spec.py proof`, runs the lore gate, and archives a legacy MiniPRD with `archive_specs.py --miniprd <spec>`.
+
+## The Workflow Engine
+
+`python3 .agents/scripts/hyper_engine.py run` runs every mission's slices in parallel, in `hyper_scope.py dag` order; when there are no missions it runs every legacy `spec/compiled/MiniPRD_*.md` in sequence. It has no mission selector. It never imports the Anthropic SDK: each agent phase is a headless `claude -p` session (the `claude-cli` executor) inside the OS sandbox, and the engine itself makes every git write.
+
+```bash
+python3 .agents/scripts/hyper_engine.py preflight            # the checks only
+python3 .agents/scripts/hyper_engine.py run                  # preflight, then schedule the slices
+python3 .agents/scripts/hyper_engine.py run --resume <run_id>
+python3 .agents/scripts/hyper_engine.py status <run_id>      # print the run's run.json
+python3 .agents/scripts/hyper_engine.py land <run_id>        # apply the run's ledger; prints the merge command
+python3 .agents/scripts/hyper_engine.py land <run_id> --merge
+python3 .agents/scripts/hyper_engine.py land <run_id> --rebase-ledger
+python3 .agents/scripts/hyper_engine.py gc                   # list what finished runs left behind
+python3 .agents/scripts/hyper_engine.py gc --older-than 14d --apply
+```
+
+**How a run works.** Preflight checks git worktree support, a clean main checkout, the `claude` CLI version and login, both sandboxes, a valid ledger (if there is none, it names `python3 .agents/scripts/hyper_ledger.py init` and `/hyper-discover`), lint and an acyclic slice DAG. The run then creates an integration branch `swimlane/hacf/<run>/integration`. A slice is ready when the slices it depends on are audited and integrated; slices whose declared files overlap, or that share a ledger node, run one after the other. Each slice gets its own worktree on `swimlane/hacf/<run>/<NN-slug>`, an execute phase, the engine's commit, its oracle, an audit phase and a scope check against its declared files; passing slices are integrated one at a time. Your main checkout stays byte-identical until `land`. Run state lives in `.agents/state/runs/<run_id>/`. Exit codes: 0 ok, 1 finished with blocked slices (or stopped), 2 usage, 3 lock held, 5 refused.
+
+**Run flags.** Tracked config (`.agents/config/orchestration.yml`, `.agents/local/hacf.yml`) can only tighten a security setting; these flags are the only way to loosen one, and the run records them:
+
+| Flag | Effect |
+|---|---|
+| `--allow-unsandboxed-oracle` | Run oracles and repo hooks without bwrap. By default every oracle runs in a bwrap sandbox on Linux (read-only root, writable worktree and tmp, masked `$HOME`, read-only `.git`, no network); without bwrap the run refuses. macOS has no bwrap, so oracles there need this flag, and then run agent-written code with your privileges and network. |
+| `--unverified-executor` | Allow an executor whose `verified` is false. The engine refuses one without this flag. |
+| `--allow-unsandboxed` | Run agent phases without the OS sandbox (loud warning). The experimental `codex-cli` and `gemini-cli` executors have no HACF-verified sandbox and run only with it, and, being unverified, also with `--unverified-executor`. |
+| `--executor <name>` | The executor (default `claude-cli`). |
+| `--max-budget-usd-per-run <usd>` | The run budget for this run. |
+
+**Budget.** `autonomy.max_budget_usd_per_run` (shipped default 50.0 USD) caps a run: when it is reached, scheduling stops and the run records `budget_exceeded`. `autonomy.max_budget_usd_per_phase` (5.0) caps one agent phase. Both are security keys: tracked config may only lower them. A rate limit pauses every worker together (30 s, then 120 s).
+
+**Landing.** `land <run_id>` applies the run to your main checkout. A tracked ledger rides along in the integration commits; an untracked one is staged in the run directory and applied by `land` under the ledger lock, with validation. Without `--merge`, `land` prints the `git merge --ff-only` command; with `--merge` it fast-forwards the checked-out base branch, only if it is clean. If the main checkout's ledger changed since the run started, `land` refuses (exit 5, with a report). `land --rebase-ledger` instead replays the run's recorded ledger entries onto the current ledger, validating; an entry that touches a node changed since the base is a conflict, and the land is refused with a per-node report.
+
+**Garbage collection.** `gc` lists, and `gc --apply` removes, what landed or abandoned runs left behind: kept worktrees (then `git worktree prune`), `swimlane/hacf/<run>/*` branches, run directories and `refs/hacf/candidates/*`. `--older-than` takes an age such as `14d`. It never touches a run that holds the engine lock.
+
+**Defense in depth.** The Bash allow and deny rules given to agent phases are defense in depth only, not a security boundary; the OS sandbox's denies on git metadata are the control. Review what a run integrates before you land it.
 
 ## **Phase 3: Novel Test Protocol (Human-in-the-Loop)**
 
-Standard CI/CD cannot test subjective or AI-generated outputs. If a MiniPRD contains a Novel Test:
+Standard CI cannot test subjective or AI-generated outputs. If a spec contains a novel test:
 
-1. The Builder/Auditor will output the result to tests/candidate\_outputs/ and halt execution.  
-2. Review the file manually.  
-3. If the output is correct, move the file to tests/fixtures/.  
-4. Manually update the MiniPRD test definition from novel to deterministic. The system will now automatically run regressions against this approved baseline.
+1. The Builder or Auditor writes the result to `tests/candidate_outputs/` and halts.
+2. Review the file yourself.
+3. If the output is correct, move it to `tests/fixtures/`. Only a person promotes a candidate.
+4. Change the spec's test definition from novel to deterministic. Later runs regress against the approved baseline.
 
 ## **Phase 4: Iterative Updates (The Delta Loop)**
 
-When adding new features weeks or months later, the process remains identical.
+When you add a feature later, the process is the same.
 
-1. Run `/hyper-architect`. The agent detects the existing `architecture.yml` and switches to the **Delta Extraction** protocol.
-2. Run `/hyper-redteam`. It extracts the **Blast Radius** subgraph to identify exactly how the new feature collides with existing code.
-3. Run `/hyper-resolve` to finalize MiniPRDs and archive active drafts.
-4. Run `/hyper-execute spec/compiled/MiniPRD_[Target].md` to implement.
-5. Run `/hyper-audit spec/compiled/MiniPRD_[Target].md` to verify and reconcile.
+1. Run `/hyper-architect`. The agent detects the existing ledger and switches to **Delta Extraction**.
+2. Run `/hyper-redteam`. It takes the **blast radius** from the ledger (`python3 .agents/scripts/hyper_ledger.py impact --nodes <ids>` or `--files <paths>`) to find how the feature collides with existing code.
+3. Run `/hyper-resolve` to compile the new mission and its slices and archive the workbench.
+4. Build each slice with `/hyper-execute` and `/hyper-audit`, or run the engine, which runs every mission's slices.
+
+When a plan proves wrong mid-mission, `/hyper-resolve` in Replan mode recompiles only the unfinished slices.
+
+## Ledger recovery
+
+| Symptom | Command |
+|---|---|
+| No ledger yet | `python3 .agents/scripts/hyper_ledger.py init`, then `/hyper-discover` |
+| Is the ledger valid? | `python3 .agents/scripts/hyper_ledger.py validate` (`--strict` fails on any finding or `needs_review`) |
+| The YAML no longer parses because of a plain description | `python3 .agents/scripts/hyper_ledger.py repair-text --dry-run`, then without `--dry-run` |
+
+More in [Troubleshooting](Troubleshooting.md#ledger).

@@ -1,0 +1,45 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(/spec/archive/**)",
+      "Edit(/spec/archive/**)",
+      "Read(/tests/candidate_outputs/**)",
+      "Edit(/tests/candidate_outputs/**)",
+      "Read(/**/node_modules/**)",
+      "Read(/**/.env)",
+      "Read(/**/__pycache__/**)",
+      "Read(/.git/**)",
+      "Edit(/spec/compiled/architecture.yml)",
+      "Edit(/lore_hypergraph.yml)",
+      "Edit(/lore/CANON.md)",
+      "Edit(/lore/canon/**)",
+      "Edit(/missions/*/mission.yaml)",
+      "Edit(/missions/*/slices/*/slice.yaml)"
+    ],
+    "ask": [
+      "Bash(python3 .agents/scripts/hyper_lore.py approve *)",
+      "Bash(python .agents/scripts/hyper_lore.py approve *)",
+      "Bash(python3 .agents/scripts/hyper_lore.py reject *)",
+      "Bash(python .agents/scripts/hyper_lore.py reject *)",
+      "Bash(python3 .agents/scripts/hyper_lore.py retire *)",
+      "Bash(python .agents/scripts/hyper_lore.py retire *)",
+      "Bash(python3 .agents/scripts/hyper_lore.py reopen *)",
+      "Bash(python .agents/scripts/hyper_lore.py reopen *)",
+      "Bash(python3 .agents/scripts/hyper_lore.py review *)",
+      "Bash(python .agents/scripts/hyper_lore.py review *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR}/.agents/scripts/hyper_gate_hook.py\""
+          }
+        ]
+      }
+    ]
+  }
+}

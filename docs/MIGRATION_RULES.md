@@ -1,4 +1,76 @@
-# Migration Guide: Persistent Rules (spec/schemas → CLAUDE.md)
+# Migration Rules
+
+This guide covers updating HACF in a project (ADR-0010), moving v0.5.x specs to the v0.6.0
+layout, and, at the end, the historical v0.5.x schema migration.
+
+<a id="updating-hacf-adr-0010"></a>
+## Updating HACF (ADR-0010)
+
+**First, delete any saved copy of HACF-uninstall.sh.** A saved v0.5.x uninstaller deletes every
+project file whose path also exists in the HACF repository, including `.gitattributes`,
+`lore_hypergraph.yml`, `SPEC.md`, `project.yaml`, `workspace.yaml` and `docs/*`.
+
+`/hyper-update` runs only the read-only preview; you run the update itself in your own terminal:
+
+```bash
+python3 .agents/scripts/hyper_update_core.py --dry-run   # fetch, check ancestry and signature, print the plans; write nothing
+python3 .agents/scripts/hyper_update_core.py             # the update
+```
+
+### Signatures and trust
+
+- **Releases are unsigned in v0.6.x.** An unsigned upstream needs your consent in a terminal:
+  answer the prompt, or pass `--allow-unsigned`. `--allow-unsigned` needs a TTY and is refused
+  under `HACF_AUTONOMOUS=1`, so **unattended CI updates are not possible** while
+  releases are unsigned.
+- **Any future signing is SSH-only.** The updater checks a signature with
+  `git -c gpg.ssh.allowedSignersFile=<temporary file> verify-commit`. An upstream config that lists
+  `gpg_fingerprints` is refused.
+- **Never import a signing key globally**: no key in a global keyring and no signing setting in
+  your global git config. HACF does not need one, and a globally trusted key would arm a saved
+  v0.5.x updater's delete path.
+- **Signers are pinned locally on first trust**, in `.agents/state/upstream-trust.json`
+  (machine-local, never synced). The upstream's `.agents/config/upstream.yml` is only a proposal; a
+  change to the pinned set needs your interactive consent.
+- Every consent is logged to `.agents/logs/update-consent.jsonl` with the effective URL and commit.
+
+### Upstream and ancestry
+
+- The upstream changes only through `--upstream-url <https-url>` and `--ref <ref>`; non-`https://`
+  URLs are refused. The environment overrides `HACF_REPO_URL`, `HACF_BRANCH` and
+  `HACF_UPSTREAM_URL` apply only with `HACF_TEST=1`.
+- There is no local counterpart: `/hyper-update` has no `--source`. A project installed with
+  `HACF-install.sh --source` is updated by re-running `HACF-install.sh --source=<checkout>`; see the
+  CHANGELOG known issues.
+- **Anti-rollback:** the installed commit is recorded in `.agents/hacf-manifest.json`. An upstream
+  commit that does not descend from it is refused unless you pass `--allow-downgrade`.
+- Only `.agents/skills/`, `.agents/scripts/` and `.agents/schemas/` are synced; `AGENTS.md`,
+  `CLAUDE.md`, `GEMINI.md` and `.agentignore` get only their HACF block. Your specs, tests, lore,
+  missions and settings are never synced.
+
+<a id="migrating-specs-to-v060"></a>
+## Migrating specs to v0.6.0
+
+```bash
+python3 .agents/scripts/hyper_migrate.py detect    # report the legacy signals; write nothing
+python3 .agents/scripts/hyper_migrate.py plan      # print the deterministic action list; write nothing
+python3 .agents/scripts/hyper_migrate.py apply     # backup and journal first, then run the plan
+python3 .agents/scripts/hyper_migrate.py verify    # lint, ledger and lore validate, firewall check
+```
+
+- `apply` needs a typed `yes` on a TTY. `--yes` skips the prompt and is refused under
+  `HACF_AUTONOMOUS=1`; an agent shell can still pass `--yes`, so the rule is procedural: only a
+  person decides to migrate. `--allow-dirty`, `--no-chain` and `--include-archived` are the other
+  `apply` options.
+- `rollback --journal .agents/state/migrations/v0.6.0.json` restores the pre-apply tree from the
+  backup. It **refuses on drift**: when a path changed since the apply it lists the paths, restores
+  nothing and exits 5; `--force` restores over them.
+- Legacy flat `spec/compiled/MiniPRD_*.md` files are still read until v0.7.0.
+
+---
+
+## Historical: Persistent Rules (spec/schemas → CLAUDE.md, v0.5.x)
+
 
 **Effective Date:** 2026-05-03  
 **Deadline:** 2026-06-17 (6-week deprecation period)  
@@ -22,6 +94,8 @@ The following static schemas have been moved to CLAUDE.md:
 | `.agents/schemas/SuperPRD_Template.md` | CLAUDE.md: Schema Definitions › SuperPRD Schema | High-level feature spec template |
 | `.agents/schemas/MiniPRD_template.md` | CLAUDE.md: Schema Definitions › MiniPRD Schema | Modular spec template |
 | `.agents/schemas/hypergraph_schema.md` | CLAUDE.md: Schema Definitions › Hypergraph Schema | Dependency graph structure |
+
+These three templates were removed in v0.6.0.
 
 **Custom templates** (DESIGN_Template.md, plan_Template.md, etc.) remain in `.agents/schemas/` for project-specific use.
 

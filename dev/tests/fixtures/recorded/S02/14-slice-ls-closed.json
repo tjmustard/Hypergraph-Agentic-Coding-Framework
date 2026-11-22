@@ -1,0 +1,26 @@
+{
+  "step": "slice-ls-closed",
+  "argv": [
+    "npx",
+    "-y",
+    "--package=@openrig/cli@0.6.13",
+    "rig",
+    "scope",
+    "--workspace",
+    "/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo",
+    "slice",
+    "ls",
+    "--mission",
+    "release-0.6.0",
+    "--state",
+    "closed",
+    "--json"
+  ],
+  "cwd": "/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo",
+  "exit_code": 0,
+  "stdout": "{\n  \"ok\": true,\n  \"count\": 2,\n  \"slices\": [\n    {\n      \"mission\": \"release-0.6.0\",\n      \"name\": \"02-rig-close\",\n      \"nn\": 2,\n      \"slug\": \"rig-close\",\n      \"id\": \"OPR.0.6.0.2\",\n      \"status\": \"closed-superseded\",\n      \"path\": \"/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo/missions/release-0.6.0/closed/02-rig-close\"\n    },\n    {\n      \"mission\": \"release-0.6.0\",\n      \"name\": \"03-hacf-close\",\n      \"nn\": 3,\n      \"slug\": \"hacf-close\",\n      \"id\": \"OPR.0.6.0.3\",\n      \"status\": \"closed-superseded\",\n      \"path\": \"/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo/missions/release-0.6.0/closed/03-hacf-close\"\n    }\n  ]\n}\n",
+  "stderr": "",
+  "rig_version": "0.6.13 (9eeb2e42)",
+  "captured_at": "2026-10-26T05:10:09+00:00",
+  "git_status_after": []
+}

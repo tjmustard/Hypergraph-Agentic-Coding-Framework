@@ -1,24 +1,51 @@
 #!/usr/bin/env python3
-"""
-Token Budget Checker
+"""Token Budget Checker
 
 Enforces output token budgets per MiniPRD to prevent runaway task costs.
 Checks estimated vs. ceiling (50k), suggests task splitting, tracks variance.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional
+from pathlib import Path
+from typing import List
+
+import _runtime
+import hyper_openrig
+import hyper_spec
+
+
+def normalize_key(identifier: str) -> str:
+    """Return the budget key of a MiniPRD name or path, a slice dot-ID, or a slice dir or SPEC.md.
+
+    A dot-ID or a bare legacy name is its own key and a MiniPRD path its file stem. A slice
+    directory or its SPEC.md becomes the frontmatter `id`, or the directory name without one.
+    """
+    if hyper_openrig.DOT_ID_RE.match(identifier):
+        return identifier
+    path = Path(identifier)
+    if path.name == "SPEC.md":
+        path = path.parent
+    spec = path / "SPEC.md"
+    if spec.is_file():
+        try:
+            front = hyper_spec.parse_frontmatter(spec.read_text(encoding="utf-8")).data or {}
+        except hyper_spec.SpecError:
+            front = {}
+        slice_id = front.get("id")
+        return slice_id if isinstance(slice_id, str) else path.name
+    return path.stem if path.suffix == ".md" else path.name
 
 
 @dataclass
 class BudgetCheckResult:
     """Result of budget check against 50k ceiling."""
+
     miniprd_name: str
     estimated_tokens: int
     ceiling: int
     flag: bool
     suggested_subtasks: List[str]
-    message: str
+    message: str = ""
 
     def __post_init__(self):
         if self.estimated_tokens > self.ceiling:
@@ -26,7 +53,9 @@ class BudgetCheckResult:
             self.message = f"Budget exceeds 50k ceiling: {self.estimated_tokens:,} tokens estimated"
         else:
             self.flag = False
-            self.message = f"Budget within limit: {self.estimated_tokens:,} / {self.ceiling:,} tokens"
+            self.message = (
+                f"Budget within limit: {self.estimated_tokens:,} / {self.ceiling:,} tokens"
+            )
 
 
 class BudgetChecker:
@@ -35,28 +64,25 @@ class BudgetChecker:
     BUDGET_CEILING = 50000
 
     def check(
-        self,
-        miniprd_name: str,
-        estimated_output_tokens: int,
-        verbose: bool = True
+        self, miniprd_name: str, estimated_output_tokens: int, verbose: bool = True
     ) -> BudgetCheckResult:
-        """
-        Check if estimated output tokens exceed 50k ceiling.
+        """Check if estimated output tokens exceed 50k ceiling.
 
         Args:
-            miniprd_name: Name of MiniPRD (e.g., "MiniPRD_TokenBudgetEnforcement")
+            miniprd_name: MiniPRD name or path, slice dot-ID, or slice dir or SPEC.md path
             estimated_output_tokens: Developer's estimated output token count
             verbose: Log check result
 
         Returns:
             BudgetCheckResult with flag, message, and split suggestions
         """
+        miniprd_name = normalize_key(miniprd_name)
         result = BudgetCheckResult(
             miniprd_name=miniprd_name,
             estimated_tokens=estimated_output_tokens,
             ceiling=self.BUDGET_CEILING,
             flag=False,
-            suggested_subtasks=[]
+            suggested_subtasks=[],
         )
 
         if estimated_output_tokens > self.BUDGET_CEILING:
@@ -69,14 +95,9 @@ class BudgetChecker:
         return result
 
     def estimate_tokens(
-        self,
-        code_lines: int,
-        doc_pages: int,
-        test_cases: int,
-        verbose: bool = True
+        self, code_lines: int, doc_pages: int, test_cases: int, verbose: bool = True
     ) -> int:
-        """
-        Estimate output tokens using heuristic formula.
+        """Estimate output tokens using heuristic formula.
 
         Formula: code_lines / 40 + doc_pages * 500 + test_cases * 100
         - ~40 tokens per line of code
@@ -98,8 +119,12 @@ class BudgetChecker:
         total = int(code_tokens + doc_tokens + test_tokens)
 
         if verbose:
-            print(f"ℹ️  Token estimate: {code_lines} lines @ 40/line + {doc_pages} pages @ 500/page + {test_cases} tests @ 100/test")
-            print(f"    = {int(code_tokens)} + {int(doc_tokens)} + {int(test_tokens)} = {total:,} tokens")
+            print(
+                f"ℹ️  Token estimate: {code_lines} lines @ 40/line + {doc_pages} pages @ 500/page + {test_cases} tests @ 100/test"
+            )
+            print(
+                f"    = {int(code_tokens)} + {int(doc_tokens)} + {int(test_tokens)} = {total:,} tokens"
+            )
 
         return total
 
@@ -109,28 +134,31 @@ class BudgetChecker:
         print(f"{status}: {result.message}")
 
         if result.flag and result.suggested_subtasks:
-            print(f"\nSuggested splits:")
+            print("\nSuggested splits:")
             for subtask in result.suggested_subtasks:
                 print(f"  - {subtask}")
 
     def _generate_split_suggestions(self, miniprd_name: str) -> List[str]:
         """Generate suggestions for splitting oversized MiniPRDs."""
         return [
-            f"[A] Core logic and data structures",
-            f"[B] API endpoints and integrations",
-            f"[C] Testing and documentation",
+            "[A] Core logic and data structures",
+            "[B] API endpoints and integrations",
+            "[C] Testing and documentation",
         ]
 
 
 if __name__ == "__main__":
     import sys
 
+    _runtime.require_runtime()
     if len(sys.argv) < 4:
-        print("Usage: python token_budget_checker.py <code_lines> <doc_pages> <test_cases>")
-        print("Example: python token_budget_checker.py 200 5 10")
+        print("Usage: python3 token_budget_checker.py <code_lines> <doc_pages> <test_cases>")
+        print("Example: python3 token_budget_checker.py 200 5 10")
         print("\nAlternatively:")
-        print("Usage: python token_budget_checker.py check <miniprd_name> <estimated_tokens>")
-        print("Example: python token_budget_checker.py check MiniPRD_Example 12000")
+        print("Usage: python3 token_budget_checker.py check <spec> <estimated_tokens>")
+        print("  <spec>: a MiniPRD name or path, a slice dot-ID, or a slice dir or SPEC.md path")
+        print("Example: python3 token_budget_checker.py check MiniPRD_Example 12000")
+        print("Example: python3 token_budget_checker.py check OPR.0.6.0.4 12000")
         sys.exit(1)
 
     if sys.argv[1] == "check":

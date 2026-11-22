@@ -1,30 +1,125 @@
 #!/usr/bin/env python3
-"""
-hyper_update_verification.py — Upstream verification, backup cleanup, and audit logging
+"""hyper_update_verification.py — upstream integrity (HACF's update-integrity policy), backup retention, audit logs.
 
 Implements:
-- GPG binary availability check
-- Backup cleanup policy (30-day retention)
-- Audit trail logging with JSON format
-- Log rotation (keep last 10 log files)
+- SSH signature verification against the machine-local signer pin (R11): the allowed-signers
+  file is built from the pin in a temp dir and passed per call with
+  `git -c gpg.ssh.allowedSignersFile=<file> verify-commit <sha>`; nothing is imported globally.
+- The signer pin `.agents/state/upstream-trust.json` (R12) and the consent log
+  `.agents/logs/update-consent.jsonl` (R25.6).
+- Backup retention (30 days) over exact backup names only; `*-migration` dirs and
+  `.agents/state/migrations/` are exempt.
+- The audit trail `.agents/logs/hyper-update.log` (JSON lines; the `integrity` field holds the
+  policy's result: ssh-verified, unsigned-consent-interactive or unsigned-consent-flag).
+
+Every timestamp is written with `+00:00` and parsed through `_runtime` (R19.4).
 """
 
-import os
-import sys
+import getpass
 import json
+import os
+import re
 import shutil
 import subprocess
+import sys
+import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Dict, Optional, Tuple
+from typing import List, Optional, Tuple
+
+import _runtime
+
+_runtime.require_runtime()  # R19.4: an entry point of /hyper-update
+
+# Integrity results (Task 12).
+SSH_VERIFIED = "ssh-verified"
+CONSENT_INTERACTIVE = "unsigned-consent-interactive"
+CONSENT_FLAG = "unsigned-consent-flag"
+
+# Exact backup names (Task 22): YYYY-MM-DDTHH-MM-SSZ, and the old YYYY-MM-DD.
+BACKUP_TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$")
+BACKUP_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+DEFAULT_PRINCIPAL = "hacf-upstream"
+KEY_TYPE_PREFIXES = ("ssh-", "ecdsa-", "sk-ssh-", "sk-ecdsa-")
+
+
+def backup_stamp(now: Optional[datetime] = None) -> str:
+    """Return a backup directory name, the UTC time as YYYY-MM-DDTHH-MM-SSZ."""
+    now = now or datetime.now(timezone.utc)
+    return now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+
+
+def parse_backup_name(name: str) -> Optional[datetime]:
+    """Return the UTC time of an exact backup name, or None for any other name (Task 22)."""
+    if name.endswith("-migration"):
+        return None
+    try:
+        if BACKUP_TS_RE.match(name):
+            day, clock = name[:-1].split("T")
+            return _runtime.parse_ts(f"{day}T{clock.replace('-', ':')}+00:00")
+        if BACKUP_DAY_RE.match(name):
+            return _runtime.parse_ts(f"{name}T00:00:00+00:00")
+    except ValueError:
+        return None
+    return None
+
+
+def allowed_signers_lines(signers: List[str]) -> List[str]:
+    """Return allowed-signers file lines; a bare `<key-type> <key>` gets a default principal."""
+    lines = []
+    for entry in signers:
+        text = " ".join(str(entry).split())
+        if not text:
+            continue
+        if text.startswith(KEY_TYPE_PREFIXES):
+            text = f"{DEFAULT_PRINCIPAL} {text}"
+        lines.append(text)
+    return lines
+
+
+SSH_SIGNATURE_BEGIN = "-----BEGIN SSH SIGNATURE-----"
+
+
+def signature_kind(commit_sha: str, repo_dir: str) -> str:
+    """Return "ssh", "none", "mixed" or "other" for the commit object's signature headers.
+
+    Reads the raw object (`git cat-file commit <sha>`); a header is `gpgsig` or `gpgsig-sha256`
+    and its first line names the armor, so the format is the signature's, not git config's.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "cat-file", "commit", commit_sha],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return "other"
+    if result.returncode != 0:
+        return "other"
+    header = result.stdout.split("\n\n", 1)[0]
+    kinds = set()
+    for line in header.split("\n"):
+        name, _, value = line.partition(" ")
+        if name in ("gpgsig", "gpgsig-sha256"):
+            kinds.add("ssh" if value.strip() == SSH_SIGNATURE_BEGIN else "other")
+    if not kinds:
+        return "none"
+    if len(kinds) > 1:
+        return "mixed"
+    return kinds.pop()
 
 
 class UpstreamVerification:
-    """Handles GPG verification, backup cleanup, and audit logging."""
+    """Handles signature verification, the signer pin, consent and audit logs, retention."""
 
     BACKUP_DIR = ".agents/.backup"
+    MIGRATIONS_DIR = ".agents/state/migrations"
     LOG_DIR = ".agents/logs"
     LOG_FILE = "hyper-update.log"
+    CONSENT_LOG = "update-consent.jsonl"
+    TRUST_FILE = ".agents/state/upstream-trust.json"
     LOG_MAX_SIZE = 1024 * 1024  # 1MB
     LOG_MAX_FILES = 10
     BACKUP_RETENTION_DAYS = 30
@@ -32,263 +127,254 @@ class UpstreamVerification:
     def __init__(self, project_root: str = "."):
         self.project_root = Path(project_root).resolve()
         self.backup_dir = self.project_root / self.BACKUP_DIR
+        self.migrations_dir = self.project_root / self.MIGRATIONS_DIR
         self.log_dir = self.project_root / self.LOG_DIR
+        self.trust_path = self.project_root / self.TRUST_FILE
 
     def log_message(self, msg: str):
         """Print a message to stderr for real-time feedback."""
         print(f"[hyper-update] {msg}", file=sys.stderr)
 
-    def error(self, msg: str):
-        """Log an error and exit."""
-        self.log_message(f"❌ Error: {msg}")
-        sys.exit(1)
+    # ==== Integrity: SSH signatures against the pin (R11) ====
 
-    # ==== Phase: GPG Binary Check ====
+    def verify_upstream_commit(
+        self, commit_sha: str, upstream_dir: str, allowed_signers: List[str]
+    ) -> Tuple[bool, str, List[str]]:
+        """Verify an SSH signature on commit_sha against the pinned signers.
 
-    def check_gpg_available(self) -> bool:
+        Returns: (is_valid, message, the verification argv).
         """
-        Verify GPG is installed before attempting signature verification.
-        Returns True if GPG is available, False otherwise.
-        """
-        self.log_message("Checking GPG availability...")
-        try:
-            result = subprocess.run(
-                ["gpg", "--version"],
-                check=True,
-                capture_output=True,
-                text=True,
+        lines = allowed_signers_lines(allowed_signers)
+        if not lines:
+            return False, "no pinned signers to verify against", []
+        # `git verify-commit` dispatches on the signature's own format, so an OpenPGP or
+        # X.509 signature would be checked against the user's keyring, not the SSH pin (R11).
+        # Accept only a commit whose every signature header is an SSH signature.
+        kind = signature_kind(commit_sha, upstream_dir)
+        if kind != "ssh":
+            return (
+                False,
+                f"commit {commit_sha[:12]} has no valid signature from a pinned signer "
+                f"(signature: {kind}; only an SSH signature by a pinned key is accepted)",
+                [],
             )
-            self.log_message("✅ GPG is available")
+        tmpdir = tempfile.mkdtemp(prefix="hacf-signers-")
+        try:
+            signers_file = Path(tmpdir) / "allowed_signers"
+            signers_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            argv = [
+                "git",
+                "-c",
+                f"gpg.ssh.allowedSignersFile={signers_file}",
+                "verify-commit",
+                commit_sha,
+            ]
+            try:
+                result = subprocess.run(
+                    argv, cwd=upstream_dir, capture_output=True, text=True, check=False
+                )
+            except FileNotFoundError:
+                return False, "git command not found", argv
+            detail = (result.stderr or result.stdout).strip()
+            if result.returncode == 0:
+                return True, f"SSH signature verified on {commit_sha[:12]} ({detail})", argv
+            return (
+                False,
+                f"commit {commit_sha[:12]} has no valid signature from a pinned signer"
+                + (f" ({detail})" if detail else ""),
+                argv,
+            )
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # ==== Signer pin (R12) ====
+
+    def read_pin(self) -> Optional[List[str]]:
+        """Return the pinned signer set, or None when nothing has been pinned yet."""
+        try:
+            data = json.loads(self.trust_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"{self.TRUST_FILE} is unreadable ({exc}); fix or remove it") from None
+        signers = data.get("allowed_signers") if isinstance(data, dict) else None
+        if not isinstance(signers, list):
+            raise ValueError(f"{self.TRUST_FILE} has no allowed_signers list; fix or remove it")
+        return [str(s) for s in signers]
+
+    def write_pin(self, signers: List[str], url: str, commit: str, how: str) -> None:
+        """Write the signer pin atomically (creating `.agents/state/` on first use)."""
+        entry = {
+            "allowed_signers": list(signers),
+            "pinned_at": _runtime.utc_now_iso(),
+            "url": url,
+            "commit": commit,
+            "how": how,
+        }
+        atomic_write(self.trust_path, (json.dumps(entry, indent=2) + "\n").encode("utf-8"))
+
+    # ==== Consent log (R25.6) ====
+
+    def log_consent(self, url: str, commit: str, mode: str) -> Path:
+        """Append one consent line {timestamp, url, commit, mode, os_user}; return the log path."""
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        path = self.log_dir / self.CONSENT_LOG
+        entry = {
+            "timestamp": _runtime.utc_now_iso(),
+            "url": url,
+            "commit": commit,
+            "mode": mode,
+            "os_user": getpass.getuser(),
+        }
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry) + "\n")
+        return path
+
+    # ==== Backup retention (Tasks 22-23) ====
+
+    def _exempt(self, path: Path) -> bool:
+        """Return True for a path retention never touches (migration backups, symlinks)."""
+        if path.name.endswith("-migration") or path.is_symlink():
             return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        try:
+            path.resolve().relative_to(self.migrations_dir.resolve())
+            return True
+        except ValueError:
             return False
 
-    def verify_upstream_commit(self, commit_sha: str, upstream_dir: Optional[str] = None) -> Tuple[bool, str]:
-        """
-        Verify GPG signature on upstream commit.
-        Args: commit_sha (str), upstream_dir (optional path to cloned repo, defaults to current dir)
-        Returns: (is_valid: bool, message: str)
-        """
-        cwd = upstream_dir if upstream_dir else str(self.project_root)
+    def _dated_backups(self):
+        """Yield (dir, UTC time) for every backup dir with an exact name that is not exempt."""
+        if not self.backup_dir.is_dir():
+            return
+        for sub in sorted(self.backup_dir.iterdir()):
+            if not sub.is_dir() or self._exempt(sub):
+                continue
+            when = parse_backup_name(sub.name)
+            if when is not None:
+                yield sub, when
 
-        try:
-            result = subprocess.run(
-                ["git", "verify-commit", commit_sha],
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-            )
+    def cleanup_old_backups(self, now: Optional[datetime] = None) -> Tuple[int, str]:
+        """Remove exact-named backup dirs older than BACKUP_RETENTION_DAYS.
 
-            if result.returncode == 0:
-                # Signature is valid
-                sha_short = commit_sha[:7]
-                return True, f"✅ GPG signature verified (commit SHA: {sha_short}...)"
-            else:
-                # Signature is invalid or missing
-                return False, f"❌ Error: Upstream commit {commit_sha[:7]}... is not GPG-signed or signature is invalid.\nUpstream repository requires signed commits for security.\nAbort."
-        except FileNotFoundError:
-            return False, "❌ Error: git command not found"
-        except Exception as e:
-            return False, f"❌ Error: GPG verification failed: {e}"
-
-    # ==== Phase: Backup Cleanup Policy ====
-
-    def cleanup_old_backups(self) -> Tuple[int, str]:
-        """
-        Remove backup directories older than BACKUP_RETENTION_DAYS.
         Returns: (count_deleted, log_message)
         """
-        if not self.backup_dir.exists():
-            return 0, "No backups to clean up"
-
-        now = datetime.utcnow()
+        now = now or datetime.now(timezone.utc)
         deleted_count = 0
-        failed_dirs = []
-
-        for backup_subdir in sorted(self.backup_dir.iterdir()):
-            if not backup_subdir.is_dir():
+        for backup_subdir, backup_time in list(self._dated_backups()):
+            if now - backup_time <= timedelta(days=self.BACKUP_RETENTION_DAYS):
                 continue
-
-            # Parse timestamp from directory name (YYYY-MM-DDTHH-MM-SSZ)
-            dir_name = backup_subdir.name
             try:
-                # Handle both underscore and hyphen-based timestamps
-                if "T" in dir_name:
-                    # Format: 2026-05-04T14-30-45Z
-                    timestamp_str = dir_name.replace("Z", "").replace("-", ":", 2).replace("-", "-", 2)
-                    backup_time = datetime.fromisoformat(timestamp_str.replace("T", "T"))
-                else:
-                    # Format: 2026-05-04 (old format)
-                    backup_time = datetime.strptime(dir_name, "%Y-%m-%d")
-            except (ValueError, AttributeError):
-                # Skip directories with invalid timestamps
-                continue
-
-            age = now - backup_time
-            if age > timedelta(days=self.BACKUP_RETENTION_DAYS):
-                try:
-                    shutil.rmtree(backup_subdir)
-                    deleted_count += 1
-                    self.log_message(f"🗑️  Deleted old backup: {dir_name}")
-                except (OSError, PermissionError) as e:
-                    failed_dirs.append((dir_name, str(e)))
-                    self.log_message(f"⚠️  Warning: Could not clean up {backup_subdir.name} ({e})")
-
+                shutil.rmtree(backup_subdir)
+                deleted_count += 1
+                self.log_message(f"🗑️  Deleted old backup: {backup_subdir.name}")
+            except OSError as e:
+                self.log_message(f"⚠️  Warning: Could not clean up {backup_subdir.name} ({e})")
         if deleted_count > 0:
-            msg = f"🗑️  Cleaned up {deleted_count} backup(s) older than {self.BACKUP_RETENTION_DAYS} days"
-        else:
-            msg = "No backups to clean up"
+            return deleted_count, (
+                f"🗑️  Cleaned up {deleted_count} backup(s) older than "
+                f"{self.BACKUP_RETENTION_DAYS} days"
+            )
+        return 0, "No backups to clean up"
 
-        return deleted_count, msg
-
-    def get_backup_age_warnings(self) -> list:
-        """
-        Check for backups approaching the 30-day expiration (within 2 days).
-        Returns: List of warning messages
-        """
-        if not self.backup_dir.exists():
-            return []
-
+    def get_backup_age_warnings(self, now: Optional[datetime] = None) -> list:
+        """Return warnings for backups within 2 days of the retention limit."""
+        now = now or datetime.now(timezone.utc)
         warnings = []
-        now = datetime.utcnow()
-
-        for backup_subdir in sorted(self.backup_dir.iterdir()):
-            if not backup_subdir.is_dir():
-                continue
-
-            dir_name = backup_subdir.name
-            try:
-                if "T" in dir_name:
-                    timestamp_str = dir_name.replace("Z", "").replace("-", ":", 2).replace("-", "-", 2)
-                    backup_time = datetime.fromisoformat(timestamp_str.replace("T", "T"))
-                else:
-                    backup_time = datetime.strptime(dir_name, "%Y-%m-%d")
-            except (ValueError, AttributeError):
-                continue
-
+        for backup_subdir, backup_time in self._dated_backups():
             age = now - backup_time
             days_remaining = self.BACKUP_RETENTION_DAYS - age.days
-
-            # Warn if within 2 days of expiration
             if 0 <= days_remaining <= 2:
-                expiration_date = (backup_time + timedelta(days=self.BACKUP_RETENTION_DAYS)).strftime("%Y-%m-%d")
                 warnings.append(
-                    f"⚠️  Backup from {dir_name} is {age.days} days old "
+                    f"⚠️  Backup from {backup_subdir.name} is {age.days} days old "
                     f"(expires in {days_remaining} day{'s' if days_remaining != 1 else ''})"
                 )
-
         return warnings
 
-    # ==== Phase: Audit Trail Logging ====
+    # ==== Audit trail ====
 
     def log_audit_trail(
         self,
         status: str,
-        commit_sha: str,
-        gpg_signature: str,
+        url: str,
+        commit_sha: Optional[str],
+        integrity: Optional[str],
         backups_cleaned: int,
         files_processed: Optional[int] = None,
         error_msg: Optional[str] = None,
     ) -> str:
-        """
-        Write audit trail entry to JSON log file.
-        Returns: path to log file
-        """
+        """Append an audit entry to the JSON-lines log; return its path."""
         self.log_dir.mkdir(parents=True, exist_ok=True)
         log_path = self.log_dir / self.LOG_FILE
-
         entry = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": _runtime.utc_now_iso(),
             "command": "/hyper-update",
-            "upstream_repo": "https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework.git",
+            "upstream_repo": url,
             "upstream_commit_sha": commit_sha,
-            "gpg_signature": gpg_signature,
+            "integrity": integrity,
             "backups_cleaned": backups_cleaned,
             "status": status,
         }
-
         if files_processed is not None:
             entry["files_processed"] = files_processed
-
         if error_msg:
             entry["error"] = error_msg
-
-        # Append to log file
         try:
-            with open(log_path, "a") as f:
-                json.dump(entry, f)
-                f.write("\n")
-
-            # Check for log rotation
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
             self._rotate_logs(log_path)
-
-            return str(log_path)
-        except (OSError, IOError) as e:
+        except OSError as e:
             self.log_message(f"⚠️  Warning: Could not write to log file ({e})")
-            return str(log_path)
+        return str(log_path)
 
     def _rotate_logs(self, log_path: Path):
         """Rotate log file if it exceeds max size; keep last LOG_MAX_FILES files."""
         try:
-            if not log_path.exists():
+            if not log_path.exists() or log_path.stat().st_size <= self.LOG_MAX_SIZE:
                 return
-
-            if log_path.stat().st_size > self.LOG_MAX_SIZE:
-                # Rotate files: log.1 -> log.2, etc.
-                for i in range(self.LOG_MAX_FILES - 1, 0, -1):
-                    old = log_path.parent / f"{log_path.name}.{i}"
-                    new = log_path.parent / f"{log_path.name}.{i + 1}"
-                    if old.exists():
-                        old.replace(new)
-
-                # Move current to .1
-                log_path.replace(log_path.parent / f"{log_path.name}.1")
-
-                # Delete old files beyond LOG_MAX_FILES
-                for i in range(self.LOG_MAX_FILES + 1, 100):
-                    old = log_path.parent / f"{log_path.name}.{i}"
-                    if old.exists():
-                        old.unlink()
-                    else:
-                        break
-
-                self.log_message(f"📋 Log rotated (kept last {self.LOG_MAX_FILES} files)")
-        except (OSError, PermissionError) as e:
+            for i in range(self.LOG_MAX_FILES - 1, 0, -1):
+                old = log_path.parent / f"{log_path.name}.{i}"
+                if old.exists():
+                    old.replace(log_path.parent / f"{log_path.name}.{i + 1}")
+            log_path.replace(log_path.parent / f"{log_path.name}.1")
+            for i in range(self.LOG_MAX_FILES + 1, 100):
+                old = log_path.parent / f"{log_path.name}.{i}"
+                if not old.exists():
+                    break
+                old.unlink()
+            self.log_message(f"📋 Log rotated (kept last {self.LOG_MAX_FILES} files)")
+        except OSError as e:
             self.log_message(f"⚠️  Warning: Could not rotate logs ({e})")
 
-    # ==== Utility: Format backup summary ====
-
     def format_backup_summary(self) -> str:
-        """Format a summary of available backups with their ages."""
-        if not self.backup_dir.exists() or not list(self.backup_dir.iterdir()):
+        """Format a summary of the dated backups with their ages."""
+        now = datetime.now(timezone.utc)
+        rows = sorted(self._dated_backups(), key=lambda item: item[0].name, reverse=True)[:10]
+        if not rows:
             return ""
-
-        now = datetime.utcnow()
         summary_lines = ["Available backups:"]
-
-        for backup_subdir in sorted(self.backup_dir.iterdir(), reverse=True)[:10]:  # Last 10
-            if not backup_subdir.is_dir():
-                continue
-
-            dir_name = backup_subdir.name
-            try:
-                if "T" in dir_name:
-                    timestamp_str = dir_name.replace("Z", "").replace("-", ":", 2).replace("-", "-", 2)
-                    backup_time = datetime.fromisoformat(timestamp_str.replace("T", "T"))
-                else:
-                    backup_time = datetime.strptime(dir_name, "%Y-%m-%d")
-            except (ValueError, AttributeError):
-                continue
-
+        for backup_subdir, backup_time in rows:
             age = now - backup_time
             days_remaining = self.BACKUP_RETENTION_DAYS - age.days
-
             age_str = f"{age.days} days old"
             if days_remaining <= 0:
                 age_str += " (EXPIRED)"
             elif days_remaining <= 2:
                 age_str += f" (expires in {days_remaining} day{'s' if days_remaining != 1 else ''})"
-
-            summary_lines.append(f"- {dir_name} ({age_str})")
-
+            summary_lines.append(f"- {backup_subdir.name} ({age_str})")
         return "\n".join(summary_lines)
+
+
+def atomic_write(path: Path, data: bytes) -> None:
+    """Write data to path through a fsynced temp file in the same directory and os.replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.lexists(tmp):
+            os.unlink(tmp)
+        raise

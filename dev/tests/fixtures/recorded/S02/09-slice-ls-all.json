@@ -1,0 +1,26 @@
+{
+  "step": "slice-ls-all",
+  "argv": [
+    "npx",
+    "-y",
+    "--package=@openrig/cli@0.6.13",
+    "rig",
+    "scope",
+    "--workspace",
+    "/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo",
+    "slice",
+    "ls",
+    "--mission",
+    "release-0.6.0",
+    "--state",
+    "all",
+    "--json"
+  ],
+  "cwd": "/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo",
+  "exit_code": 0,
+  "stdout": "{\n  \"ok\": true,\n  \"count\": 1,\n  \"slices\": [\n    {\n      \"mission\": \"release-0.6.0\",\n      \"name\": \"01-adapter-spike\",\n      \"nn\": 1,\n      \"slug\": \"adapter-spike\",\n      \"id\": \"OPR.0.6.0.1\",\n      \"status\": \"done\",\n      \"path\": \"/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo/missions/release-0.6.0/slices/01-adapter-spike\"\n    }\n  ]\n}\n",
+  "stderr": "",
+  "rig_version": "0.6.13 (9eeb2e42)",
+  "captured_at": "2026-10-26T05:10:05+00:00",
+  "git_status_after": []
+}

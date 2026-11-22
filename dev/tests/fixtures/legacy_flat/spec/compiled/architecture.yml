@@ -1,0 +1,39 @@
+schema: hacf.ledger/v2
+nodes:
+- id: flat_system
+  dimension: System
+  status: clean
+  associated_file: README.md
+  description: ''
+  inputs: []
+  outputs: []
+  edges:
+    depends_on: []
+    implements: []
+    member_of: []
+- id: flat_layer
+  dimension: Layer
+  status: clean
+  associated_file: src/
+  description: ''
+  inputs: []
+  outputs: []
+  edges:
+    depends_on: []
+    implements: []
+    member_of:
+    - flat_system
+- id: flat_widget
+  dimension: Module
+  status: clean
+  associated_file: src/widget.txt
+  files:
+  - src/widget.txt
+  description: ''
+  inputs: []
+  outputs: []
+  edges:
+    depends_on: []
+    implements: []
+    member_of:
+    - flat_layer

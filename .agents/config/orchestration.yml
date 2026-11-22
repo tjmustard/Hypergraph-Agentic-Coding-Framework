@@ -1,0 +1,181 @@
+# HACF orchestration config (schema hacf.orchestration/v1).
+# Normative design: the orchestration-config and engine sections of HACF's v0.6.0 design notes (not shipped).
+# Shipped default. Overrides go in .agents/local/hacf.yml `orchestration`, except the security keys
+# listed under `security_keys` below.
+schema: hacf.orchestration/v1
+
+# Security keys (R4.3, R42). These come only from the shipped defaults (the copy embedded in the
+# engine, not this on-disk file) or from CLI flags. Tracked .agents/local/hacf.yml and
+# .agents/config/** may only tighten them (a stricter sandbox, fewer executables, fewer
+# passthrough variables, a lower budget, scope_policy strict); a loosening value is ignored with a
+# warning. An executor's argv, preflight and prompts accept only the shipped value (a custom
+# command needs a new executor name, which is experimental and needs --allow-unsandboxed);
+# protected_paths accepts added entries, never a removed one; git.ref_guard and
+# autonomy.credential_scan accept only true. oracle.prepare stays configurable.
+security_keys:
+  - executors.*.sandbox
+  - executors.*.verified
+  - executors.*.argv
+  - executors.*.preflight
+  - executors.*.prompts
+  - oracle.sandbox
+  - oracle.allowed_executables
+  - autonomy.env_passthrough
+  - autonomy.env_passthrough_prefixes
+  - autonomy.auth_passthrough
+  - autonomy.max_budget_usd_per_phase
+  - autonomy.max_budget_usd_per_run
+  - autonomy.scope_policy
+  - autonomy.credential_scan
+  - protected_paths
+  - git.ref_guard
+
+topology:
+  project_spec: SPEC.md
+  missions_root: missions
+  ledger: spec/compiled/architecture.yml
+  lore_graph: lore_hypergraph.yml
+  legacy_compiled_dir: spec/compiled
+
+openrig: {cli_package: '@openrig/cli', pinned_version: '0.6.13', id_prefix: OPR, use_rig_when_present: true}
+
+models: {opus: claude-opus-5-5, sonnet: claude-sonnet-5-5, haiku: claude-haiku-5-5, fable: claude-fable-5-1}
+phase_models: {execute: sonnet, audit: sonnet}
+
+executors:
+  claude-cli:
+    preflight: [['claude', '--version'], ['claude', 'auth', 'status']]   # run with the scrubbed env
+    min_version: '2.1.259'          # --permission-prompts
+    max_tested_version: '2.1.305'   # newer warns: re-run the claude live test. S08 sets it to the `claude --version` its live test passed on (R20.7)
+    verified: false                 # true only after the S08 live test passes; while false the engine refuses to run without the CLI flag --unverified-executor (R20.1)
+    sandbox: required               # 'off' only with the engine CLI flag --allow-unsandboxed, never from config (R4.3)
+    argv: ['claude', '-p', '{prompt}', '--output-format', 'json', '--model', '{model}', '--permission-mode', 'dontAsk', '--permission-prompts', 'none', '--setting-sources', 'user', '--settings', '{settings_file}', '--allowedTools', '{allowed_tools}', '--disallowedTools', '{disallowed_tools}', '--max-turns', '{max_turns}', '--max-budget-usd', '{max_budget_usd}', '--strict-mcp-config', '--mcp-config', '{mcp_config_file}', '--append-system-prompt-file', '{autonomy_prompt_file}']
+    # --setting-sources is 'user' only: project .claude/settings*.json in the worktree are
+    # executor-editable and never loaded (R4.2). User-level hooks still run.
+    prompts:
+      execute: 'Read {base_dir}/AGENTS.md, then read {base_dir}/.agents/skills/hyper-execute/SKILL.md and follow its instructions precisely for the slice spec {slice_spec}.'
+      audit: 'Read {base_dir}/AGENTS.md, then read {base_dir}/.agents/skills/hyper-audit/SKILL.md and follow its instructions precisely for the slice spec {slice_spec}.'
+      # {base_dir} = .agents/state/runs/<id>/base/: AGENTS.md and the skill text materialized from
+      # the integration base, read-only, so an executor's edits to them in the worktree never
+      # instruct the auditor (R4.2). The prompt does not depend on slash expansion.
+    # --settings is generated per phase by hyper_executors.py build_settings (R1, R4):
+    #   sandbox: {enabled: true, allowUnsandboxedCommands: false, failIfUnavailable: true,
+    #             network: {allowedDomains: []},
+    #             filesystem: {allowWrite: [<worktree>, <tmp>],
+    #                          denyWrite: [protected paths, <worktree>/.git, <git-common-dir>]}}
+    #   permissions: {deny: [the protected-path Edit rules]}
+    #   hooks: {PreToolUse: [python3 <base_dir>/.agents/scripts/hyper_gate_hook.py, by absolute path]}
+    # R1: agent phases get no write access to git metadata. The shared .git (default-writable in
+    # linked worktrees) and the worktree's .git pointer file are denied; the engine performs every
+    # git write itself.
+    result_parser: claude_json
+  # R20.2: sandbox: required applies to every executor. codex-cli and gemini-cli have no
+  # HACF-verified OS sandbox, so they run only with the CLI flag --allow-unsandboxed (never from
+  # tracked config) and print a warning.
+  codex-cli: {status: experimental, sandbox: required, argv: ['codex', 'exec', '--json', '--sandbox', 'workspace-write', '--output-last-message', '{last_message_file}', '{prompt}'], result_parser: codex_jsonl}
+  gemini-cli: {status: experimental, sandbox: required, argv: ['gemini', '-p', '{prompt}', '--output-format', 'json', '--approval-mode', 'auto_edit'], result_parser: gemini_json}   # flags UNVERIFIED
+  openrig-seat: {status: seam-only}
+  stub: {status: test-only, argv: ['python3', 'dev/tests/fixtures/stub_executor.py', '--scenario', '{scenario}', '--prompt', '{prompt}'], result_parser: claude_json}
+
+tools:
+  execute_allowed: [Read, Glob, Grep, Agent, 'Edit(./**)']
+  audit_allowed: [Read, Glob, Grep, Agent]
+  # sandboxed Bash is auto-allowed: autoAllowBashIfSandboxed defaults to true
+  disallowed: [AskUserQuestion, WebFetch, WebSearch, 'Bash(git push *)', 'Bash(git checkout *)', 'Bash(git switch *)', 'Bash(git reset *)', 'Bash(git rebase *)', 'Bash(git merge *)', 'Bash(git commit *)', 'Bash(git update-ref *)', 'Bash(curl *)', 'Bash(wget *)']
+  # defense in depth only: Bash rules are not a security boundary; the sandbox's git-metadata
+  # denies (R1) are the control
+
+autonomy:
+  env: {HACF_AUTONOMOUS: '1', HACF_RUN_ID: '{run_id}', HACF_SLICE: '{slice}', HACF_OUTBOX: '<worktree>/.hacf-outbox/', UV_NO_CACHE: '1'}
+  # R40: UV_NO_CACHE=1 because the agent sandbox makes ~/.cache/uv read-only and `uv run` fails to open it
+  # R20.3: after each phase the engine moves .hacf-outbox/ to .agents/state/runs/<id>/outbox/
+  # before the scope check, exempts that path from scope, and refuses entry types outside the
+  # whitelist: ledger ops (ensure-node, set-edges, apply-review), lore propose, note and stale,
+  # spec progress. Approval entries are rejected.
+  env_passthrough: [PATH, HOME, LANG, LC_ALL, TERM, TMPDIR, XDG_CONFIG_HOME, XDG_CACHE_HOME, SSL_CERT_FILE, SSL_CERT_DIR, NODE_EXTRA_CA_CERTS, HTTP_PROXY, HTTPS_PROXY, NO_PROXY, http_proxy, https_proxy, no_proxy]
+  env_passthrough_prefixes: [CLAUDE_CODE_]
+  auth_passthrough:   # R20.4: only the variables of the auth method in use pass; the method comes from `claude auth status` (authMethod) and the CLAUDE_CODE_USE_* flags
+    api_key: [ANTHROPIC_API_KEY]                     # api_key and api_key_helper auth only
+    bedrock: ['AWS_*']                               # only with CLAUDE_CODE_USE_BEDROCK=1
+    vertex: ['GOOGLE_*', 'CLOUD_ML_*', 'VERTEX_*']   # only with CLAUDE_CODE_USE_VERTEX=1
+    oauth: []                                        # claude.ai and oauth_token logins pass no extra variables
+  credential_scan: true   # R20.4: before integration the slice diff is scanned for credential shapes (AWS access key ids, PEM private-key headers, Anthropic and GitHub tokens); a hit is scope_violation
+  confidence_threshold: 9
+  on_gate: stop_and_record
+  max_parallel: 3
+  max_turns: 80
+  max_budget_usd_per_phase: 5.0
+  max_budget_usd_per_run: 50.0   # R20.5: when reached, scheduling stops and the run records budget_exceeded
+  phase_timeout_s: 3600
+  kill_grace_s: 30
+  retries: {transient: 2, oracle_or_audit_fail: 1, backoff_s: [30, 120]}
+  # R20.5: rate_limited pauses every worker together (global backoff 30 s, then 120 s), not one
+  # slice at a time
+  scope_policy: warn   # applies to ordinary files outside hacf_touches; the protected paths below are scope_violation under every policy (R4.1)
+  ai_conflict_resolution: false
+
+protected_paths:   # R4.1, R2: a change here not listed in the slice's hacf_touches is scope_violation, independent of scope_policy
+  - spec/compiled/architecture.yml
+  - lore_hypergraph.yml
+  - lore/CANON.md
+  - lore/canon/**
+  - missions/*/mission.yaml
+  - missions/*/slices/*/slice.yaml
+  # plus every other slice's directory (computed per slice by the engine)
+  - '.git*'
+  - '.claude/**'
+  - .mcp.json
+  - .agents/skills/**
+  - .agents/scripts/**
+  - .agents/config/**
+  - .agents/local/hacf.yml
+  - AGENTS.md
+  - CLAUDE.md
+  - GEMINI.md
+  - pyproject.toml
+  - uv.lock
+  - 'package*.json'
+  - pnpm-lock.yaml
+  - yarn.lock
+  - Cargo.lock
+  - go.sum
+  - poetry.lock
+
+oracle:
+  default: [['uv', 'run', '--frozen', '--no-sync', 'pytest', '-q']]
+  prepare: [['uv', 'sync', '--frozen']]   # engine-side, from the base revision's lockfile, before the phase
+  allowed_executables: [uv, pytest, python3, npm, pnpm, make, cargo, go]   # hygiene, not isolation: every one of them runs repo-defined code
+  sandbox: bwrap   # R2: the default on Linux; fail closed
+  # bwrap profile (R2, R40): read-only root; read-write worktree and tmp only; $HOME masked (tmpfs)
+  # except read-only binds for the real path of argv[0] as found on the scrubbed PATH (uv usually
+  # lives in ~/.local/bin) and, when the worktree has .venv/pyvenv.cfg, the parent of its `home`
+  # directory (the interpreter's whole install prefix; the binary alone cannot find its stdlib);
+  # no uv cache bind (a read-only ~/.cache/uv makes `uv run --frozen --no-sync` exit 2); the
+  # worktree .git pointer and the git common dir read-only; --unshare-net; --die-with-parent.
+  # bwrap unavailable -> sandbox_unavailable (fatal). 'none' only with the engine CLI flag
+  # --allow-unsandboxed-oracle, never from config. macOS has no bwrap, so oracles there need that
+  # flag.
+  # The oracle env is scrubbed the same way as the executor env: PATH, LANG, LC_ALL, TMPDIR, the
+  # masked HOME, plus the auth_passthrough entry in use (R20.4), plus UV_NO_CACHE=1, so uv uses a
+  # throwaway cache in the sandbox tmp (R40).
+
+git:
+  base_ref: HEAD
+  integration_branch: 'swimlane/hacf/{run_id}/integration'
+  slice_branch: 'swimlane/hacf/{run_id}/{slice_dir}'
+  worktree_root: '~/.cache/hacf/worktrees/{repo_hash}'
+  keep_failed_worktrees: true
+  commit_trailers: [HACF-Run, HACF-Slice, HACF-Executor, HACF-Session]
+  ref_guard: true
+  # R1 metadata guard: before and after every agent phase, and after the engine's commit, oracle
+  # and audit steps, the engine records `git for-each-ref` plus a sha256 manifest of the
+  # worktree's .git pointer file, <common>/worktrees/**, <common>/info/*, <common>/objects/info/*,
+  # shallow, packed-refs and every HEAD, ORIG_HEAD and MERGE_HEAD file. Any difference is
+  # ref_violation: restore, block, keep the worktree. An objects/info/alternates file is refused
+  # outright. Every engine-side git command runs with explicit GIT_DIR and GIT_WORK_TREE.
+  commit_hooks: base-in-bwrap
+  # R3: engine commits run with `-c core.hooksPath=<empty dir>` and `--no-verify`. When the repo
+  # has pre-commit or commit-msg hooks, the engine runs the base revision's copies inside the bwrap
+  # oracle profile before committing; a failing hook is commit_rejected.
+
+code_graph_in_engine: false

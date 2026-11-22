@@ -19,17 +19,21 @@ This skill temporarily pauses the broader development plan and exhaustively rese
    - Acknowledge that you are temporarily pausing plan updates.
    - Note the current state so you can return to it after the dive.
 
-2. **Exhaustively Explore the Topic**
+2. **Gather Project Context (Trailhead First)**
+   - Before reading the codebase, read the trailhead in order: `lore/MAP.md` (decisions, canon and stale items), the root `SPEC.md`, then the active mission under `missions/` (`python3 .agents/scripts/hyper_spec.py status` names it).
+   - Treat CANON lore as constraints on any recommendation.
+
+3. **Exhaustively Explore the Topic**
    - Deconstruct the topic using First Principles thinking.
    - Research from multiple angles: what it is, how it works, its trade-offs, failure modes, and alternatives.
 
-3. **Enforce Strict Epistemic Humility**
+4. **Enforce Strict Epistemic Humility**
    - State your confidence level explicitly for specific mechanisms, papers, or technical constraints.
    - If you reach the edge of your verifiable knowledge, state this clearly and ask the user to provide data or context.
    - **Do not hallucinate literature or data.**
    - Provide standard reference formats (e.g., DOIs, PubMed IDs) if referencing scientific literature.
 
-4. **Structure the Output**
+5. **Structure the Output**
    Present findings clearly with:
    - **Core Concept**: What it is, the problem it solves
    - **Mechanics**: How it works underneath
@@ -37,7 +41,7 @@ This skill temporarily pauses the broader development plan and exhaustively rese
    - **Failure Modes**: What breaks and how to debug
    - **Relevance**: How this applies to the current project/decision
 
-5. **Integrate Findings**
+6. **Integrate Findings**
    - Once the deep dive is complete, use **AskUserQuestion**:
 
      ```
@@ -47,4 +51,4 @@ This skill temporarily pauses the broader development plan and exhaustively rese
      - Option B: No — keep as research only (leave the findings as a standalone artifact)
      ```
 
-   - If the user selects Option A, update the relevant memory or spec files accordingly.
+   - If the user selects Option A, update `activeContext.md`, and propose any decision with `python3 .agents/scripts/hyper_lore.py propose --type decision`. Spec changes go through `/hyper-architect`.

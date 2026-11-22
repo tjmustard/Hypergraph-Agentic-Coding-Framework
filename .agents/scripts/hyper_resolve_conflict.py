@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Hypergraph AI Conflict Resolver
+"""Hypergraph AI Conflict Resolver
 
 Resolves Git merge-conflict markers in supported text files using Claude.
 Enforces a strict JSON response schema, a confidence gate (≥85), post-
@@ -11,6 +10,14 @@ CLI:
                               [--branch <name>]
                               [--superprd <name>]
                               [--miniprd <path>]
+                              [--model <id>]
+
+The default model is `models.sonnet` of .agents/config/orchestration.yml; --model and
+HYPER_RESOLVE_MODEL override it. This is a manually invoked tool: the workflow engine never
+resolves conflicts with AI (`ai_conflict_resolution: false`) and never imports it.
+
+FAILED_WORKFLOWS.md holds at most 50 entries; the 51st rotates the file into spec/archive/
+through `archive_specs.py --paths` (the only writer of spec/archive/) and starts a fresh one.
 
 Exit codes:
     0  — conflict resolved and written successfully
@@ -21,33 +28,52 @@ import argparse
 import ast
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+from _runtime import require_runtime
+
+require_runtime()
 
 try:
     import anthropic
 except ImportError:
     anthropic = None  # type: ignore[assignment]
 
+import yaml  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
-CONFIDENCE_THRESHOLD = 85                          # Task 13 — hardcoded, never lowerable
-API_TIMEOUT = 600                                   # Task 9
+SCRIPTS_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = SCRIPTS_DIR.parent / "config" / "orchestration.yml"
+ARCHIVE_SCRIPT = SCRIPTS_DIR / "archive_specs.py"
+EMBEDDED_MODEL = "claude-sonnet-5-5"  # orchestration.yml models.sonnet, used when it is missing
+UPGRADE_NOTICE = "run HACF-install.sh to complete the upgrade"
+CONFIDENCE_THRESHOLD = 85  # Task 13 — hardcoded, never lowerable
+API_TIMEOUT = 600  # Task 9
 FAILED_WORKFLOWS_PATH = Path("spec/active/FAILED_WORKFLOWS.md")
+FAILED_WORKFLOWS_HEADER = (
+    "# Failed Workflows\n\n"
+    "Failure entries, appended by the HACF tools that fail a workflow. At 50 entries the file\n"
+    "is rotated into spec/archive/ by `archive_specs.py --paths` and started again.\n\n---\n"
+)
+MAX_FAILED_ENTRIES = 50
 
 # File-type whitelist (Task 7)
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({".py", ".md", ".json", ".toml"})
 
 # Explicitly blocked files regardless of extension (Task 15 note)
-BLOCKED_FILENAMES: frozenset[str] = frozenset({
-    "architecture.yml",
-    "architecture.yaml",
-})
+BLOCKED_FILENAMES: frozenset[str] = frozenset(
+    {
+        "architecture.yml",
+        "architecture.yaml",
+    }
+)
 
 # Failure type tags
 FT_UNSUPPORTED_CONFLICT_TYPE = "UNSUPPORTED_CONFLICT_TYPE"
@@ -56,8 +82,67 @@ FT_LOW_CONFIDENCE = "LOW_CONFIDENCE"
 
 
 # ---------------------------------------------------------------------------
+# Model
+# ---------------------------------------------------------------------------
+
+
+def default_model() -> str:
+    """Return HYPER_RESOLVE_MODEL, else orchestration.yml `models.sonnet`, else the embedded id.
+
+    A missing config file prints the upgrade notice (R24.10); --model overrides all of these.
+    """
+    override = os.environ.get("HYPER_RESOLVE_MODEL")
+    if override:
+        return override
+    if not CONFIG_PATH.is_file():
+        print(
+            f"[hyper_resolve_conflict] {CONFIG_PATH.name} is missing; using {EMBEDDED_MODEL} "
+            f"({UPGRADE_NOTICE})",
+            file=sys.stderr,
+        )
+        return EMBEDDED_MODEL
+    try:
+        config = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        print(f"[hyper_resolve_conflict] cannot read {CONFIG_PATH}: {exc}", file=sys.stderr)
+        return EMBEDDED_MODEL
+    models = config.get("models") if isinstance(config, dict) else None
+    model = models.get("sonnet") if isinstance(models, dict) else None
+    return model if isinstance(model, str) and model else EMBEDDED_MODEL
+
+
+# ---------------------------------------------------------------------------
 # FAILED_WORKFLOWS.md helpers
 # ---------------------------------------------------------------------------
+
+
+def _count_failed_entries(path: Path) -> int:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").count("## [FAILED]")
+    except OSError:
+        return 0
+
+
+def _rotate_failed_workflows(path: Path) -> None:
+    """Move the full log into spec/archive/ through archive_specs.py, then start a fresh one."""
+    argv = [
+        sys.executable,
+        str(ARCHIVE_SCRIPT),
+        "--paths",
+        str(path.resolve()),
+        "--label",
+        "failed_workflows",
+    ]
+    proc = subprocess.run(argv, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        output = (proc.stdout + proc.stderr).strip()
+        print(
+            f"[hyper_resolve_conflict] rotation refused; appending anyway: {output}",
+            file=sys.stderr,
+        )
+        return
+    path.write_text(FAILED_WORKFLOWS_HEADER, encoding="utf-8")
+
 
 def _append_failed_workflow(
     branch: str,
@@ -67,8 +152,12 @@ def _append_failed_workflow(
     oracle_exit_code: int,
     note: str = "",
 ) -> None:
-    """Append a failure entry to FAILED_WORKFLOWS.md (creates file if absent)."""
+    """Append a failure entry to FAILED_WORKFLOWS.md (creates it; rotates at 50 entries)."""
     FAILED_WORKFLOWS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if not FAILED_WORKFLOWS_PATH.exists():
+        FAILED_WORKFLOWS_PATH.write_text(FAILED_WORKFLOWS_HEADER, encoding="utf-8")
+    elif _count_failed_entries(FAILED_WORKFLOWS_PATH) >= MAX_FAILED_ENTRIES:
+        _rotate_failed_workflows(FAILED_WORKFLOWS_PATH)
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     note_line = f"- **Note:** {note}\n" if note else ""
     entry = (
@@ -95,9 +184,11 @@ def _append_failed_workflow(
 # File-type guard (Task 7)
 # ---------------------------------------------------------------------------
 
-def _assert_supported_file(file_path: Path, branch: str, superprd_name: str, miniprd_path: str) -> None:
-    """
-    Exit 1 with UNSUPPORTED_CONFLICT_TYPE if:
+
+def _assert_supported_file(
+    file_path: Path, branch: str, superprd_name: str, miniprd_path: str
+) -> None:
+    """Exit 1 with UNSUPPORTED_CONFLICT_TYPE if:
     - filename is in BLOCKED_FILENAMES
     - extension is not in SUPPORTED_EXTENSIONS
     - file cannot be decoded as UTF-8 (binary detection)
@@ -110,8 +201,9 @@ def _assert_supported_file(file_path: Path, branch: str, superprd_name: str, min
             f"(architecture files are never sent to the resolver).",
             file=sys.stderr,
         )
-        _append_failed_workflow(branch, superprd_name, miniprd_path,
-                                FT_UNSUPPORTED_CONFLICT_TYPE, 1, note)
+        _append_failed_workflow(
+            branch, superprd_name, miniprd_path, FT_UNSUPPORTED_CONFLICT_TYPE, 1, note
+        )
         sys.exit(1)
 
     # Extension whitelist
@@ -121,8 +213,9 @@ def _assert_supported_file(file_path: Path, branch: str, superprd_name: str, min
             f"[hyper_resolve_conflict] Unsupported file type '{file_path.suffix}'.",
             file=sys.stderr,
         )
-        _append_failed_workflow(branch, superprd_name, miniprd_path,
-                                FT_UNSUPPORTED_CONFLICT_TYPE, 1, note)
+        _append_failed_workflow(
+            branch, superprd_name, miniprd_path, FT_UNSUPPORTED_CONFLICT_TYPE, 1, note
+        )
         sys.exit(1)
 
     # Binary detection: attempt UTF-8 decode
@@ -134,8 +227,9 @@ def _assert_supported_file(file_path: Path, branch: str, superprd_name: str, min
             f"[hyper_resolve_conflict] File is binary or not valid UTF-8: {file_path}",
             file=sys.stderr,
         )
-        _append_failed_workflow(branch, superprd_name, miniprd_path,
-                                FT_UNSUPPORTED_CONFLICT_TYPE, 1, note)
+        _append_failed_workflow(
+            branch, superprd_name, miniprd_path, FT_UNSUPPORTED_CONFLICT_TYPE, 1, note
+        )
         sys.exit(1)
 
 
@@ -159,8 +253,7 @@ _SYSTEM_PROMPT = (
 
 
 def _build_user_message(file_content: str, file_path: Path) -> str:
-    """
-    Task 8: Wrap conflicted content in <conflict_content> XML tag.
+    """Task 8: Wrap conflicted content in <conflict_content> XML tag.
     Never inject raw conflict markers as system-level instructions.
     """
     return (
@@ -176,9 +269,9 @@ def _build_user_message(file_content: str, file_path: Path) -> str:
 # Syntax validation (Task 14)
 # ---------------------------------------------------------------------------
 
+
 def _syntax_check(resolved_code: str, file_path: Path) -> Optional[str]:
-    """
-    Validate resolved_code for supported file types.
+    """Validate resolved_code for supported file types.
 
     Returns None on success, or an error description string on failure.
     """
@@ -193,6 +286,7 @@ def _syntax_check(resolved_code: str, file_path: Path) -> Optional[str]:
     elif ext in {".yaml", ".yml"}:
         try:
             import yaml  # optional dep; only needed for yaml files
+
             yaml.safe_load(resolved_code)
         except Exception as exc:
             return f"YAML parse error: {exc}"
@@ -211,6 +305,7 @@ def _syntax_check(resolved_code: str, file_path: Path) -> Optional[str]:
 # JSON response parsing (Tasks 9–12)
 # ---------------------------------------------------------------------------
 
+
 def _parse_resolver_response(
     raw_text: str,
     file_path: Path,
@@ -218,8 +313,7 @@ def _parse_resolver_response(
     superprd_name: str,
     miniprd_path: str,
 ) -> tuple[int, str, str]:
-    """
-    Parse the LLM response JSON. Applies Tasks 10, 11, 12.
+    """Parse the LLM response JSON. Applies Tasks 10, 11, 12.
 
     Returns (confidence_score, reasoning, resolved_code) on success.
     Exits 1 with RESOLVER_MALFORMED_RESPONSE on any parse/validation failure.
@@ -233,8 +327,9 @@ def _parse_resolver_response(
             f"[hyper_resolve_conflict] RESOLVER_MALFORMED_RESPONSE: {note}",
             file=sys.stderr,
         )
-        _append_failed_workflow(branch, superprd_name, miniprd_path,
-                                FT_RESOLVER_MALFORMED_RESPONSE, 1, note)
+        _append_failed_workflow(
+            branch, superprd_name, miniprd_path, FT_RESOLVER_MALFORMED_RESPONSE, 1, note
+        )
         sys.exit(1)
 
     # Task 12: error field check (model refusal)
@@ -245,23 +340,22 @@ def _parse_resolver_response(
             f"[hyper_resolve_conflict] Model refusal — error field: {error_field}",
             file=sys.stderr,
         )
-        _append_failed_workflow(branch, superprd_name, miniprd_path,
-                                FT_RESOLVER_MALFORMED_RESPONSE, 1, note)
+        _append_failed_workflow(
+            branch, superprd_name, miniprd_path, FT_RESOLVER_MALFORMED_RESPONSE, 1, note
+        )
         sys.exit(1)
 
     # Task 11: confidence_score type/range assertion
     raw_score = data.get("confidence_score")
     if not (isinstance(raw_score, int) and 0 <= raw_score <= 100):
-        note = (
-            f"confidence_score assertion failed: got {raw_score!r} "
-            f"(expected int 0-100)"
-        )
+        note = f"confidence_score assertion failed: got {raw_score!r} (expected int 0-100)"
         print(
             f"[hyper_resolve_conflict] RESOLVER_MALFORMED_RESPONSE: {note}",
             file=sys.stderr,
         )
-        _append_failed_workflow(branch, superprd_name, miniprd_path,
-                                FT_RESOLVER_MALFORMED_RESPONSE, 1, note)
+        _append_failed_workflow(
+            branch, superprd_name, miniprd_path, FT_RESOLVER_MALFORMED_RESPONSE, 1, note
+        )
         sys.exit(1)
 
     confidence_score: int = raw_score
@@ -275,16 +369,16 @@ def _parse_resolver_response(
 # Core resolver
 # ---------------------------------------------------------------------------
 
+
 def resolve_conflict(
     file_path: Path,
     branch: str,
     superprd_name: str,
     miniprd_path: str,
-    model: str = DEFAULT_MODEL,
+    model: Optional[str] = None,
 ) -> None:
-    """
-    Full conflict resolution pipeline. Exits with appropriate code.
-    """
+    """Full conflict resolution pipeline. Exits with appropriate code."""
+    model = model or default_model()
     # Task 7: file-type whitelist + binary detection
     _assert_supported_file(file_path, branch, superprd_name, miniprd_path)
 
@@ -314,8 +408,9 @@ def resolve_conflict(
             f"[hyper_resolve_conflict] RESOLVER_MALFORMED_RESPONSE: {note}",
             file=sys.stderr,
         )
-        _append_failed_workflow(branch, superprd_name, miniprd_path,
-                                FT_RESOLVER_MALFORMED_RESPONSE, 1, note)
+        _append_failed_workflow(
+            branch, superprd_name, miniprd_path, FT_RESOLVER_MALFORMED_RESPONSE, 1, note
+        )
         sys.exit(1)
 
     raw_text = message.content[0].text if message.content else ""
@@ -346,8 +441,7 @@ def resolve_conflict(
             f"< {CONFIDENCE_THRESHOLD}. File left unmodified.",
             file=sys.stderr,
         )
-        _append_failed_workflow(branch, superprd_name, miniprd_path,
-                                FT_LOW_CONFIDENCE, 1, note)
+        _append_failed_workflow(branch, superprd_name, miniprd_path, FT_LOW_CONFIDENCE, 1, note)
         sys.exit(1)
 
     # Task 14: Post-resolution syntax check
@@ -361,8 +455,9 @@ def resolve_conflict(
             f"[hyper_resolve_conflict] Syntax check failed — overriding confidence: {syntax_error}",
             file=sys.stderr,
         )
-        _append_failed_workflow(branch, superprd_name, miniprd_path,
-                                FT_RESOLVER_MALFORMED_RESPONSE, 1, note)
+        _append_failed_workflow(
+            branch, superprd_name, miniprd_path, FT_RESOLVER_MALFORMED_RESPONSE, 1, note
+        )
         sys.exit(1)
 
     # Task 15: Write resolved output — only here, only on full success
@@ -377,6 +472,7 @@ def resolve_conflict(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -407,8 +503,8 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default=os.environ.get("HYPER_RESOLVE_MODEL", DEFAULT_MODEL),
-        help="Claude model ID to use",
+        default=None,
+        help="Claude model ID (default: HYPER_RESOLVE_MODEL, else orchestration.yml models.sonnet)",
     )
     return parser.parse_args(argv)
 

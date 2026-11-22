@@ -1,0 +1,76 @@
+schema: hacf.ledger/v2
+nodes:
+- id: sample_system
+  dimension: System
+  status: clean
+  associated_file: README.md
+  description: >-
+    The sample project as a whole: the root of the hierarchy that every layer belongs
+    to.
+  inputs: []
+  outputs: []
+  edges:
+    depends_on: []
+    implements: []
+    member_of: []
+- id: orchestration_layer
+  dimension: Layer
+  status: clean
+  associated_file: src/
+  description: >-
+    Shared infrastructure (configuration, locks, logging) that the sample modules
+    are members of.
+  inputs: []
+  outputs: []
+  edges:
+    depends_on: []
+    implements: []
+    member_of:
+    - sample_system
+- id: component_ledger
+  dimension: Module
+  status: clean
+  associated_file: src/ledger.py
+  files:
+  - src/ledger.py
+  - src/ledger/**
+  description: >-
+    Validated, locked writer of the component ledger. Reads the ledger file from disk,
+    refuses a write that adds an error, and replaces the file atomically.
+  inputs:
+  - data_type: ledger_yaml
+    external: filesystem
+  outputs:
+  - data_type: validation_report
+    target_id: ledger_validate
+  edges:
+    depends_on: []
+    implements: []
+    member_of:
+    - orchestration_layer
+  spec_refs:
+  - OPR.0.6.0.1
+- id: ledger_validate
+  dimension: Atomic
+  status: clean
+  associated_file: src/ledger/validate.py
+  files:
+  - src/ledger/validate.py
+  description: >-
+    Validation rules of the ledger: ids, enums, edge lists, cycles, globs and endpoints.
+  inputs:
+  - data_type: ledger_model
+    source_id: component_ledger
+  outputs:
+  - data_type: findings
+    external: user_interface
+  edges:
+    depends_on: []
+    implements:
+    - component_ledger
+    member_of: []
+removed_nodes:
+- id: legacy_fixer
+  reason: 'retired: replaced by the engine''s fix loop'
+  slice: S09b
+  commit: null

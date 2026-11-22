@@ -51,4 +51,4 @@ This skill critically evaluates external peer review findings as the team lead â
 - You are the team lead â€” do not accept findings at face value.
 - Always read the code before accepting or rejecting a finding.
 - Be direct but fair. If a finding is wrong, explain why clearly.
-- Cross-reference `spec/compiled/architecture.yml` for architectural context when evaluating structural findings.
+- Cross-reference the component ledger (`spec/compiled/architecture.yml`), the root `SPEC.md` and the CANON lore nodes listed in `lore/MAP.md` when evaluating structural findings. A finding that would contradict CANON lore names the node it conflicts with.

@@ -1,13 +1,56 @@
 #!/usr/bin/env bash
-# HACF pre-push hook — block experimental branch pushes (installed by HACF-install.sh)
-while read local_ref local_sha remote_ref remote_sha
+# HACF pre-push hook — keep research/ and swimlane/ work local (installed by HACF-install.sh)
+#
+# For every "<local ref> <local sha> <remote ref> <remote sha>" line git feeds it, the hook
+# refuses the whole push when:
+#   - the remote ref is outside refs/heads/ and refs/tags/ (for example refs/hacf/*);
+#   - the local ref is a branch under refs/heads/swimlane/ or refs/heads/research/;
+#   - the pushed commit is contained only in swimlane/* or research/* branches, whatever it
+#     is pushed as (this catches `git push origin <sha>:refs/heads/main`).
+# A deletion (all-zero local sha) skips the last check.
+#
+# Limits: `git push --no-verify` skips this hook entirely, and it does not stop code that runs
+# with the user's credentials (a script can push without hooks or call the forge API directly).
+set -euo pipefail
+
+block() {
+    echo "❌ PUSH BLOCKED!"
+    echo "Error: $1"
+    echo "The 'research/' and 'swimlane/' prefixes are designated for isolated local AI agent work only."
+    exit 1
+}
+
+while read -r local_ref local_sha remote_ref remote_sha
 do
+    case $remote_ref in
+        refs/heads/* | refs/tags/*) ;;
+        *) block "Pushing to '$remote_ref' is forbidden; only refs/heads/ and refs/tags/ may be pushed." ;;
+    esac
+
     # Check if the branch being pushed is restricted
     if [[ $local_ref == refs/heads/research/* ]] || [[ $local_ref == refs/heads/swimlane/* ]]; then
-        echo "❌ PUSH BLOCKED!"
-        echo "Error: Pushing branches with the 'research/' or 'swimlane/' prefix is strictly forbidden."
-        echo "These prefixes are designated for isolated local AI agent work only."
-        exit 1
+        block "Pushing branches with the 'research/' or 'swimlane/' prefix is strictly forbidden."
+    fi
+
+    # A deletion pushes no commit.
+    if [[ $local_sha =~ ^0+$ ]]; then
+        continue
+    fi
+
+    # Fail closed: a sha git cannot check is refused rather than let through.
+    if ! containing=$(git branch --contains "$local_sha" --format='%(refname)' 2>/dev/null); then
+        block "Cannot tell which branches contain $local_sha (pushed as '$remote_ref')."
+    fi
+    local_only=no
+    while IFS= read -r branch; do
+        case $branch in
+            refs/heads/research/* | refs/heads/swimlane/*) local_only=yes ;;
+            refs/heads/*) local_only=no; break ;;
+            *) ;;  # the "(HEAD detached at ...)" row
+        esac
+    done <<< "$containing"
+    if [[ $local_only == yes ]]; then
+        block "Commit $local_sha (pushed as '$remote_ref') is only on research/ or swimlane/ branches."
     fi
 done
 exit 0

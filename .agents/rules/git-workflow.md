@@ -6,8 +6,7 @@
 
 ## Protected Paths (DO NOT COMMIT)
 - `spec/process/`
-- `spec/handoffs/`
-These internal paths are blocked by a `pre-commit` hook. Do not attempt to version control them.
+This internal path is blocked by a `pre-commit` hook. Do not attempt to version control it.
 
 ## Handling Rejections
 If your commit or push is blocked, read the stderr output carefully. Do not force-bypass it. Unstage the forbidden file or rename your branch when you are ready to publish.

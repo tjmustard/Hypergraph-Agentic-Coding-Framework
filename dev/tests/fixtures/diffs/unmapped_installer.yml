@@ -1,0 +1,11 @@
+# Golden diff scenario (R21); see hypergraph_updater.yml for how it is replayed.
+description: >-
+  No node's files globs or associated_file cover the installer or .agentignore, so both
+  are listed under unmapped and nothing is mapped.
+changes:
+  HACF-install.sh: "# S01c golden diff scenario: placeholder content\n"
+  .agentignore: "# S01c golden diff scenario: placeholder content\n"
+expected:
+  nodes: []
+  blast_radius: []
+  unmapped: [.agentignore, HACF-install.sh]

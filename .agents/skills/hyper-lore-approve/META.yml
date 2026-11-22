@@ -1,0 +1,9 @@
+name: hyper-lore-approve
+description: Walks one lore node at a time through the nonce, warrant and ticket gate to CANON.
+assigned_model: sonnet
+model_version: "claude-sonnet-5-5"
+max_thinking_tokens: 4000
+reasoning_intensity: medium
+output_determinism: high
+cost_sensitivity: medium
+latency_critical: false

@@ -11,8 +11,8 @@ The Hypergraph framework leverages a modular skill system to route specialized r
 ### Phase -1: Legacy Onboarding (Brownfield Projects)
 | Skill Name | Slash Trigger | Description |
 | :--- | :--- | :--- |
-| **`hyper-discover`** | `/hyper-discover` | Scans the existing codebase to initialize or update the `architecture.yml` hypergraph. |
-| **`hyper-baseline`** | `/hyper-baseline` | Reverse-engineers the existing codebase to generate a "Current State" SuperPRD. |
+| **`hyper-discover`** | `/hyper-discover` | Scans the existing codebase to initialize or update the component ledger `spec/compiled/architecture.yml` through `hyper_ledger.py`. |
+| **`hyper-baseline`** | `/hyper-baseline` | Reverse-engineers the existing codebase into the root `SPEC.md`, the project's System of Record. |
 
 ### Phase 0: Scaffolding
 | Skill Name | Slash Trigger | Description |
@@ -24,13 +24,14 @@ The Hypergraph framework leverages a modular skill system to route specialized r
 | :--- | :--- | :--- |
 | **`hyper-architect`** | `/hyper-architect` | Conducts a state-machine interview to extract requirements and compile the initial `Draft_PRD.md`. |
 | **`hyper-redteam`** | `/hyper-redteam` | Runs adversarial analysis on the Draft PRD to identify edge cases, vulnerabilities, and system-level blast radius risks. |
-| **`hyper-resolve`** | `/hyper-resolve` | Mediates Red Team findings, forces architectural trade-offs, and compiles the final `SuperPRD` + modular `MiniPRD` specifications. |
+| **`hyper-resolve`** | `/hyper-resolve` | Mediates Red Team findings and forces architectural trade-offs (each becomes PROPOSED lore), then compiles the mission `SPEC.md` (the SuperPRD) and one slice `SPEC.md` per module (the MiniPRDs) through `hyper_scope.py`. Replan mode recompiles only unfinished slices. |
 
 ### Phase 2: Build & Verification Engine
 | Skill Name | Slash Trigger | Description |
 | :--- | :--- | :--- |
-| **`hyper-execute`** | `/hyper-execute` | Implements changes precisely against a compiled MiniPRD, updates hypergraph status, and triggers updater scripts. |
-| **`hyper-audit`** | `/hyper-audit` | Strictly verifies implementation correctness against its MiniPRD and reconciles the hypergraph state. |
+| **`hyper-execute`** | `/hyper-execute` | Implements a slice `SPEC.md` (or a legacy flat MiniPRD) precisely and marks the touched ledger nodes with `hypergraph_updater.py`. |
+| **`hyper-audit`** | `/hyper-audit` | Strictly verifies the build against its slice spec, reconciles the ledger through `hyper_ledger.py review-template` and `apply-review`, and runs the lore gate. |
+| **`hyper-lore-approve`** | `/hyper-lore-approve` | Walks one PROPOSED or stale CANON lore node at a time through the nonce, warrant and ticket gate: approve, reject, retire, or review a stale node. Only a person approves; it needs Claude Code's default or acceptEdits mode. See [docs/Lore.md](docs/Lore.md). |
 | **`hyper-clear`** | `/hyper-clear` | Idempotently flushes conversation context between build cycles while preserving specifications and metrics. |
 | **`hyper-contextualize`** | `/hyper-contextualize` | Audits `CLAUDE.md`, `AGENTS.md`, and `GEMINI.md` in installed projects to ensure HACF is framed as a development toolchain rather than the project subject. Offers Replace-with-template, Inject-banner, or Per-file-diff fix modes, and reports HACF bleed found in `README.md`. |
 
@@ -45,9 +46,9 @@ The Hypergraph framework leverages a modular skill system to route specialized r
 | **`hyper-create-skill`** | `/hyper-create-skill` | Converts an agent prompt or custom instruction set into a new structured skill for the framework. |
 | **`hyper-new-workflow`** | `/hyper-new-workflow` | Generates a new slash command workflow with accompanying IDE rule bridges. |
 | **`hyper-document`** | `/hyper-document` | Updates README, CHANGELOG, docs/, AGENTS.md, memory, and templates after code or skill changes. |
-| **`hyper-grill-docs`** | `/hyper-grill-docs` | Domain-sharpening interview that maintains `CONTEXT.md` (canonical glossary) and `docs/adr/` (Architecture Decision Records) inline as decisions crystallise. Challenges vague terminology, cross-references code against stated behavior, stress-tests domain boundaries with concrete scenarios, and gates ADR creation on hard-to-reverse + surprising + real-trade-off decisions. |
+| **`hyper-grill-docs`** | `/hyper-grill-docs` | Domain-sharpening interview that maintains `CONTEXT.md` (canonical glossary) inline and proposes ADRs into lore (`hyper_lore.py propose`) as decisions crystallise. Challenges vague terminology, cross-references code against stated behavior, stress-tests domain boundaries with concrete scenarios, and gates ADR creation on hard-to-reverse + surprising + real-trade-off decisions. |
 | **`hyper-handoff`** | `/hyper-handoff` | Compacts the current conversation into a handoff document saved to the OS temp directory. References existing artifacts (PRDs, commits, specs) by path rather than reproducing them. Includes a "Suggested Skills" section for the next session. Pass an optional argument describing what the next session will focus on. |
-| **`hyper-session-update`** | `/hyper-session-update` | Syncs agent memory files (`activeContext.md`, `systemPatterns.md`, etc.) with the work done in the current session. |
+| **`hyper-session-update`** | `/hyper-session-update` | Updates `.agents/memory/activeContext.md`, proposes lore decisions and field notes, and syncs project docs with the work done in the current session. |
 | **`hyper-update`** | `/hyper-update` | Smart-upgrade CLI to safely fetch upstream framework updates while preserving local rules customizations. |
 | **`hyper-refresh-memory`** | `/hyper-refresh-memory` | Rebuilds the agent's mental model and synchronization state by reading memory, rules, and source files. |
 | **`hyper-troubleshooting`** | `/hyper-troubleshooting` | Guides users through recovering from framework errors, hallucinations, or desynchronized state. |

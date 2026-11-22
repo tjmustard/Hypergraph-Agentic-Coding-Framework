@@ -1,68 +1,74 @@
 #!/usr/bin/env python3
-"""
-semantic_graph_merger.py — Deterministic semantic merger for architecture.yml conflicts.
+"""semantic_graph_merger.py — Deterministic semantic merger for architecture.yml conflicts.
 
 Called during git rebase when architecture.yml (or architecture.yaml) has conflicts.
 NEVER uses AI. All merge decisions are deterministic.
 
+Only the basenames architecture.yml and architecture.yaml are accepted, so another YAML file
+(lore_hypergraph.yml, docker-compose.yml) is never merged as a ledger. The merged result is
+validated by hyper_ledger.py and refused when it adds an error the main input did not have.
+
 CLI:
-    python semantic_graph_merger.py <main_yaml> <branch_yaml> <output_yaml>
+    python3 semantic_graph_merger.py <conflicted_file>
+    python3 semantic_graph_merger.py <main_yaml> <branch_yaml> <output_yaml>
 """
 
 import fcntl
 import os
-import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-import yaml
+import _runtime
+import hyper_ledger
 
+try:
+    import yaml
+except ImportError:  # the entry point calls _runtime.require_runtime() first, which reports it
+    yaml = None  # type: ignore[assignment]
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-FAILED_WORKFLOWS_PATH = os.path.normpath(os.path.join(
-    os.path.dirname(__file__), "..", "..", "spec", "active", "FAILED_WORKFLOWS.md"
-))
-FAILED_WORKFLOWS_ARCHIVE_DIR = os.path.normpath(os.path.join(
-    os.path.dirname(__file__), "..", "..", "spec", "archive"
-))
+FAILED_WORKFLOWS_PATH = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "spec", "active", "FAILED_WORKFLOWS.md")
+)
+ARCHIVE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "archive_specs.py")
+MAX_FAILED_ENTRIES = 50
+FAILED_WORKFLOWS_HEADER = (
+    "# Failed Workflows\n\n"
+    "Failure entries, appended by the HACF tools that fail a workflow. At 50 entries the file\n"
+    "is rotated into spec/archive/ by `archive_specs.py --paths` and started again.\n\n---\n"
+)
 
-REQUIRED_NODE_FIELDS = {"id", "dimension", "status"}
+ARCHITECTURE_BASENAMES = ("architecture.yml", "architecture.yaml")
 
 
 # ---------------------------------------------------------------------------
 # Task 8 — File-type routing guard
 # ---------------------------------------------------------------------------
 
+
 def _is_valid_architecture_file(filepath: str) -> bool:
+    """Returns True if the file's basename is architecture.yml or architecture.yaml.
+
+    The directory does not matter; any other basename, including other YAML files such as
+    lore_hypergraph.yml or docker-compose.yml, is refused.
     """
-    Returns True if the file is a valid architecture YAML target.
-
-    Criteria (OR):
-      (a) filename (basename without extension) contains 'architecture' (case-insensitive)
-      (b) file extension is '.yml' or '.yaml'
-    """
-    basename = os.path.basename(filepath)
-    name_without_ext, ext = os.path.splitext(basename)
-
-    name_matches = "architecture" in name_without_ext.lower()
-    ext_matches = ext.lower() in (".yml", ".yaml")
-
-    return name_matches or ext_matches
+    return os.path.basename(filepath) in ARCHITECTURE_BASENAMES
 
 
 def _guard_file_type(filepath: str) -> None:
-    """Exits with error if the file is not a valid architecture/YAML target."""
+    """Exits with error if the file is not an architecture.yml/.yaml target."""
     if not _is_valid_architecture_file(filepath):
         print(
             f"ERROR: semantic_graph_merger only accepts architecture YAML files.\n"
             f"  Rejected: {filepath}\n"
-            f"  File must contain 'architecture' in its name or have a .yml/.yaml extension."
+            f"  File must be named architecture.yml or architecture.yaml."
         )
         sys.exit(1)
 
@@ -71,9 +77,9 @@ def _guard_file_type(filepath: str) -> None:
 # Task 11 — Extension normalization (canonical path resolution)
 # ---------------------------------------------------------------------------
 
+
 def _canonical_yaml_path(filepath: str) -> str:
-    """
-    Normalize .yml / .yaml paths to a single canonical path.
+    """Normalize .yml / .yaml paths to a single canonical path.
 
     Preference order:
       1. Use the path exactly as given if it exists on disk.
@@ -97,6 +103,7 @@ def _canonical_yaml_path(filepath: str) -> str:
 # ---------------------------------------------------------------------------
 # Task 9 — Locked file I/O helpers
 # ---------------------------------------------------------------------------
+
 
 def _read_yaml_locked(filepath: str) -> Dict[str, Any]:
     """Read and parse a YAML file under a shared (read) lock."""
@@ -123,6 +130,7 @@ def _write_yaml_locked(filepath: str, data: Dict[str, Any]) -> None:
 # Task 13 — Pre-merge backup
 # ---------------------------------------------------------------------------
 
+
 def _backup_file(filepath: str) -> str:
     """Copy filepath to filepath.bak and return the backup path."""
     bak_path = filepath + ".bak"
@@ -146,6 +154,7 @@ def _remove_backup(bak_path: str) -> None:
 # FAILED_WORKFLOWS.md cap + rotation helpers (Task 2 Provenance MiniPRD)
 # ---------------------------------------------------------------------------
 
+
 def _count_failed_headers(path: str) -> int:
     if not os.path.exists(path):
         return 0
@@ -157,36 +166,42 @@ def _count_failed_headers(path: str) -> int:
 
 
 def _rotate_failed_workflows() -> None:
-    """Archive FAILED_WORKFLOWS.md when entry count reaches 50."""
-    os.makedirs(FAILED_WORKFLOWS_ARCHIVE_DIR, exist_ok=True)
-    iso = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    dest = os.path.join(FAILED_WORKFLOWS_ARCHIVE_DIR, f"FAILED_WORKFLOWS_{iso}.md")
-    shutil.copy2(FAILED_WORKFLOWS_PATH, dest)
+    """Move the full log into spec/archive/ through archive_specs.py, then start a fresh one.
+
+    archive_specs.py is the only writer of spec/archive/; when it refuses, the log keeps its
+    entries and the new one is appended anyway.
+    """
+    argv = [
+        sys.executable,
+        ARCHIVE_SCRIPT,
+        "--paths",
+        os.path.abspath(FAILED_WORKFLOWS_PATH),
+        "--label",
+        "failed_workflows",
+    ]
+    proc = subprocess.run(argv, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        output = (proc.stdout + proc.stderr).strip()
+        print(f"[ROTATE] refused; appending anyway: {output}", file=sys.stderr)
+        return
     with open(FAILED_WORKFLOWS_PATH, "w", encoding="utf-8") as fh:
-        fh.write("# Failed Workflows\n\n")
-    print(f"[ROTATE] FAILED_WORKFLOWS.md archived to {dest}")
+        fh.write(FAILED_WORKFLOWS_HEADER)
+    print("[ROTATE] FAILED_WORKFLOWS.md archived by archive_specs.py")
 
 
 # ---------------------------------------------------------------------------
 # FAILED_WORKFLOWS.md writer
 # ---------------------------------------------------------------------------
 
+
 def _append_failed_workflow(entry: str) -> None:
     """Append a failure entry to FAILED_WORKFLOWS.md with 50-entry cap + rotation."""
     os.makedirs(os.path.dirname(FAILED_WORKFLOWS_PATH), exist_ok=True)
 
     if not os.path.exists(FAILED_WORKFLOWS_PATH):
-        header = (
-            "# Failed Workflows\n\n"
-            "This file is auto-maintained by `hyper_orchestrator.py`. "
-            "Entries are appended on workflow failure.\n"
-            "Maximum 50 entries — overflow is archived to "
-            "`spec/archive/FAILED_WORKFLOWS_<timestamp>.md`.\n\n---\n"
-        )
-        with open(FAILED_WORKFLOWS_PATH, "w") as fh:
-            fh.write(header)
-
-    if _count_failed_headers(FAILED_WORKFLOWS_PATH) >= 50:
+        with open(FAILED_WORKFLOWS_PATH, "w", encoding="utf-8") as fh:
+            fh.write(FAILED_WORKFLOWS_HEADER)
+    elif _count_failed_headers(FAILED_WORKFLOWS_PATH) >= MAX_FAILED_ENTRIES:
         _rotate_failed_workflows()
 
     with open(FAILED_WORKFLOWS_PATH, "a") as fh:
@@ -240,6 +255,7 @@ def _build_schema_validation_failure_entry(
 # Task 10 — Merge algorithm with duplicate-ID conflict policy
 # ---------------------------------------------------------------------------
 
+
 def _nodes_are_identical(node_a: Dict[str, Any], node_b: Dict[str, Any]) -> bool:
     """Deep equality check for two node dicts."""
     return node_a == node_b
@@ -250,8 +266,7 @@ def _merge_node_lists(
     branch_nodes: List[Dict[str, Any]],
     yaml_filename: str,
 ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
-    """
-    Merge two node lists deterministically.
+    """Merge two node lists deterministically.
 
     Returns:
         (merged_list, None)          on success
@@ -312,58 +327,36 @@ def _merge_node_lists(
 # Task 12 — Post-merge schema validation
 # ---------------------------------------------------------------------------
 
-def _validate_architecture_yaml(filepath: str) -> Tuple[bool, str]:
-    """
-    Run post-merge schema validation checks.
+
+def _validate_architecture_yaml(
+    filepath: str, baseline: Optional[Dict[str, Any]] = None
+) -> Tuple[bool, str]:
+    """Run post-merge schema validation through hyper_ledger's validator.
+
+    Non-regressive: the file fails only for errors that baseline (the main input) does not
+    already have. Without a baseline every error fails it.
 
     Returns (True, "") on success, or (False, reason_string) on failure.
     """
-    # Check 1: parseable YAML
+    with open(filepath, "rb") as fh:
+        fcntl.flock(fh, fcntl.LOCK_SH)
+        try:
+            raw = fh.read()
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
     try:
-        with open(filepath, "r") as fh:
-            fcntl.flock(fh, fcntl.LOCK_SH)
-            try:
-                data = yaml.safe_load(fh)
-            finally:
-                fcntl.flock(fh, fcntl.LOCK_UN)
-    except yaml.YAMLError as exc:
-        return False, f"YAML parse error: {exc}"
-
-    if data is None:
+        data = hyper_ledger.parse_ledger(raw.decode("utf-8"), os.path.basename(filepath))
+    except UnicodeDecodeError as exc:
+        return False, f"not UTF-8 text ({exc.reason})"
+    except hyper_ledger.ParseError as exc:
+        return False, str(exc)
+    if not data:
         return False, "File parsed as empty/null YAML"
 
-    nodes = data.get("nodes", [])
-
-    # Check 2: no duplicate IDs
-    seen_ids: List[str] = []
-    for node in nodes:
-        nid = node.get("id")
-        if nid in seen_ids:
-            return False, f"Duplicate node ID: '{nid}'"
-        seen_ids.append(nid)
-
-    all_ids = set(seen_ids)
-
-    # Check 3: all depends_on references exist
-    for node in nodes:
-        edges = node.get("edges", {}) or {}
-        deps = edges.get("depends_on", []) or []
-        for dep_id in deps:
-            if dep_id not in all_ids:
-                return False, (
-                    f"Node '{node.get('id')}' has depends_on reference to "
-                    f"unknown node ID '{dep_id}'"
-                )
-
-    # Check 4: required fields present on every node
-    for node in nodes:
-        missing = REQUIRED_NODE_FIELDS - set(node.keys())
-        if missing:
-            return False, (
-                f"Node '{node.get('id', '<unknown>')}' is missing required "
-                f"field(s): {sorted(missing)}"
-            )
-
+    added, _, _ = hyper_ledger.check_non_regression(baseline, data)
+    if added:
+        details = "; ".join(finding.line() for finding in added)
+        return False, f"the merge adds {len(added)} error(s) not in the main input: {details}"
     return True, ""
 
 
@@ -371,9 +364,9 @@ def _validate_architecture_yaml(filepath: str) -> Tuple[bool, str]:
 # Top-level merge entry point
 # ---------------------------------------------------------------------------
 
+
 def semantic_merge(main_yaml_raw: str, branch_yaml_raw: str, output_yaml_raw: str) -> None:
-    """
-    Perform deterministic semantic merge of two architecture YAML files.
+    """Perform deterministic semantic merge of two architecture YAML files.
 
     Steps:
       1. Guard file types (Task 8)
@@ -418,9 +411,7 @@ def semantic_merge(main_yaml_raw: str, branch_yaml_raw: str, output_yaml_raw: st
     branch_nodes: List[Dict[str, Any]] = branch_data.get("nodes", []) or []
 
     # Task 10 — merge with conflict policy
-    merged_nodes, conflict_entry = _merge_node_lists(
-        main_nodes, branch_nodes, yaml_filename
-    )
+    merged_nodes, conflict_entry = _merge_node_lists(main_nodes, branch_nodes, yaml_filename)
 
     if conflict_entry is not None:
         # REBASE_CONFLICT — abort, do NOT touch output_yaml
@@ -441,8 +432,8 @@ def semantic_merge(main_yaml_raw: str, branch_yaml_raw: str, output_yaml_raw: st
     print(f"[write]  {output_yaml}")
     _write_yaml_locked(output_yaml, merged_data)
 
-    # Task 12 — post-merge schema validation
-    valid, reason = _validate_architecture_yaml(output_yaml)
+    # Task 12 — post-merge schema validation (non-regressive against the main input)
+    valid, reason = _validate_architecture_yaml(output_yaml, main_data)
     if not valid:
         # Restore backup
         if bak_path:
@@ -478,9 +469,9 @@ def semantic_merge(main_yaml_raw: str, branch_yaml_raw: str, output_yaml_raw: st
 # Git conflict-marker support (1-arg invocation from hyper_orchestrator.py)
 # ---------------------------------------------------------------------------
 
+
 def _parse_conflict_markers(content: str) -> tuple:
-    """
-    Split a git conflict-marker file into (ours, theirs) strings.
+    """Split a git conflict-marker file into (ours, theirs) strings.
 
     Handles multiple conflict regions within the same file; non-conflicted
     lines are included in both output strings verbatim.
@@ -512,8 +503,7 @@ def _parse_conflict_markers(content: str) -> tuple:
 
 
 def _merge_from_conflict_markers(filepath: str) -> None:
-    """
-    1-arg mode: read a git-conflict-marked file, extract ours/theirs YAML
+    """1-arg mode: read a git-conflict-marked file, extract ours/theirs YAML
     versions, and call semantic_merge() with temporary intermediate files.
     """
     _guard_file_type(filepath)
@@ -526,35 +516,22 @@ def _merge_from_conflict_markers(filepath: str) -> None:
         sys.exit(1)
 
     if "<<<<<<<" not in content:
-        print(f"ERROR: {filepath} contains no git conflict markers (<<<<<<<). "
-              "Nothing to merge.")
+        print(f"ERROR: {filepath} contains no git conflict markers (<<<<<<<). Nothing to merge.")
         sys.exit(1)
 
     ours, theirs = _parse_conflict_markers(content)
 
-    main_tmp = branch_tmp = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yml", delete=False,
-            prefix="sgm_main_", encoding="utf-8"
-        ) as f:
-            f.write(ours)
-            main_tmp = f.name
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yml", delete=False,
-            prefix="sgm_branch_", encoding="utf-8"
-        ) as f:
-            f.write(theirs)
-            branch_tmp = f.name
+    # The temporary copies keep the conflicted file's basename, so they pass the guard.
+    basename = os.path.basename(filepath)
+    with tempfile.TemporaryDirectory(prefix="sgm_") as tmp_dir:
+        main_tmp = os.path.join(tmp_dir, "main", basename)
+        branch_tmp = os.path.join(tmp_dir, "branch", basename)
+        for tmp, text in ((main_tmp, ours), (branch_tmp, theirs)):
+            os.makedirs(os.path.dirname(tmp))
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(text)
 
         semantic_merge(main_tmp, branch_tmp, filepath)
-    finally:
-        for tmp in (main_tmp, branch_tmp):
-            if tmp:
-                try:
-                    os.unlink(tmp)
-                except OSError:
-                    pass
 
 
 # ---------------------------------------------------------------------------
@@ -562,6 +539,7 @@ def _merge_from_conflict_markers(filepath: str) -> None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    _runtime.require_runtime()
     if len(sys.argv) == 2:
         # 1-arg form: parse git conflict markers from the single file
         _merge_from_conflict_markers(sys.argv[1])
@@ -571,7 +549,7 @@ if __name__ == "__main__":
     else:
         print(
             "Usage:\n"
-            "  python semantic_graph_merger.py <conflicted_file>\n"
-            "  python semantic_graph_merger.py <main_yaml> <branch_yaml> <output_yaml>"
+            "  python3 semantic_graph_merger.py <conflicted_file>\n"
+            "  python3 semantic_graph_merger.py <main_yaml> <branch_yaml> <output_yaml>"
         )
         sys.exit(1)

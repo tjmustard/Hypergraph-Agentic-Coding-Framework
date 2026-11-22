@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-hyper_update_merge_engine.py — Sensitive file merge orchestration with per-section approval
+"""hyper_update_merge_engine.py — Sensitive file merge orchestration with per-section approval
 
 Implements:
 - File interaction prompting (Replace/Merge/Skip)
@@ -8,19 +7,36 @@ Implements:
 - Per-section approval loop with diff display
 - File assembly and validation (YAML, markdown)
 - Summary report generation
+
+Block-aware (S13c Task 19, R26): when the local file holds an HACF managed block, Replace and
+Merge offer only the content inside that block; every byte outside it (OpenRig and RIGGED
+blocks, the user's own text) is never offered and stays identical, because the result is
+written back with hyper_blocks.render_upsert. A file with a foreign (OpenRig or RIGGED) block
+but no HACF block is never merged: it is skipped and reported. A file with no blocks at all
+keeps the whole-file merge.
 """
 
-import sys
 import re
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+import sys
 from dataclasses import dataclass
-import yaml
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import _runtime
+
+_runtime.require_runtime()  # R19.4: before PyYAML is imported
+
+import hyper_blocks  # noqa: E402
+import yaml  # noqa: E402
+
+# Foreign managed blocks (OpenRig, RIGGED): recognized only so they are never offered.
+FOREIGN_MARKER_RE = re.compile(r"^<!-- BEGIN (OpenRig|RIGGED) [A-Z ]*BLOCK", re.MULTILINE)
 
 
 @dataclass
 class Section:
     """Represents a markdown section."""
+
     heading: str  # "### Section Name" or "" for preamble
     content: str  # Content of this section
     line_num: int  # Starting line number
@@ -50,8 +66,7 @@ class MergeEngine:
     # ==== Phase A: File Interaction Prompting ====
 
     def prompt_file_action(self, filename: str, diff_preview: str) -> str:
-        """
-        Prompt user for action on a file with changes.
+        """Prompt user for action on a file with changes.
         Returns: "replace", "merge", or "skip"
         """
         self.log_message(f"\n📝 File: {filename}")
@@ -60,9 +75,7 @@ class MergeEngine:
             self.log_message(f"  {line}")
 
         while True:
-            response = input(
-                "\n[R]eplace / [M]erge / [S]kip? (r/m/s): "
-            ).lower().strip()
+            response = input("\n[R]eplace / [M]erge / [S]kip? (r/m/s): ").lower().strip()
 
             if response in ("r", "replace"):
                 return "replace"
@@ -91,8 +104,7 @@ class MergeEngine:
     # ==== Phase B: Markdown Section Parsing ====
 
     def parse_sections(self, content: str) -> List[Section]:
-        """
-        Parse markdown into sections by ### headings.
+        """Parse markdown into sections by ### headings.
         Preserves code blocks (does not split within triple backticks).
         Returns: List of Section objects
         """
@@ -141,8 +153,7 @@ class MergeEngine:
     def approve_sections(
         self, upstream_sections: List[Section], local_sections: List[Section]
     ) -> Dict[str, str]:
-        """
-        Show each differing section and prompt for approval.
+        """Show each differing section and prompt for approval.
         Returns: Dict of heading -> approved content
         """
         approved = {}
@@ -184,9 +195,11 @@ class MergeEngine:
                 self.log_message(local_content[:300])
 
                 while True:
-                    response = input(
-                        "\n[K]eep local / [A]ccept upstream / [E]dit manually? (k/a/e): "
-                    ).lower().strip()
+                    response = (
+                        input("\n[K]eep local / [A]ccept upstream / [E]dit manually? (k/a/e): ")
+                        .lower()
+                        .strip()
+                    )
 
                     if response in ("k", "keep"):
                         approved[heading] = local_content
@@ -218,8 +231,7 @@ class MergeEngine:
         return "\n".join(parts)
 
     def validate_file(self, filename: str, content: str) -> Tuple[bool, str]:
-        """
-        Validate merged file for syntax errors.
+        """Validate merged file for syntax errors.
         Returns: (is_valid, error_message)
         """
         if filename.endswith(".yml") or filename.endswith(".yaml"):
@@ -245,9 +257,13 @@ class MergeEngine:
         self.log_message(f"\n❌ Validation failed: {error}")
 
         while True:
-            response = input(
-                "What would you like to do?\n[K]eep original / [R]e-merge / [A]ccept anyway? (k/r/a): "
-            ).lower().strip()
+            response = (
+                input(
+                    "What would you like to do?\n[K]eep original / [R]e-merge / [A]ccept anyway? (k/r/a): "
+                )
+                .lower()
+                .strip()
+            )
 
             if response in ("k", "keep"):
                 return "keep_original"
@@ -289,6 +305,28 @@ class MergeEngine:
 
     # ==== Main Orchestration ====
 
+    def _hacf_block(self, filename: str, content: str):
+        """Return (doc, style, block) for the file's first HACF managed block, or None."""
+        try:
+            style = hyper_blocks.style_of(Path(filename))
+        except hyper_blocks.BlocksError:
+            return None
+        doc = hyper_blocks.parse_doc(content.encode("utf-8"))
+        try:
+            blocks = hyper_blocks.scan(doc, style)
+        except hyper_blocks.BlocksError as exc:
+            raise ValueError(f"{filename}: {exc}") from None
+        managed = [b for b in blocks if b.kind == hyper_blocks.MANAGED]
+        return (doc, style, managed[0]) if managed else None
+
+    def _upstream_body(self, filename: str, upstream_content: str, block_id: str) -> str:
+        """Return the upstream text for a block: the same block upstream, else the whole file."""
+        found = self._hacf_block(filename, upstream_content)
+        if found is not None and found[2].block_id == block_id:
+            doc, _, block = found
+            return "\n".join(line.decode("utf-8") for line in hyper_blocks.body_of(doc, block))
+        return upstream_content.rstrip("\n")
+
     def merge_file(
         self,
         filename: str,
@@ -296,54 +334,98 @@ class MergeEngine:
         local_content: str,
         backup_dir: Optional[Path] = None,
     ) -> Tuple[bool, Optional[str]]:
-        """
-        Orchestrate merge for a single file.
+        """Orchestrate merge for a single file (block-aware, Task 19).
+
         Returns: (success, final_content or None)
         """
-        # Phase A: Determine action
+        try:
+            found = self._hacf_block(filename, local_content)
+        except ValueError as exc:
+            self.log_message(f"⏭️  Skipped {filename}: {exc}")
+            self.changes["skipped"].append(filename)
+            return True, None
+        if found is None and FOREIGN_MARKER_RE.search(local_content):
+            self.log_message(
+                f"⏭️  Skipped {filename}: it holds an OpenRig/RIGGED block and no HACF block, "
+                "so HACF never offers any of its content"
+            )
+            self.changes["skipped"].append(filename)
+            return True, None
+        if found is None:
+            return self._merge_text(filename, upstream_content, local_content, backup_dir)
+
+        doc, style, block = found
+        local_body = "\n".join(line.decode("utf-8") for line in hyper_blocks.body_of(doc, block))
+        upstream_body = self._upstream_body(filename, upstream_content, block.block_id)
+        if local_body == upstream_body:
+            return True, None
+        self.log_message(
+            f"Only HACF block '{block.block_id}' of {filename} is offered; "
+            "everything outside it stays byte-identical."
+        )
+        ok, merged_body = self._merge_text(
+            f"{filename} [HACF block {block.block_id}]",
+            upstream_body,
+            local_body,
+            None,
+            record=filename,
+        )
+        if merged_body is None:
+            return ok, None
+        new_doc = hyper_blocks.render_upsert(
+            doc, style, block.block_id, hyper_blocks.body_lines(merged_body)
+        )
+        final_content = new_doc.to_bytes().decode("utf-8")
+        if backup_dir:
+            self._backup_file(filename, local_content, backup_dir)
+        return True, final_content
+
+    def _merge_text(
+        self,
+        filename: str,
+        upstream_content: str,
+        local_content: str,
+        backup_dir: Optional[Path] = None,
+        record: Optional[str] = None,
+    ) -> Tuple[bool, Optional[str]]:
+        """Replace / merge by ### section / skip one text (a whole file or a block body)."""
+        record = record or filename
         action = self.prompt_file_action(
             filename, self.generate_diff_preview(upstream_content, local_content)
         )
 
         if action == "skip":
-            self.changes["skipped"].append(filename)
+            self.changes["skipped"].append(record)
             return True, None
 
         if action == "replace":
             if backup_dir:
                 self._backup_file(filename, local_content, backup_dir)
-            self.changes["replaced"].append(filename)
+            self.changes["replaced"].append(record)
             return True, upstream_content
 
         # action == "merge"
-        # Phase B: Parse sections
         upstream_sections = self.parse_sections(upstream_content)
         local_sections = self.parse_sections(local_content)
-
-        # Phase C: Approve sections
         approved = self.approve_sections(upstream_sections, local_sections)
-
-        # Phase D: Assemble and validate
         final_content = self.assemble_file(approved)
-        is_valid, error_msg = self.validate_file(filename, final_content)
+        is_valid, error_msg = self.validate_file(record, final_content)
 
         if not is_valid:
-            action = self.handle_validation_failure(filename, error_msg)
-            if action == "keep_original":
-                self.changes["skipped"].append(filename)
+            choice = self.handle_validation_failure(filename, error_msg)
+            if choice == "keep_original":
+                self.changes["skipped"].append(record)
                 return True, None
-            elif action == "remerge":
-                # Recursively re-merge
-                return self.merge_file(
-                    filename, upstream_content, local_content, backup_dir
+            if choice == "remerge":
+                return self._merge_text(
+                    filename, upstream_content, local_content, backup_dir, record
                 )
-            elif action == "accept_anyway":
-                pass  # Proceed with writing
+            # accept_anyway: proceed with writing
 
         if backup_dir:
             self._backup_file(filename, local_content, backup_dir)
 
-        self.changes["merged"].append(filename)
+        self.changes["merged"].append(record)
         self.log_message(f"✅ Merged {filename} (validation: pass)")
         return True, final_content
 

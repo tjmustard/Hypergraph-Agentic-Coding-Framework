@@ -1,0 +1,24 @@
+# .agents/config/upstream.yml — where /hyper-update fetches HACF from, and how it checks it.
+#
+# This shipped file is only a PROPOSAL (HACF's update-integrity policy, R12). hyper_update_core.py reads repo_url and
+# ref from it; it never trusts the signer list here directly. On the first trusted update the
+# payload's allowed_signers are pinned machine-locally in .agents/state/upstream-trust.json, and
+# later updates take signers only from that pin. A payload whose signer list differs from the pin
+# is shown as a diff and adopted only after interactive consent.
+#
+# Override the URL and ref with `--upstream-url <url>` and `--ref <ref>`; a URL that is not
+# https:// is refused. Editing this file changes nothing that the pin already holds.
+#
+# verification:
+#   allowed_signers: SSH allowed-signers lines ("<principal> <key-type> <key>", or
+#     "<key-type> <key>"). Empty: releases are unsigned, so every update needs your consent
+#     (an interactive prompt, or --allow-unsigned in a terminal), logged to
+#     .agents/logs/update-consent.jsonl. HACF signing, if it ever starts, is SSH-only (R11).
+#   gpg_fingerprints: not supported in v0.6.0; a non-empty list stops the update.
+#   require_consent_if_unsigned: always true; an unsigned update is never unattended (R25).
+repo_url: https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework.git
+ref: main
+verification:
+  allowed_signers: []
+  gpg_fingerprints: []
+  require_consent_if_unsigned: true

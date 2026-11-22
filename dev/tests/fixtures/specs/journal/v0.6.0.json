@@ -1,0 +1,7 @@
+{
+  "legacy_map": {
+    "spec/compiled/MiniPRD_02_Beta.md": "missions/release-9.1.0/slices/02-beta/SPEC.md",
+    "spec/compiled/MiniPRD_03_Gamma.md": "missions/release-9.1.0/closed/03-gamma/SPEC.md"
+  },
+  "steps": []
+}

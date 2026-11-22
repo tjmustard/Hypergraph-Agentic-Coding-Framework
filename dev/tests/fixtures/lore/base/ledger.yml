@@ -1,0 +1,47 @@
+schema: hacf.ledger/v2
+nodes:
+- id: orchestration_layer
+  dimension: Layer
+  status: clean
+  associated_file: src/
+  description: Fixture layer.
+  inputs: []
+  outputs: []
+  edges:
+    depends_on: []
+    implements: []
+    member_of: []
+- id: alpha_engine
+  dimension: Module
+  status: clean
+  associated_file: src/alpha.py
+  files:
+  - src/alpha.py
+  description: Fixture alpha engine.
+  inputs: []
+  outputs: []
+  edges:
+    depends_on: []
+    implements: []
+    member_of:
+    - orchestration_layer
+- id: beta_store
+  dimension: Module
+  status: clean
+  associated_file: src/beta.py
+  files:
+  - src/beta.py
+  description: Fixture beta store.
+  inputs: []
+  outputs: []
+  edges:
+    depends_on:
+    - alpha_engine
+    implements: []
+    member_of:
+    - orchestration_layer
+removed_nodes:
+- id: gamma_old
+  reason: retired by a fixture slice
+  slice: S99
+  commit: null

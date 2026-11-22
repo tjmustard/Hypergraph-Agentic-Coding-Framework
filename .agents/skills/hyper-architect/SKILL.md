@@ -1,6 +1,6 @@
 ---
 name: architect
-description: Relentlessly interviews the user one question at a time, providing a recommended answer with each question and exploring the codebase before asking anything derivable from existing code. Produces a Draft PRD.
+description: Relentlessly interviews the user one question at a time, providing a recommended answer with each question and exploring the codebase, ledger and lore before asking anything derivable from them. Produces a Draft PRD.
 trigger: /hyper-architect
 ---
 
@@ -31,6 +31,10 @@ Your objective is to extract exhaustive technical and functional requirements fr
 
 5. **Decision-Tree Traversal:** Each question must resolve a dependency before opening new branches. Work depth-first: do not ask about deployment until storage is settled; do not ask about auth until actors are defined. Fully resolve one branch before opening a sibling.
 
+6. **Interactive Only:** Before the first question, run `python3 .agents/scripts/hyper_gates.py mode`. If it prints `autonomous`, nobody can answer the interview: stop without asking anything.
+
+7. **Lore Constraints (R23):** Before Phase 1, read `python3 .agents/scripts/hyper_lore.py list --json`. CANON nodes, stale CANON nodes (binding until retired or superseded) and PROPOSED nodes with `origin: user-decision` (binding until rejected) are binding constraints; `list --json` marks them `binding: true`. The draft obeys each one and cites it by id. Other PROPOSED nodes are context, not constraints.
+
 ---
 
 ## STATE MACHINE PHASES
@@ -38,12 +42,16 @@ Move sequentially. Do not advance until the current phase's objectives are satis
 
 ### [PHASE 1: The Core Mutation]
 * **Objective:** Define the primary value loop and state changes.
-* **Codebase check:** Look for any existing `Draft_PRD.md` or `SuperPRD.md` in `spec/`. If found, note prior context before asking anything.
+* **Codebase check:** Look for an existing `spec/active/Draft_PRD.md`, a mission `SPEC.md` under `missions/` or a `SuperPRD_*.md` in `spec/compiled/`. If found, note prior context before asking anything.
 * **Action:** Ask what fundamental problem this solves. Define the exact primary inputs and transformed outputs. Lead with your recommended framing of the problem based on anything you've read.
 
 ### [PHASE 2: Data, Boundaries & Blast Radius]
 * **Objective:** Map the edges of the system for the Hypergraph.
-* **Codebase check:** Read `spec/compiled/architecture.yml`. Derive a hypothesis of which existing `Atomic` or `Module` nodes this feature touches. Present that hypothesis as your recommendation before asking the user to confirm or correct.
+* **Codebase check:** Read `spec/compiled/architecture.yml`. Derive a hypothesis of which existing `Atomic` or `Module` nodes this feature touches, then measure it:
+  - `python3 .agents/scripts/hyper_ledger.py impact --nodes <ids>` (or `--files <paths>`) prints the blast radius.
+  - `python3 .agents/scripts/hyper_codegraph.py search --pattern '<regex>' --json` finds the code behind it. When the result's `status` is `unsupported` or `unavailable`, or its `backend` is `none`, say so and use `git diff` plus the nodes' `files:` globs instead.
+
+  Present that hypothesis as your recommendation before asking the user to confirm or correct.
 * **Action:** For each data boundary — storage, external APIs, queues — ask one at a time with your recommended default. If Iterative, interrogate specific node collisions depth-first.
 
 ### [PHASE 3: Personas & Permissions]
@@ -61,5 +69,15 @@ Move sequentially. Do not advance until the current phase's objectives are satis
 * **Action:**
   1. Cease questioning.
   2. Review AGENTS.md: "Schema Definitions › SuperPRD Schema" to ensure correct output structure.
-  3. Generate the complete `Draft_PRD.md` and save it to `spec/active/Draft_PRD.md`.
+  3. Generate the complete `Draft_PRD.md` and save it to `spec/active/Draft_PRD.md`. It starts with exactly this frontmatter, which `/hyper-resolve` passes to `python3 .agents/scripts/hyper_scope.py mission create --from-draft` (add no other keys):
+     ```yaml
+     ---
+     intent: '<the feature in one sentence>'
+     hacf_schema: 1
+     hacf_type: SuperPRD
+     hacf_status: draft
+     lore_refs: [<the ids of the lore nodes the draft cites>]
+     ---
+     ```
+     Write every command in the draft with `python3`.
   4. Inform the user: "Draft PRD is complete. **Start a new conversation** and run `/hyper-redteam` to perform the adversarial analysis."

@@ -1,28 +1,32 @@
 #!/usr/bin/env python3
-"""
-Token Budget Reconciler
+"""Token Budget Reconciler
 
 Reconciles estimated vs. actual output tokens post-execution.
 Tracks variance and flags estimation model drift (>20% variance).
 """
 
 from dataclasses import dataclass
-from typing import Optional
+
+import _runtime
+from token_budget_checker import normalize_key
 
 
 @dataclass
 class ReconciliationResult:
     """Result of post-execution token budget reconciliation."""
+
     miniprd_name: str
     estimated_tokens: int
     actual_tokens: int
     variance_percent: float
     investigation_required: bool
-    message: str
+    message: str = ""
 
     def __post_init__(self):
         if self.estimated_tokens > 0:
-            self.variance_percent = ((self.actual_tokens - self.estimated_tokens) / self.estimated_tokens * 100)
+            self.variance_percent = (
+                (self.actual_tokens - self.estimated_tokens) / self.estimated_tokens * 100
+            )
         else:
             self.variance_percent = 0
 
@@ -35,17 +39,12 @@ class TokenBudgetReconciler:
     VARIANCE_THRESHOLD = 20  # percent
 
     def reconcile(
-        self,
-        miniprd_name: str,
-        estimated_tokens: int,
-        actual_tokens: int,
-        verbose: bool = True
+        self, miniprd_name: str, estimated_tokens: int, actual_tokens: int, verbose: bool = True
     ) -> ReconciliationResult:
-        """
-        Reconcile estimated vs. actual output tokens.
+        """Reconcile estimated vs. actual output tokens.
 
         Args:
-            miniprd_name: Name of MiniPRD
+            miniprd_name: MiniPRD name or path, slice dot-ID, or slice dir or SPEC.md path
             estimated_tokens: Developer's pre-execution estimate
             actual_tokens: Actual tokens consumed
             verbose: Log reconciliation result
@@ -53,12 +52,13 @@ class TokenBudgetReconciler:
         Returns:
             ReconciliationResult with variance metrics
         """
+        miniprd_name = normalize_key(miniprd_name)
         result = ReconciliationResult(
             miniprd_name=miniprd_name,
             estimated_tokens=estimated_tokens,
             actual_tokens=actual_tokens,
             variance_percent=0,
-            investigation_required=False
+            investigation_required=False,
         )
 
         if verbose:
@@ -71,12 +71,16 @@ class TokenBudgetReconciler:
         direction = "+" if result.variance_percent > 0 else ""
         variance_str = f"{direction}{result.variance_percent:.1f}%"
 
-        print(f"📊 {result.miniprd_name}: {result.actual_tokens:,} / {result.estimated_tokens:,} tokens (variance: {variance_str})")
+        print(
+            f"📊 {result.miniprd_name}: {result.actual_tokens:,} / {result.estimated_tokens:,} tokens (variance: {variance_str})"
+        )
 
         if result.investigation_required:
-            print(f"⚠️  Variance exceeds {self.VARIANCE_THRESHOLD}% threshold — investigate estimation model accuracy")
-            print(f"   • Review estimation formula (code_lines/40 + doc_pages*500 + test_cases*100)")
-            print(f"   • Update heuristic if pattern emerges across multiple MiniPRDs")
+            print(
+                f"⚠️  Variance exceeds {self.VARIANCE_THRESHOLD}% threshold — investigate estimation model accuracy"
+            )
+            print("   • Review estimation formula (code_lines/40 + doc_pages*500 + test_cases*100)")
+            print("   • Update heuristic if pattern emerges across multiple MiniPRDs")
         else:
             print(f"✅ Variance within acceptable range ({self.VARIANCE_THRESHOLD}%)")
 
@@ -84,9 +88,11 @@ class TokenBudgetReconciler:
 if __name__ == "__main__":
     import sys
 
+    _runtime.require_runtime()
     if len(sys.argv) < 4:
-        print("Usage: python token_budget_reconciler.py <miniprd_name> <estimated> <actual>")
-        print("Example: python token_budget_reconciler.py MiniPRD_Example 8000 7200")
+        print("Usage: python3 token_budget_reconciler.py <spec> <estimated> <actual>")
+        print("  <spec>: a MiniPRD name or path, a slice dot-ID, or a slice dir or SPEC.md path")
+        print("Example: python3 token_budget_reconciler.py MiniPRD_Example 8000 7200")
         sys.exit(1)
 
     miniprd_name = sys.argv[1]

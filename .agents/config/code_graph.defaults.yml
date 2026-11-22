@@ -1,0 +1,32 @@
+# HACF code-graph adapter defaults: shipped, replaced on upgrade, and embedded verbatim in
+# .agents/scripts/hyper_codegraph.py (used with a notice when this file is missing).
+# Normative design: the code-graph config section of HACF's v0.6.0 design notes (not shipped). Project choices live in
+# .agents/local/hacf.yml (code_graph: backend, install_method, base_branch); machine-local
+# state lives in .agents/state/codegraph/project.json.
+schema: hacf.codegraph-defaults/v1
+backends:
+  codebase-memory-mcp:
+    pinned_version: '0.12.1'
+    # true only after the consented S04 contract test computed a pass (R20.1); the install
+    # prompt labels the backend "unverified" while this is false. Set by S04 from
+    # dev/tests/fixtures/recorded/S04/verdict.json (contract_verdict pass, 0.12.1).
+    verified: true
+    exe_resolution:
+      - local override
+      - shutil.which('codebase-memory-mcp')
+      - "['uvx', 'codebase-memory-mcp@0.12.1'], only with recorded consent"
+    install_options:   # consent required
+      uv_tool: ['uv', 'tool', 'install', 'codebase-memory-mcp==0.12.1']   # PyPI shim on PATH; downloads and verifies the native runtime on first run
+      uvx: ['uvx', 'codebase-memory-mcp@0.12.1']
+      vendor_script: {url: 'https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/v0.12.1/install.sh', args: ['--skip-config'], env: {CBM_DOWNLOAD_URL: 'https://github.com/DeusData/codebase-memory-mcp/releases/download/v0.12.1'}}   # tag-pinned; SHA-256 always verified
+    mcp_server: {type: stdio, command: uvx, args: ['codebase-memory-mcp@0.12.1']}   # or the bare command name when installed via uv tool
+    capabilities:   # argv after the exe prefix; each element is a literal or exactly one {placeholder}
+      index:         ['cli', 'index_repository', '--repo-path', '{repo_root}']   # no --format (R31); prints one JSON object
+      status:        ['cli', 'index_status', '--project', '{project}', '--format', 'json']
+      list_projects: ['cli', 'list_projects', '--limit', '1000', '--format', 'json']   # paging literal (R33)
+      diff_impact:   ['cli', 'detect_changes', '--project', '{project}', '--base-branch', '{base}', '--changed-limit', '1000', '--limit', '1000', '--module-limit', '1000', '--max-output-tokens', '100000', '--format', 'json']   # paging literals (R33)
+      symbol_impact: ['cli', 'trace_path', '--project', '{project}', '--function-name', '{symbol}', '--direction', 'inbound', '--format', 'json']
+      search:        ['cli', 'search_graph', '--project', '{project}', '--name-pattern', '{pattern}', '--format', 'json']
+      delete:        ['cli', 'delete_project', '--project', '{project}']   # no --format (R31); prints one JSON object
+    timeouts_s: {index: 900, query: 60}
+  none: {capabilities: {}}

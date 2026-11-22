@@ -2,18 +2,10 @@
 
 # Framework: Active specifications and unverified outputs (Project-specific)
 # We preserve the directory structure via .gitkeep, but ignore the actual files.
-spec/active/*
-!spec/active/.gitkeep
-spec/archive/*
-!spec/archive/.gitkeep
-spec/compiled/*
-!spec/compiled/.gitkeep
+/spec/
 
 # Tests: Candidate outputs and fixtures should never be committed to the master template
-tests/candidate_outputs/*
-!tests/candidate_outputs/.gitkeep
-tests/fixtures/*
-!tests/fixtures/.gitkeep
+/tests/
 
 # Python: Standard environment and cache ignores
 __pycache__/
@@ -38,3 +30,19 @@ Thumbs.db
 # Temp files and folders
 tmp/
 .antigravitycli/f2c8e969-053f-4704-b288-7b6eb7cbbf76.json
+
+# HACF v0.6.0: machine-local state, backups, logs and tool workspaces (never committed)
+.agents/state/
+.agents/.backup/
+.agents/logs/
+.agents/hacf-manifest.json
+/exhaust/
+/.openrig/
+
+# BEGIN HACF MANAGED BLOCK: gitignore
+.agents/state/
+.agents/.backup/
+.agents/logs/
+/exhaust/
+/.openrig/
+# END HACF MANAGED BLOCK: gitignore

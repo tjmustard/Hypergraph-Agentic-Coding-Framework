@@ -85,7 +85,7 @@ tiers:
 # Model tier mapping
 model_mapping:
   haiku:
-    model_id: "claude-haiku-4-5-20251001"
+    model_id: "claude-haiku-5-5"
     max_tokens: 8192
     max_thinking_tokens: 1024
     cost_per_mtok: 0.80
@@ -93,7 +93,7 @@ model_mapping:
     use_cases: "Read-only, text processing, simple transformations"
 
   sonnet:
-    model_id: "claude-sonnet-4-6"
+    model_id: "claude-sonnet-5-5"
     max_tokens: 8192
     max_thinking_tokens: 8192
     cost_per_mtok: 3.00
@@ -101,7 +101,7 @@ model_mapping:
     use_cases: "Code generation, analysis, multi-tool coordination"
 
   opus:
-    model_id: "claude-opus-4-7"
+    model_id: "claude-opus-5-5"
     max_tokens: 200000
     max_thinking_tokens: 100000
     cost_per_mtok: 15.00
@@ -118,23 +118,26 @@ fallback:
 # Version compatibility
 versions:
   haiku:
-    current: "claude-haiku-4-5-20251001"
+    current: "claude-haiku-5-5"
     supported:
+      - "claude-haiku-5-5"
+    retired:
       - "claude-haiku-4-5-20251001"
-    retired: []
 
   sonnet:
-    current: "claude-sonnet-4-6"
+    current: "claude-sonnet-5-5"
     supported:
+      - "claude-sonnet-5-5"
+    retired:
       - "claude-sonnet-4-6"
       - "claude-sonnet-4-5"
-    retired:
       - "claude-sonnet-3-5-20241022"
 
   opus:
-    current: "claude-opus-4-7"
+    current: "claude-opus-5-5"
     supported:
-      - "claude-opus-4-7"
+      - "claude-opus-5-5"
     retired:
+      - "claude-opus-4-7"
       - "claude-opus-3-5-sonnet"
       - "claude-opus-3"
