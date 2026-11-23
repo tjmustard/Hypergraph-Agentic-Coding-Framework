@@ -1,0 +1,19 @@
+# .agents/config/openrig_contract.yml: the OpenRig versions HACF delegates to.
+#
+# hyper_openrig.py reads this file (load_contract). Any doubt about it (missing, unreadable, too
+# large, malformed, an unknown key) drops the whole file and narrows to the compiled-in
+# FALLBACK_RIG_VERSIONS; it never widens. Versions are quoted strings.
+#
+# It changes only through a HACF release or a person's own commit (or the watcher's local commit on
+# its own branch, accepted_by: watcher). An installed project never changes it silently.
+#
+# integrity: `npm view @openrig/cli@<version> dist.integrity`. verdict: the evidence the entry was
+# accepted on. range: an unlisted patch at or above min_patch in that major.minor is probed.
+schema: 1
+accepted:
+  - {version: "0.6.13", integrity: "sha512-EeWrcqPCz4rMp5tP1q8a3pCuSWbcbYZP1Oj/efd9BqZVpiyIqDBLZB9ujw2gwdR9REvWrCTlNO9CKIkp885zgw==", verdict: "release-0.6.1 OPR.0.6.1.9", accepted_by: person}
+  - {version: "0.7.16", integrity: "sha512-rqxFs1JdKjO4c2D8lx8xFWN76OSV72i8qWata0dzVrWdy10zRPnSgY273hImiReyGOAilIMkBNU98Mfv+o2hKQ==", verdict: "release-0.6.1 OPR.0.6.1.9", accepted_by: person}
+  - {version: "0.7.21", integrity: "sha512-qMjMZnL+c37q6fhHQ30Py+w3VQFE51U5muG07Qd+oVrNdD0wTShATvuHkKinGYfLOsKV+quOUiS1WSw3sVAe6Q==", verdict: "openrig-compat-0.7.21-20261123T075801Z", accepted_by: person}
+range:
+  - {major: 0, minor: 7, min_patch: 16}
+probe: {schema: 1}

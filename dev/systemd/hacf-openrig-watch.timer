@@ -1,0 +1,13 @@
+# hacf-openrig-watch.timer: the OpenRig compat watcher once a day (release-0.6.2 R17). Linger stays
+# off (the maintainer's choice): it runs only while the user has a session, and Persistent=true
+# catches up at the next login.
+[Unit]
+Description=Run the HACF OpenRig compat watcher daily
+
+[Timer]
+OnCalendar=*-*-* 06:20
+Persistent=true
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target

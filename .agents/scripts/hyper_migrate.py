@@ -108,9 +108,12 @@ Semantics:
     .agents/local/hacf.yml, else the IDE dirs present). CLAUDE.local.md and
     .claude/settings.local.json are never touched.
 - verify runs `hyper_spec.py lint --all`, `hyper_ledger.py validate`, `hyper_lore.py validate`,
-  `hyper_firewall.py check` and, only when `rig --version` is an accepted rig, 0.6.13 or 0.7.16
-  (hyper_openrig's version rule), `rig scope --workspace . audit --mission <m> --json` per
-  mission. It writes the report into the journal (when there is one) and exits 1 on any finding.
+  `hyper_firewall.py check` and, only when `rig --version` is a version
+  .agents/config/openrig_contract.yml accepts, or an in-range one whose range probe passed
+  (hyper_openrig's version rule; verify waits for a running probe), `rig scope --workspace .
+  audit --mission <m> --json` per mission; a probe still running is `skipped: rig probe
+  pending`. It writes the report into the journal (when there is one) and exits 1 on any
+  finding.
 - move-slice wraps `hyper_scope.py slice move` and repoints the journal's legacy_map.
 - Every subprocess is an argv list with shell=False; HACF tools run as
   `[sys.executable, '.agents/scripts/<tool>.py', ...]` in the project.
@@ -2588,25 +2591,38 @@ def cmd_verify(ns: argparse.Namespace) -> int:
             {"argv": [name, *args], "exit": proc.returncode,
              "output": (proc.stdout + proc.stderr).strip().splitlines()[-20:]}
         )  # fmt: skip
+    # R22.7 and release-0.6.2 R7: a rig the contract file accepts, or an in-range one whose probe
+    # passed. verify waits for a running probe (prepare_rig), then reads its result.
+    hyper_openrig.prepare_rig(wait=True)
     rig = hyper_openrig.plan_rig()
-    if rig.use_rig:  # R22.7: an accepted rig (0.6.13 or 0.7.16), through S02's adapter
+    if rig.use_rig:
+        invalidated = False
         for mission in hyper_spec.mission_dirs(hyper_spec.missions_root(top)):
             argv = hyper_openrig.argv_scope_audit(rig.prefix, top, mission.name)
             proc = hyper_openrig.run_rig(argv, cwd=top)
+            if (
+                rig.via_probe
+                and not invalidated
+                and not hyper_openrig.probe_output_ok("scope_audit", proc)
+            ):
+                invalidated = True  # R10: exit outside {0, 1}, or JSON without the key paths
+                hyper_openrig.invalidate_probe(rig.version)
             checks.append(
                 {"argv": ["rig", *argv[len(rig.prefix) :]], "exit": proc.returncode,
                  "output": (proc.stdout + proc.stderr).strip().splitlines()[-20:]}
             )  # fmt: skip
     else:
-        checks.append({"argv": ["rig", "scope", "audit"], "exit": None, "output": [
-            f"skipped: rig is {rig.mode}" + (f" ({rig.version})" if rig.version else "")
-        ]})  # fmt: skip
+        if rig.probe == "pending":
+            reason = f"skipped: rig probe pending ({rig.version})"
+        else:
+            reason = f"skipped: rig is {rig.mode}" + (f" ({rig.version})" if rig.version else "")
+        checks.append({"argv": ["rig", "scope", "audit"], "exit": None, "output": [reason]})
     failed = [c for c in checks if c["exit"] not in (0, None)]
     for check in checks:
         state = "skipped" if check["exit"] is None else ("ok" if check["exit"] == 0 else "FAILED")
         suffix = f" (exit {check['exit']})" if state == "FAILED" else ""
         print(f"{state}: {' '.join(check['argv'])}{suffix}")
-        for line in check["output"] if state == "FAILED" else []:
+        for line in check["output"] if state != "ok" else []:
             print(f"  {line}")
     report = {"at": _runtime.utc_now_iso(), "ok": not failed, "checks": checks}
     jpath = journal_path(top)

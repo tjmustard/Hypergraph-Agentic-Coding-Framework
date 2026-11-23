@@ -1,0 +1,9 @@
+Usage: rig scope audit [options]
+
+Read-only scope audit: flag scope structure findings and show the advisory
+dependency graph. It doesn't read proof readiness: use rig proof show
+
+Options:
+  --mission <name>  Mission to audit
+  --json            Machine-readable JSON output
+  -h, --help        display help for command

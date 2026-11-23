@@ -1,0 +1,15 @@
+Usage: rig scope [options] [command]
+
+Scope tree primitive: missions, slices, sub-slices (per
+conventions/scope-and-versioning)
+
+Options:
+  --workspace <path>                                Workspace root; use its project.yaml missions.root, else missions/. A directory named missions without its own missions/ child is used directly. If the tree is missing, fall back to configured workspace.slices_root, except slice create and approve, which refuse, and mission create, which refuses a path that isn't an existing directory and otherwise creates the missions tree inside it. Without this flag, OPENRIG_WORK_ROOT is tried first with the same exceptions.
+  -h, --help                                        display help for command
+
+Commands:
+  slice                                             Slice-tier commands
+  mission                                           Mission-tier commands
+  resolve-notes [options] <absolute-work-node-dir>  Resolve the readable mission notes file for an absolute work-node directory
+  audit [options]                                   Read-only scope audit: flag scope structure findings and show the advisory dependency graph. It doesn't read proof readiness: use rig proof show
+  help [command]                                    display help for command

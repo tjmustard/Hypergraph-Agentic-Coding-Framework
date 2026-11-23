@@ -1,0 +1,76 @@
+{
+  "c1_header": {
+    "artifact_type": "guard",
+    "candidate_sha": "402b303c87fe7c4ec288b87e4dc84cc0075f5a5b",
+    "money_evidence": "the HACF range probe",
+    "slice": "OPR.9.9.1",
+    "verdict": "PASS"
+  },
+  "exit_codes": {
+    "help_proof_add": 0,
+    "help_scope_audit": 0,
+    "help_slice_ls": 0,
+    "proof_add": 0,
+    "scope_audit": 0,
+    "scope_audit_after": 0,
+    "slice_ls": 0,
+    "version": 0
+  },
+  "generator": "dev/openrig_probe_record.sh 0.7.21: @openrig/cli@0.7.21 (sha512-qMjMZnL+c37q6fhHQ30Py+w3VQFE51U5muG07Qd+oVrNdD0wTShATvuHkKinGYfLOsKV+quOUiS1WSw3sVAe6Q==), rig --version '0.7.21 (255fa708)'; two record runs; volatile_keys are the C1 header keys whose value differed between them",
+  "help_flags": {
+    "help_proof_add": [
+      "--artifact-type",
+      "--verdict",
+      "--candidate-sha",
+      "--money-evidence",
+      "--file",
+      "--name",
+      "--json"
+    ],
+    "help_scope_audit": [
+      "--mission",
+      "--json"
+    ],
+    "help_slice_ls": [
+      "--workspace",
+      "--mission",
+      "--state",
+      "--json"
+    ]
+  },
+  "json_key_paths": {
+    "scope_audit": [
+      "mission",
+      "mission.findings",
+      "mission.findings[].kind",
+      "mission.findings[].severity",
+      "ok",
+      "slices",
+      "slices[].findings",
+      "slices[].name"
+    ],
+    "scope_audit_after": [
+      "mission",
+      "mission.findings",
+      "mission.findings[].kind",
+      "mission.findings[].severity",
+      "ok",
+      "slices",
+      "slices[].findings",
+      "slices[].name"
+    ],
+    "slice_ls": [
+      "ok",
+      "slices",
+      "slices[].mission",
+      "slices[].name",
+      "slices[].status"
+    ]
+  },
+  "probe_schema": 1,
+  "rig_version": "0.7.21",
+  "volatile_keys": [],
+  "write_set": [
+    "missions/release-9.9/slices/01-probe-active/proof/01-probe.md"
+  ]
+}

@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-23
+
+### Added
+- `.agents/config/openrig_contract.yml`, the list of OpenRig versions HACF calls (0.6.13, 0.7.16
+  and 0.7.21) and one probed range, 0.7.x with x at least 16. A project's copy changes only with a
+  HACF upgrade. A missing, malformed or unknown-keyed file is dropped whole for the compiled-in list,
+  with a warning; it never widens what HACF calls.
+- The range probe: an unlisted rig inside the range is called only after an isolated probe of
+  exactly what HACF delegates (`scope audit`, `slice ls`, `proof add` over HACF-rendered files)
+  passed against `.agents/config/openrig_probe_expect.json`. Results are cached machine-wide under
+  `${XDG_CACHE_HOME:-~/.cache}/hacf/rig-probe/` (a pass for 7 days, anything else for 24 hours).
+  Every doubt means HACF writes the files itself and warns; verify reports a probe still running as
+  `skipped: rig probe pending (<version>)`. See docs/OpenRig-Team.md for what the probe cannot cover.
+- `hyper_openrig.py contract show [--json]` and `contract probe [--reprobe] [--json]`.
+- The opt-out: `openrig.range_probe: false` in `.agents/local/hacf.yml` turns the range off.
+- Dev only, not installed into projects: `dev/openrig_compat.sh <version>`, which decides in
+  minutes, in isolation, whether an OpenRig version works with HACF against committed baselines
+  (PASS, FAIL, REVIEW, SETUP-ERROR, SEED); and a daily watcher, `dev/openrig_watch.sh` with its
+  systemd user timer and `dev/openrig_watch_install.sh`, which runs it on each new `latest`
+  release, auto-accepts a passing patch of an accepted minor as a local commit on
+  `swimlane/openrig-accepted` (never pushed), and files a decision row for every other verdict
+  (REVIEW, a final FAIL, a PASS it did not accept). A run without a verdict (SETUP-ERROR, SEED,
+  or deferred by the memory gate) files no decision row; the second such run in a row sends one
+  update.
+  DEVELOPMENT.md describes both, and the watcher's limit: it sees only npm's `latest` dist-tag.
+
+### Changed
+- HACF accepts OpenRig 0.7.21: with it on PATH, HACF calls `rig`. It passed HACF's live contract
+  test; its compat run against 0.7.16 was REVIEW (two watched files changed), and those changes were
+  read and signed off in `dev/tests/fixtures/openrig-compat/0.7.21/REVIEW.md`.
+- `RIG_VERSION`, the version an explicit `npx` download fetches, is now 0.7.21: the highest
+  person-accepted version in the contract file.
+- The mirror key `openrig.accepted_versions` is gone from `orchestration.yml` and the engine's
+  defaults; the contract file replaces it. An older `orchestration.yml` that still carries it is
+  accepted, the key is ignored, and one message says so.
+- Dev tooling only; nothing here is installed into projects. `dev/scripts/check.sh` runs both
+  legs under pytest-xdist with a memory-headroom worker budget (`HACF_TEST_WORKERS` overrides it),
+  and test temp moved off `/tmp`, to `HACF_TEST_TMPDIR` or an inherited `TMPDIR` that is neither
+  `/tmp` nor a tmpfs. `pytest --lf` works, and `run_in_pty` and the timeout test were fixed.
+  Measured: check.sh wall about 946 -> 122 s (B/A 0.13), CPU user+sys +19-20%, peak memory about
+  3.4 -> 2 GB, with `--dist loadgroup` (about 14% faster per leg than `load`).
+
 ## [0.6.1] - 2026-11-22
 
 ### Added

@@ -1,0 +1,27 @@
+# hacf-openrig-watch.service: one run of the zero-token OpenRig compat watcher (release-0.6.2 R16,
+# R17). A template: dev/openrig_watch_install.sh copies it to the user's systemd unit dir and renders
+# the host-only env file it reads. No home path and no interpreter path live here.
+#
+# MemoryMax (slice 4 SPEC §1 formula): slice 3 measured one 0.7.21 compat run at memory.peak
+# 434765824 B = 415 MiB (missions/release-0.6.2/slices/03-compat-command-and-baselines/proof/
+# 03-compat.md, "Task 10"; the worst of its 5 runs was 494 MiB). ceil(1.5 x 415) = 623 MiB, rounded
+# up to a multiple of 256 MiB = 768 MiB, below the 1536M floor: MemoryMax=1536M (1.5 x 494 = 741
+# gives the same).
+#
+# OOMPolicy=continue (slice 3's audit): systemd's default (stop) kills the whole unit on the first
+# OOM kill, so the watcher would die without a verdict; with continue, the killed step is recorded
+# and the compat run ends SETUP-ERROR, which the watcher counts as a run without a verdict.
+[Unit]
+Description=HACF OpenRig compat watcher (one run, zero tokens)
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/hacf-openrig-watch/env
+ExecStart=/bin/bash ${HACF_WATCH_WORKTREE}/dev/openrig_watch.sh
+TimeoutStartSec=2700
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=1536M
+MemorySwapMax=0
+OOMPolicy=continue
+Environment=TMPDIR=%h/.cache/hacf-tmp/openrig-watch XDG_CACHE_HOME=%h/.cache/hacf-openrig-watch

@@ -21,6 +21,7 @@ import os
 import pty
 import select
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -135,7 +136,11 @@ def run_tty(
                 os.write(fd, (answers[key] + "\n").encode())
                 seen = at + len(key)
         else:
-            os.kill(pid, 9)
+            try:
+                os.killpg(pid, signal.SIGKILL)  # a pty.fork child leads its session: pgid == pid
+            except ProcessLookupError:
+                pass
+            os.waitpid(pid, 0)
             raise AssertionError(f"timed out; output so far:\n{output}")
     finally:
         os.close(fd)

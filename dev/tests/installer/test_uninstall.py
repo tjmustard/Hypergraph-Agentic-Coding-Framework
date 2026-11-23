@@ -10,13 +10,17 @@ from __future__ import annotations
 import json
 import os
 import pty
+import re
 import select
 import shutil
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Optional
+
+import pytest
 
 from .conftest import (
     DEFAULT_URL,
@@ -63,8 +67,14 @@ def run_uninstaller(
     return Run(proc.returncode, proc.stdout.decode("utf-8", "replace"), [])
 
 
-def run_in_pty(argv: list[str], cwd: Path, env: dict[str, str], answer) -> tuple[int, str]:
-    """Run argv on a pseudo-terminal; answer(output) returns the bytes to type when it goes idle."""
+def run_in_pty(
+    argv: list[str], cwd: Path, env: dict[str, str], answer, *, deadline_s: float = 280
+) -> tuple[int, str]:
+    """Run argv on a pseudo-terminal; answer(output) returns the bytes to type when it goes idle.
+
+    A child still running after deadline_s has its process group killed and the call raises
+    AssertionError, so a stuck run fails instead of hanging the suite.
+    """
     pid, fd = pty.fork()
     if pid == 0:  # the child: a new session whose controlling terminal is the pty
         try:
@@ -74,9 +84,13 @@ def run_in_pty(argv: list[str], cwd: Path, env: dict[str, str], answer) -> tuple
             os._exit(127)
     output = b""
     answered_at = 0
-    deadline = time.monotonic() + 280
+    deadline = time.monotonic() + deadline_s
+    timed_out = False
     try:
-        while time.monotonic() < deadline:
+        while True:
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
             ready, _, _ = select.select([fd], [], [], 1.5)
             if not ready:
                 if len(output) > answered_at:  # idle after new output: a question is waiting
@@ -91,9 +105,37 @@ def run_in_pty(argv: list[str], cwd: Path, env: dict[str, str], answer) -> tuple
                 break
             output += chunk
     finally:
-        _, status = os.waitpid(pid, 0)
+        done, status = os.waitpid(pid, os.WNOHANG) if timed_out else os.waitpid(pid, 0)
+        if done == 0:  # still running past the deadline: kill its group so the test fails
+            try:
+                os.killpg(pid, signal.SIGKILL)  # a pty.fork child leads its session: pgid == pid
+            except ProcessLookupError:
+                pass
+            _, status = os.waitpid(pid, 0)
         os.close(fd)
-    return os.waitstatus_to_exitcode(status), output.decode("utf-8", "replace")
+    text = output.decode("utf-8", "replace")
+    if done == 0:
+        raise AssertionError(
+            f"run_in_pty: {argv[0]} (pid {pid}) still running after {deadline_s}s; killed\n{text}"
+        )
+    return os.waitstatus_to_exitcode(status), text
+
+
+def test_run_in_pty_kills_on_deadline(tmp_path: Path) -> None:
+    """A child still running at the deadline is killed and reaped, and the helper raises."""
+    started = time.monotonic()
+    with pytest.raises(AssertionError, match="still running after") as excinfo:
+        run_in_pty(
+            ["sleep", "600"],
+            tmp_path,
+            {"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+            lambda _out: b"",
+            deadline_s=2,
+        )
+    assert time.monotonic() - started < 7
+    match = re.search(r"pid (\d+)", str(excinfo.value))
+    assert match, str(excinfo.value)
+    assert not Path(f"/proc/{match.group(1)}").exists()  # the helper reaped it
 
 
 def attributes_file(project: Path) -> Path:

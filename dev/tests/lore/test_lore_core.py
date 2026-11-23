@@ -17,6 +17,7 @@ import pty
 import re
 import select
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -611,8 +612,16 @@ def test_gated_verb_requires_ticket(lore_repo: GitRepo, capsys, clock) -> None:
     assert node(lore_repo, "CANON-0003")["status"] == "CANON"
 
 
-def _run_in_pty(repo: GitRepo, args: list[str], answer: str) -> tuple[int, str, str]:
-    """Run hyper_lore.py with a pty as stdin and stdout, type answer, and return its result."""
+def _run_in_pty(
+    repo: GitRepo, args: list[str], answer: str, *, deadline_s: float = 60
+) -> tuple[int, str, str]:
+    """Run hyper_lore.py with a pty as stdin and stdout, type answer, and return its result.
+
+    The child leads its own session (hyper_lore.py judges the tty by isatty() only), so its
+    process group can be killed without reaching pytest. A child still running at deadline_s has
+    its group killed and reaped and the call raises AssertionError; stderr is read only after the
+    child is reaped, so a stuck child (or a grandchild holding stderr) cannot block the suite.
+    """
     master, slave = pty.openpty()
     proc = subprocess.Popen(
         [sys.executable, str(SCRIPT), *args],
@@ -622,11 +631,12 @@ def _run_in_pty(repo: GitRepo, args: list[str], answer: str) -> tuple[int, str, 
         stdout=slave,
         stderr=subprocess.PIPE,
         close_fds=True,
+        start_new_session=True,
     )
     os.close(slave)
     output = b""
     sent = False
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + deadline_s
     try:
         while time.monotonic() < deadline:
             ready, _, _ = select.select([master], [], [], 1)
@@ -644,14 +654,56 @@ def _run_in_pty(repo: GitRepo, args: list[str], answer: str) -> tuple[int, str, 
             if not sent and b"to confirm:" in output:
                 os.write(master, answer.encode())
                 sent = True
+        try:
+            code = proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            _killpg(proc.pid)
+            proc.wait()
+            raise AssertionError(
+                f"_run_in_pty: hyper_lore.py (pid {proc.pid}) still running after {deadline_s}s;"
+                f" killed\n{output.decode(errors='replace')}"
+            ) from None
         stderr = proc.stderr.read().decode()
-        code = proc.wait(timeout=60)
     finally:
         if proc.poll() is None:
-            proc.kill()
+            _killpg(proc.pid)
+            proc.wait()
         proc.stderr.close()
         os.close(master)
     return code, output.decode(errors="replace"), stderr
+
+
+def _killpg(pgid: int) -> None:
+    """SIGKILL a process group; one that is already gone is fine."""
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def test_run_in_pty_kills_on_deadline_lore(lore_repo: GitRepo, tmp_path: Path, monkeypatch) -> None:
+    """A child (and its grandchild) still running at the deadline is killed; the helper raises."""
+    pidfile = tmp_path / "grandchild.pid"
+    stuck = tmp_path / "stuck.py"
+    stuck.write_text(
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen(['sleep', '600'])  # inherits stderr and never closes it\n"
+        f"open({str(pidfile)!r}, 'w').write(str(child.pid))\n"
+        "time.sleep(600)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys.modules[__name__], "SCRIPT", stuck)
+    started = time.monotonic()
+    with pytest.raises(AssertionError, match="still running after"):
+        _run_in_pty(lore_repo, [], "", deadline_s=2)
+    assert time.monotonic() - started < 2 + 10
+    grandchild = int(pidfile.read_text(encoding="utf-8"))
+    # SIGKILLed with its group; its new parent (init or a subreaper) reaps it within moments.
+    gone_by = time.monotonic() + 5
+    while Path(f"/proc/{grandchild}").exists() and time.monotonic() < gone_by:
+        time.sleep(0.1)
+    with pytest.raises(ProcessLookupError):
+        os.kill(grandchild, 0)
 
 
 def test_ticketless_tty_confirmation(lore_repo: GitRepo, capsys) -> None:

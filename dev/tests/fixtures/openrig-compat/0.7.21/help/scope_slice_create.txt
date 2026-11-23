@@ -1,0 +1,30 @@
+Usage: rig scope slice create [options] <mission> <slug>
+
+Create a new slice with SPEC.md, slice.yaml, PROGRESS.md, PROOF.md, and proof/.
+Conventions SSOT: docs/reference/sdlc-conventions.md (installed:
+$OPENRIG_HOME/reference/sdlc-conventions.md).
+
+Arguments:
+  mission                   Mission name
+  slug                      Short slug (becomes the folder name's suffix)
+
+Options:
+  --template <kind>         Template: placeholder | bug-fix |
+                            backlog-deprecation | backlog-tech-debt |
+                            release-feature | research (default: "placeholder")
+  --title <text>            Display title (defaults to titlecased slug)
+  --intent <text>           Authored intent stored in SPEC.md frontmatter
+                            (defaults to title)
+  --depends-on <dot-id...>  Advisory build-order dependencies on sibling slice
+                            dot-IDs
+  --readme-only             Write progress_rail: readme-only in README
+                            frontmatter instead of scaffolding PROGRESS.md
+  --json                    Machine-readable output
+  -h, --help                display help for command
+
+Workspace: the parent option --workspace selects the missions root this command reads.
+  rig scope --workspace <project root> slice create ...
+A project root uses its project.yaml missions.root, else its missions/ folder; a
+folder named missions is used as is. Use it for a catalog project, for example
+$(rig config get workspace.projects_root)/<project>. Without --workspace,
+OPENRIG_WORK_ROOT applies, then the configured workspace.slices_root.

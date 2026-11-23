@@ -1,0 +1,150 @@
+{
+  "date": "2026-11-23T07:58:58Z",
+  "hacf_tree": "1b6eb35be4363c029523d67c350f692364df32da",
+  "help_commands": [
+    {
+      "flags": [
+        "--workspace"
+      ],
+      "words": [
+        "proof"
+      ]
+    },
+    {
+      "flags": [
+        "--artifact-type",
+        "--candidate-sha",
+        "--file",
+        "--json",
+        "--mission",
+        "--money-evidence",
+        "--name",
+        "--verdict"
+      ],
+      "words": [
+        "proof",
+        "add"
+      ]
+    },
+    {
+      "flags": [
+        "--workspace"
+      ],
+      "words": [
+        "scope"
+      ]
+    },
+    {
+      "flags": [
+        "--json",
+        "--mission"
+      ],
+      "words": [
+        "scope",
+        "audit"
+      ]
+    },
+    {
+      "flags": [],
+      "words": [
+        "scope",
+        "slice"
+      ]
+    },
+    {
+      "flags": [
+        "--json",
+        "--mission",
+        "--note",
+        "--reason"
+      ],
+      "words": [
+        "scope",
+        "slice",
+        "close"
+      ]
+    },
+    {
+      "flags": [
+        "--depends-on",
+        "--intent",
+        "--json",
+        "--title"
+      ],
+      "words": [
+        "scope",
+        "slice",
+        "create"
+      ]
+    },
+    {
+      "flags": [
+        "--json",
+        "--mission",
+        "--state"
+      ],
+      "words": [
+        "scope",
+        "slice",
+        "ls"
+      ]
+    },
+    {
+      "flags": [
+        "--add",
+        "--json",
+        "--mission"
+      ],
+      "words": [
+        "scope",
+        "slice",
+        "progress"
+      ]
+    }
+  ],
+  "integrity": "sha512-qMjMZnL+c37q6fhHQ30Py+w3VQFE51U5muG07Qd+oVrNdD0wTShATvuHkKinGYfLOsKV+quOUiS1WSw3sVAe6Q==",
+  "rig_version_output": "0.7.21 (255fa708)",
+  "version": "0.7.21",
+  "watched": [
+    [
+      "lifecycle-manifest.js",
+      "daemon/dist/domain/lifecycle-manifest.js",
+      null
+    ],
+    [
+      "mission-composition.js",
+      "dist/lib/scope/mission-composition.js",
+      null
+    ],
+    [
+      "scope-audit.js",
+      "dist/lib/scope/scope-audit.js",
+      null
+    ],
+    [
+      "scaffold-placeholder.js",
+      "dist/lib/scope/scaffold-placeholder.js",
+      null
+    ],
+    [
+      "missionManifest",
+      "dist/commands/scope.js",
+      "missionManifest"
+    ],
+    [
+      "SLICE_MANIFEST",
+      "dist/commands/scope.js",
+      "SLICE_MANIFEST"
+    ],
+    [
+      "PROJECT_MANIFEST",
+      "daemon/dist/domain/workspace/default-workspace-scaffold.js",
+      "PROJECT_MANIFEST"
+    ],
+    [
+      "WORKSPACE_CATALOG",
+      "daemon/dist/domain/workspace/default-workspace-scaffold.js",
+      "WORKSPACE_CATALOG"
+    ]
+  ]
+}

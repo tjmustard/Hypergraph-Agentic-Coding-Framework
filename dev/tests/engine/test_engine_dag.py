@@ -12,6 +12,7 @@ clock are fakes, so nothing needs claude, bwrap or a network, and nothing really
 from __future__ import annotations
 
 import ast
+import copy
 import hashlib
 import json
 import re
@@ -631,6 +632,26 @@ def test_config_tracked_override_cannot_loosen(tmp_path: Path, capsys) -> None:
     assert config["oracle"]["sandbox"] == "none"
     assert config["autonomy"]["max_budget_usd_per_run"] == 99.0
     assert config["executors"]["claude-cli"]["sandbox"] == "off"
+
+
+def test_config_retired_accepted_versions_is_tolerated(tmp_path: Path, capsys) -> None:
+    """An old orchestration.yml with openrig.accepted_versions loads; the key is not read (R3)."""
+    assert "accepted_versions" not in he.DEFAULTS["openrig"]
+    shipped = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    assert "accepted_versions" not in shipped["openrig"]
+    old = copy.deepcopy(shipped)
+    old["openrig"]["accepted_versions"] = ["0.6.13", "0.7.16"]
+    (tmp_path / ".agents" / "config").mkdir(parents=True)
+    (tmp_path / he.CONFIG_REL).write_text(yaml.safe_dump(old))
+    config, ignored = he.resolve_config(tmp_path)
+    assert "accepted_versions" not in config["openrig"]
+    assert config["openrig"] == he.DEFAULTS["openrig"]
+    message = (
+        f"{he.CONFIG_REL}: openrig.accepted_versions is no longer read (the accepted set is "
+        ".agents/config/openrig_contract.yml); ignored"
+    )
+    assert ignored == [message]
+    assert capsys.readouterr().err.count("openrig.accepted_versions") == 1
 
 
 def test_config_resolved_from_repo_top(repo: GitRepo, monkeypatch, capsys) -> None:

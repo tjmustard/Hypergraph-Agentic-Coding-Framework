@@ -37,7 +37,7 @@ topology:
   lore_graph: lore_hypergraph.yml
   legacy_compiled_dir: spec/compiled
 
-openrig: {cli_package: '@openrig/cli', accepted_versions: ['0.6.13', '0.7.16'], id_prefix: OPR, use_rig_when_present: true}
+openrig: {cli_package: '@openrig/cli', id_prefix: OPR, use_rig_when_present: true}
 
 models: {opus: claude-opus-5-5, sonnet: claude-sonnet-5-5, haiku: claude-haiku-5-5, fable: claude-fable-5-1}
 phase_models: {execute: sonnet, audit: sonnet}

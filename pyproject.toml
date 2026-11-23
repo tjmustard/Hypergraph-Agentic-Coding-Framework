@@ -39,7 +39,8 @@ quote-style = "double"
 
 [tool.pytest.ini_options]
 testpaths = ["dev/tests"]
-addopts = "-p no:cacheprovider"
+tmp_path_retention_policy = "failed"
+tmp_path_retention_count = 1
 markers = [
     "live: runs a real external tool; opt-in, needs the user's consent",
     "openrig: live test against the OpenRig CLI (rig or npx); opt-in, needs consent",
@@ -52,5 +53,6 @@ markers = [
 dev = [
     "ruff>=0.15.19",
     "pytest>=8",
+    "pytest-xdist>=3.6",
     "pyyaml>=6",
 ]

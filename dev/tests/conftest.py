@@ -1,21 +1,50 @@
 """Shared fixtures for the HACF dev test suite (run by dev/scripts/check.sh).
 
 Tests never write inside the repository: every file they create lives under `tmp_path`, and
-bytecode caching is off for modules imported from the repository.
+bytecode caching is off for modules imported from the repository. pytest's own `.pytest_cache/`
+at the root is the exception, and it ignores itself.
+
+Tests never write the user's cache either: importing this file points XDG_CACHE_HOME at a
+per-session temp dir (each xdist worker imports it too, and subprocesses inherit it), so the
+OpenRig range probe's cache (`${XDG_CACHE_HOME:-~/.cache}/hacf/rig-probe`, release-0.6.2 R8) is a
+throwaway. REAL_PROBE_CACHE and REAL_PROBE_CACHE_STATE record the user's cache as it was.
 """
 
 from __future__ import annotations
 
+import atexit
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 sys.dont_write_bytecode = True
+
+
+def _probe_cache_state(path: Path) -> tuple[float | None, list[tuple[str, int]]]:
+    """Return a cache dir's mtime and (name, mtime_ns) listing; (None, []) when it is absent."""
+    try:
+        listing = sorted((p.name, p.stat().st_mtime_ns) for p in path.iterdir())
+        return path.stat().st_mtime, listing
+    except OSError:
+        return None, []
+
+
+_REAL_XDG = os.environ.get("XDG_CACHE_HOME")
+REAL_PROBE_CACHE = (
+    (Path(_REAL_XDG) if _REAL_XDG and os.path.isabs(_REAL_XDG) else Path.home() / ".cache")
+    / "hacf"
+    / "rig-probe"
+)
+REAL_PROBE_CACHE_STATE = _probe_cache_state(REAL_PROBE_CACHE)
+SESSION_CACHE_HOME = tempfile.mkdtemp(prefix="hacf-test-xdg-cache-")
+os.environ["XDG_CACHE_HOME"] = SESSION_CACHE_HOME
+atexit.register(shutil.rmtree, SESSION_CACHE_HOME, True)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / ".agents" / "scripts"

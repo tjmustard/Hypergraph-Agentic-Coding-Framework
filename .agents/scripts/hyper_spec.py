@@ -38,10 +38,12 @@ Semantics:
   PROGRESS.md, one appended Outcomes line, and on the first executing event mission.yaml
   `metadata.status` planned -> active (bytes from hyper_openrig.splice_mission_status). Every
   check runs before the first write.
-- proof writes `proof/<name>` with the C1 header (delegated to `rig proof add` under an accepted
-  rig, 0.6.13 or 0.7.16) and lists it in PROOF.md `## Artifacts`. `--candidate-sha auto` is HEAD
-  when the slice's `hacf_touches` are clean, else a snapshot commit from a temp index seeded from
-  HEAD, stored at `refs/hacf/candidates/<slice-id>`; the user's index and work tree are untouched.
+- proof writes `proof/<name>` with the C1 header (delegated to `rig proof add` under a rig
+  version accepted by .agents/config/openrig_contract.yml, or an in-range one whose range probe
+  passed; the probe runs before spec_lock) and lists it in PROOF.md `## Artifacts`.
+  `--candidate-sha auto` is HEAD when the slice's `hacf_touches` are clean, else a snapshot
+  commit from a temp index seeded from HEAD, stored at `refs/hacf/candidates/<slice-id>`; the
+  user's index and work tree are untouched.
 - Writes take `$(git rev-parse --git-common-dir)/hacf/locks/spec.lock` and are compare-and-swap
   (hyper_openrig.cas_write: sha256 at read, re-read just before os.replace, exit 5 on a change),
   because rig writes the same files without HACF's locks. With HACF_OUTBOX set, progress writes
@@ -1503,6 +1505,8 @@ def cmd_proof(ns: argparse.Namespace) -> int:
     target = slice_dir / "proof" / ns.name
     if os.path.lexists(target):
         raise Refused(f"{_rel(target, top)} already exists; pick another --name")
+    # R7: an in-range rig's probe runs here, never under spec_lock; a held probe lock is native.
+    hyper_openrig.prepare_rig(wait=False)
     with spec_lock(top):
         proof_md = slice_dir / "PROOF.md"
         old = _read_optional(proof_md)

@@ -14,6 +14,9 @@ templates in the installed `@openrig/cli` 0.7.16 (evidence:
 `dist/commands/scope.js:30`). This fixture stays the 0.6.13 bytes, which every mission created
 before HACF 0.6.1 carries; `render_mission_yaml(name)` writes the named 0.7.16 shape (mission R21a).
 
+The rig versions HACF delegates to are not listed here or in the adapter: they live in
+`.agents/config/openrig_contract.yml` (release-0.6.2 OPR.0.6.2.1), which `hyper_openrig.py` reads.
+
 | File | Constant | Source at the tag |
 |---|---|---|
 | `project.yaml` | `PROJECT_MANIFEST` | https://github.com/mvschwarz/openrig/blob/v0.6.13/packages/daemon/src/domain/workspace/default-workspace-scaffold.ts#L20 |

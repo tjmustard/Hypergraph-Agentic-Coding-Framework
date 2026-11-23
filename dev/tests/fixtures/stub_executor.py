@@ -103,19 +103,26 @@ def _audit(verdict: str, writes: list[str], punch_list: list[str] | None = None)
 def _timeout() -> None:
     """Sleep with a child that ignores SIGTERM, so only the group SIGKILL ends it."""
     state = _state_dir()
-    child = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            "import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(600)",
-        ]
-    )
 
     def on_term(_signum: int, _frame: object) -> None:
         (state / "stub-timeout.term").write_text("SIGTERM\n", encoding="utf-8")
         sys.exit(143)
 
-    signal.signal(signal.SIGTERM, on_term)
+    signal.signal(signal.SIGTERM, on_term)  # first, so an early SIGTERM still leaves .term
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import signal, sys, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            'print("ready", flush=True); time.sleep(600)',
+        ],
+        stdout=subprocess.PIPE,
+    )
+    # The child prints only after it ignores SIGTERM, so a group SIGTERM can no longer kill it
+    # before the grace runs out.
+    line = child.stdout.readline().decode("utf-8", "replace").strip()
+    if line != "ready":
+        raise SystemExit(f"stub timeout: child said {line!r}, not 'ready'")
     (state / "stub-timeout.pids").write_text(f"{os.getpid()} {child.pid}\n", encoding="utf-8")
     time.sleep(600)
 

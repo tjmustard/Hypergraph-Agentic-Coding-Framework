@@ -1,0 +1,24 @@
+Usage: rig scope slice progress [options] <slice-path>
+
+Update a slice's progress rail deterministically (append a row, or set a row's
+status)
+
+Arguments:
+  slice-path           Slice path (absolute, relative, or NN-slug)
+
+Options:
+  --mission <name>     Hint mission when slice-path is just NN-slug
+  --add <text>         Append a checkbox row with this text
+  --set <text>         Set the status of the row whose trimmed text exactly
+                       matches
+  --section <heading>  Section heading for --add (default: Rail)
+  --status <status>    Row status: active | done | blocked (default: "active")
+  --json               Machine-readable output
+  -h, --help           display help for command
+
+Workspace: the parent option --workspace selects the missions root this command reads.
+  rig scope --workspace <project root> slice progress ...
+A project root uses its project.yaml missions.root, else its missions/ folder; a
+folder named missions is used as is. Use it for a catalog project, for example
+$(rig config get workspace.projects_root)/<project>. Without --workspace,
+OPENRIG_WORK_ROOT applies, then the configured workspace.slices_root.

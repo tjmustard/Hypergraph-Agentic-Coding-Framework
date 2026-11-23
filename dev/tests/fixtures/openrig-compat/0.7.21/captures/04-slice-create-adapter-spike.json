@@ -1,0 +1,27 @@
+{
+  "argv": [
+    "rig",
+    "scope",
+    "--workspace",
+    "<T><TMP>/repo",
+    "slice",
+    "create",
+    "release-0.6.0",
+    "adapter-spike",
+    "--intent",
+    "Exercise slice create",
+    "--json"
+  ],
+  "exit_code": 0,
+  "git_status_after": [
+    " M missions/release-0.6.0/mission.yaml",
+    "?? missions/release-0.6.0/slices/.nn-01",
+    "?? missions/release-0.6.0/slices/01-adapter-spike/PROGRESS.md",
+    "?? missions/release-0.6.0/slices/01-adapter-spike/PROOF.md",
+    "?? missions/release-0.6.0/slices/01-adapter-spike/SPEC.md",
+    "?? missions/release-0.6.0/slices/01-adapter-spike/slice.yaml"
+  ],
+  "stderr": "",
+  "stdout": "{\n  \"ok\": true,\n  \"slice\": {\n    \"mission\": \"release-0.6.0\",\n    \"name\": \"01-adapter-spike\",\n    \"id\": \"OPR.0.6.0.1\",\n    \"path\": \"<T><TMP>/repo/missions/release-0.6.0/slices/01-adapter-spike\",\n    \"readmePath\": \"<T><TMP>/repo/missions/release-0.6.0/slices/01-adapter-spike/SPEC.md\",\n    \"template\": \"placeholder\"\n  }\n}\n",
+  "step": "slice-create-adapter-spike"
+}

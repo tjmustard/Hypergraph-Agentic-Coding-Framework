@@ -303,7 +303,11 @@ class Harness:
         try:
             while True:
                 if time.monotonic() > deadline:
-                    os.kill(pid, signal.SIGKILL)
+                    try:
+                        os.killpg(pid, signal.SIGKILL)  # pty.fork child leads its session
+                    except ProcessLookupError:
+                        pass
+                    os.waitpid(pid, 0)
                     raise AssertionError(f"pty run timed out; output so far:\n{out.decode()}")
                 ready, _, _ = select.select([fd], [], [], 0.2)
                 if not ready:

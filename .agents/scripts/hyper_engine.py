@@ -145,7 +145,6 @@ DEFAULTS: dict[str, Any] = {
     },
     "openrig": {
         "cli_package": "@openrig/cli",
-        "accepted_versions": ["0.6.13", "0.7.16"],
         "id_prefix": "OPR",
         "use_rig_when_present": True,
     },
@@ -286,6 +285,14 @@ def _tightens(rule: str, current: Any, value: Any) -> bool:
     return _subset(value, current)  # allowed_executables and the passthrough lists
 
 
+# Keys an older orchestration.yml may still carry: tolerated, never read, one message each.
+RETIRED_KEYS = {
+    ("openrig", "accepted_versions"): (
+        "is no longer read (the accepted set is .agents/config/openrig_contract.yml)"
+    ),
+}
+
+
 def _merge(base: dict, override: dict, source: str, ignored: list[str], prefix=()) -> None:
     """Merge a tracked override into base; a security key changes only when it tightens."""
     for key, value in override.items():
@@ -293,7 +300,9 @@ def _merge(base: dict, override: dict, source: str, ignored: list[str], prefix=(
         name = ".".join(path)
         current = base.get(key)
         rule = _security_rule(path)
-        if rule == "protected_paths":
+        if path in RETIRED_KEYS:
+            ignored.append(f"{source}: {name} {RETIRED_KEYS[path]}; ignored")
+        elif rule == "protected_paths":
             # R42: the shipped list plus any additions; a dropped entry stays.
             listed = value if isinstance(value, list) else []
             dropped = [entry for entry in current if entry not in listed]

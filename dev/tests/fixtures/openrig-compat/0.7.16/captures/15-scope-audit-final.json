@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "rig",
+    "scope",
+    "--workspace",
+    "<T><TMP>/repo",
+    "audit",
+    "--mission",
+    "release-0.6.0",
+    "--json"
+  ],
+  "exit_code": 0,
+  "git_status_after": [],
+  "stderr": "",
+  "stdout": "{\n  \"ok\": true,\n  \"mission\": {\n    \"name\": \"release-0.6.0\",\n    \"railStatus\": \"present\",\n    \"frontmatterError\": null,\n    \"findings\": []\n  },\n  \"slices\": [\n    {\n      \"name\": \"01-adapter-spike\",\n      \"railStatus\": \"present\",\n      \"frontmatterError\": null,\n      \"findings\": [\n        {\n          \"kind\": \"mini_requirements_missing_or_malformed\",\n          \"severity\": \"low\",\n          \"path\": \"<T><TMP>/repo/missions/release-0.6.0/slices/01-adapter-spike/SPEC.md\",\n          \"message\": \"`## Mini-requirements` carries no numbered items (`1. \u2026`) \u2014 the one-glance requirement tier is where approval starts.\",\n          \"remediation\": \"Add `## Mini-requirements` to SPEC.md with a numbered list of observable outcomes (for a small slice this may be the whole specification).\"\n        },\n        {\n          \"kind\": \"proof_contract_missing_or_malformed\",\n          \"severity\": \"low\",\n          \"path\": \"<T><TMP>/repo/missions/release-0.6.0/slices/01-adapter-spike/SPEC.md\",\n          \"message\": \"`## Proof contract` carries no checkbox deliverables (`- [ ] \u2026`) for proof to pair against.\",\n          \"remediation\": \"Add `## Proof contract` to SPEC.md with one checkbox line per promised deliverable, written as an observable outcome (conventions SSOT: docs/reference/sdlc-conventions.md (installed: $OPENRIG_HOME/reference/sdlc-conventions.md)).\"\n        }\n      ]\n    }\n  ],\n  \"graph\": {\n    \"mission\": {\n      \"id\": \"OPR.0.6.0\",\n      \"name\": \"release-0.6.0\",\n      \"dependsOn\": []\n    },\n    \"nodes\": [],\n    \"ready\": [],\n    \"waiting\": [],\n    \"advisories\": []\n  },\n  \"totalFindings\": 2\n}\n",
+  "step": "scope-audit-final"
+}

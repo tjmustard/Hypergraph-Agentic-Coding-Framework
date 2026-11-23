@@ -1,15 +1,15 @@
 <div align="center">
     <img src="./media/logo.png" alt="Hypergraph Coding Agent Framework Logo" width="200" height="200"/>
     <h1>Hypergraph Coding Agent Framework (Coding 4.0)</h1>
-    <h3><em>A rigorously structured framework designed to solve the Specification Alignment Problem in AI-assisted coding.</em></h3>
+    <h3><em>A staged, fresh-context pipeline for AI-assisted coding: specify, attack, resolve, build, audit.</em></h3>
 </div>
 
 <p align="center">
-    <strong>The Hypergraph Coding Agent Framework is the definitive implementation of the Coding 4.0 paradigm, shifting the developer's role from a writer of syntax to an architect of intent. By decoupling probabilistic reasoning from deterministic state management, it prevents context collapse and hallucinations in complex systems.</strong>
+    <strong>HACF turns a feature request into a specification that is drafted, attacked and resolved in separate fresh-context stages before any code is written, then builds it one slice at a time and audits each slice against that specification. Project state lives in files that scripts write, not in an agent's memory, and a decision an agent proposes binds the other agents only after a person approves it.</strong>
 </p>
 
 <p align="center">
-    <a href="https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework/releases/latest"><img src="https://img.shields.io/badge/release-v0.6.0-blue" alt="Latest Release"/></a>
+    <a href="https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework/releases/latest"><img src="https://img.shields.io/badge/release-v0.6.2-blue" alt="Latest Release"/></a>
     <a href="https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework/stargazers"><img src="https://img.shields.io/github/stars/tjmustard/Hypergraph-Coding-Agent-Framework?style=social" alt="GitHub stars"/></a>
     <a href="https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework/blob/main/LICENSE"><img src="https://img.shields.io/github/license/tjmustard/Hypergraph-Coding-Agent-Framework" alt="License"/></a>
 </p>
@@ -22,19 +22,27 @@
 - [🤔 What is Hypergraph Coding Agent Framework?](#-what-is-hypergraph-coding-agent-framework)
 - [⚡ Get Started](#-get-started)
 - [📚 Core Architecture](#-core-architecture)
+- [👥 Running HACF with an OpenRig Team](#-running-hacf-with-an-openrig-team)
 - [📂 Directory Structure](#-directory-structure)
 - [🤖 Supported Integrations & Commands](#-supported-integrations--commands)
 - [📖 Detailed Tutorials & Scripts](#-detailed-tutorials--scripts)
 - [📖 Standard Operating Procedure (SOP)](#-standard-operating-procedure-sop)
 - [🎯 Models and Cost Control](#-models-and-cost-control)
 - [❓ Troubleshooting Overview](#-troubleshooting-overview)
+- [🚧 Known Issues and Limitations](#-known-issues-and-limitations)
 - [🗺️ Roadmap](#-roadmap)
 - [🤝 Support](#-support)
 - [📄 License](#-license)
 
 ## 🤔 What is Hypergraph Coding Agent Framework?
 
-A rigorously structured framework designed to solve the **Specification Alignment Problem** in AI-assisted coding. The **Hypergraph Coding Agent Framework** is the definitive implementation of the **Coding 4.0** paradigm, shifting the developer's role from a writer of syntax to an architect of intent. By decoupling probabilistic reasoning from deterministic state management, it prevents context collapse and hallucinations in complex systems.
+HACF is a set of agent skills, Python scripts and git hooks that you install **into** your own repository. It works on the **Specification Alignment Problem**: an agent that holds a whole specification in one context window tends to drift, forgetting a constraint or inventing a requirement. HACF's answer, in the spirit of **Coding 4.0** (you write the intent, agents write the syntax), is structure:
+
+- **A staged pipeline.** Architect, red team and resolve turn your intent into a mission spec and one spec per slice; execute builds one slice; audit checks it against that slice's proof contract. Each stage starts in a fresh context window and reads the files the previous stage wrote.
+- **State written by scripts.** Specs, the component ledger and the lore graph are files with schemas, written by validating scripts rather than edited freehand by an agent.
+- **Human-gated decisions.** Agents propose decisions; only a person approves one into binding canon (CANON) or promotes a novel test output to a fixture. A decision the person made is recorded as such and binds at once.
+
+**What "hypergraph" means now.** The hypergraph is HACF's *context* graph, the **lore**: decisions (ADRs), stories and binding canon in `lore_hypergraph.yml` and `lore/`, which agents read as constraints. It does not model your code. Code is tracked by the **component ledger**, a coarse map of components and their files, and, when you turn it on, by an optional **code graph** built by a separate tool (see [Core Architecture](#-core-architecture)).
 
 ## ⚡ Get Started
 
@@ -130,7 +138,7 @@ bash /path/to/hacf/HACF-install.sh --source=/path/to/hacf [--ref=<commit|branch|
 - The committed manifest records only `source: {kind: local, commit}`. The checkout's absolute path goes only to the gitignored, per-machine `.agents/state/install/source.json`.
 - A plain re-run of `HACF-install.sh` (no `--source`, `--repo-url` or `--branch`) uses the recorded checkout and installs its current `HEAD`. A plain re-run follows the checkout's current `HEAD`, not an earlier `--ref`, so to stay on a pinned commit, pass `--ref` again (with `--source`, which `--ref` needs). A plain `HACF-uninstall.sh` uses the recorded checkout and the installed commit (`--ref` defaults to the manifest's `installed_commit`). Both refuse, and change nothing, when the recorded source is gone or no longer matches the install: pass `--source=<checkout>`, or `--repo-url=<https url>` to use a remote instead.
 - `--source` cannot be combined with `--repo-url` or `--branch`, on either script.
-- `/hyper-update` cannot update a local-source install yet; see the [0.6.0 known issues](CHANGELOG.md#known-issues).
+- `/hyper-update` cannot update a local-source install yet; see the [0.6.0 known issues](CHANGELOG.md#known-issues-1).
 
 #### Surgical file install
 
@@ -199,13 +207,22 @@ The v0.6.0 uninstaller deletes only files listed in `.agents/hacf-manifest.json`
 
 ### Core Architectural Pillars
 
-1.  **Multi-Agent State Machines**: Specification is broken into discrete conversational phases run by specialized agents (Architect, Red Team, Resolution, Auditor), each in a fresh context window.
-2.  **The Component Ledger**: The system's living memory, `spec/compiled/architecture.yml` (`hacf.ledger/v2`), maps components, their files and their edges. `hyper_ledger.py` is its single validated writer.
-3.  **Deterministic Graph Traversal**: Scripts compute the blast radius of a change (`hypergraph_updater.py`, `hyper_ledger.py impact`); agents never guess dependencies.
-4.  **Lore**: Decisions, stories and binding canon live in `lore_hypergraph.yml` and `lore/`, written only by `hyper_lore.py`. Agents propose; only a person approves through the CANON gate. See [docs/Lore.md](docs/Lore.md).
+1.  **Staged, fresh-context pipeline**: specification and building are split into stages run by separate agents (architect, red team, resolve, execute, audit), each starting in a fresh context window and reading the previous stage's files rather than its conversation.
+2.  **The lore hypergraph (context)**: decisions, stories and binding canon live in `lore_hypergraph.yml` and `lore/`, written only by `hyper_lore.py`. A node is PROPOSED until a person approves it into CANON. Agents treat CANON, and any decision the person made themselves, as binding constraints. See [docs/Lore.md](docs/Lore.md).
+3.  **The component ledger (code, coarse)**: `spec/compiled/architecture.yml` (`hacf.ledger/v2`) maps specs to components, each with its `files:` globs and edges. `hyper_ledger.py` is its single validated writer.
+4.  **Script-computed blast radius**: `hypergraph_updater.py` (the name is historical; it writes the ledger) and `hyper_ledger.py impact` compute which components a change touches from the git diff and the ledger's globs, widened by the optional code graph below. Agents do not guess dependencies.
 5.  **Missions and slices**: Specs are `SPEC.md` scopes: the project's `SPEC.md`, a mission per feature (`missions/<m>/SPEC.md`, the SuperPRD) and a slice per module (`missions/<m>/slices/<NN-slug>/SPEC.md`, the MiniPRD).
-6.  **Aggressive Lifecycle Management**: `archive_specs.py` flushes finished specs into `spec/archive/`, which agents never read.
+6.  **Lifecycle management**: `archive_specs.py` flushes finished specs into `spec/archive/`, which agents never read.
 7.  **Candidate Artifact Protocol**: Novel outputs go to `tests/candidate_outputs/`; only a person promotes them to `tests/fixtures/`.
+
+### The Optional Code Graph
+
+HACF does not build a code graph itself. With `--code-graph=codebase-memory-mcp`, the installer selects [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) 0.12.1 (MIT licence) as the backend, and installs it only with the separate consent flag `--install-code-graph`. The default backend is `none`.
+
+- **What it adds.** The backend indexes your code. `python3 .agents/scripts/hyper_codegraph.py` exposes `search` (symbols by name), `symbol_impact` (a symbol's inbound callers) and `diff_impact` (the files a change reaches). `hypergraph_updater.py --from-diff` adds the components that `diff_impact` reaches to the ledger's blast radius: the code graph can widen the radius, never narrow it. `/hyper-discover` takes its structural edges from the code graph instead of reading the code.
+- **With `--code-graph=none`**, the blast radius comes from the git diff plus the ledger's `files:` globs alone.
+- **The index goes stale after every commit.** Only the installer and `/hyper-discover` run `hyper_codegraph.py index`. Once HEAD moves past the indexed commit, `diff_impact` reports `stale_index` and `--from-diff` falls back to the globs, saying so in one stderr line, until someone runs `python3 .agents/scripts/hyper_codegraph.py index` again.
+- The component ledger stays either way: it is the coarse map from specs to components that every stage uses.
 
 ### Deterministic Tooling
 
@@ -215,6 +232,7 @@ Every entry point is a `python3 .agents/scripts/<name>.py` command:
 |---|---|---|
 | Ledger | `hyper_ledger.py` | Single writer of `architecture.yml`: `init`, `validate`, `impact`, `ensure-node`, `review-template`, `apply-review`, `mark`, `remove-node`, `repair-text` |
 | Ledger | `hypergraph_updater.py` | Blast radius: positional node ids, or `--from-diff <rev-range>` |
+| Code graph | `hyper_codegraph.py` | Optional backend adapter: `index`, `status`, `search`, `symbol_impact`, `diff_impact`, `doctor` |
 | Specs | `hyper_spec.py`, `archive_specs.py` | Lint and progress of `SPEC.md` scopes; the only writer of `spec/archive/` |
 | Scopes | `hyper_scope.py`, `hyper_openrig.py` | Project, mission and slice scopes; OpenRig manifests |
 | Lore | `hyper_lore.py`, `hyper_gates.py` | Lore graph writer (`init`, `propose`, `note`, `index`, …) and the CANON gate |
@@ -227,17 +245,78 @@ Every entry point is a `python3 .agents/scripts/<name>.py` command:
 
 `hyper_engine.py run` runs every mission's slices in parallel (in `hyper_scope.py dag` order; with no missions, every legacy `spec/compiled/MiniPRD_*.md` in sequence) without the Anthropic SDK, and has no mission selector. Each slice gets its own git worktree on a `swimlane/hacf/<run>/…` branch, and each agent phase is a headless, sandboxed `claude -p` session. The engine itself makes every git write, checks each slice's diff against its declared files, runs the slice's oracle in a bwrap sandbox and integrates passing slices on one serialized thread. Your main checkout stays byte-identical until you run `hyper_engine.py land`. Flags and limits: [docs/MasterSOP.md](docs/MasterSOP.md#the-workflow-engine).
 
+## 👥 Running HACF with an OpenRig Team
+
+HACF works on its own. It also ships the spec of a seven-seat [OpenRig](https://www.openrig.dev) team, [`openrig/hacf/`](openrig/hacf/), in which each pipeline stage is its own long-lived agent seat, so the fresh context between stages is a fact of the topology. OpenRig support is real but partial, and moving forward release by release; this section says what is there today.
+
+```mermaid
+flowchart TB
+    subgraph openrig_generic["OpenRig (generic): the daemon, not part of HACF's team spec"]
+        or_queue[("Daemon and queue: durable work rows between seats")]
+        or_channel["Human channel: decision and update rows"]
+    end
+    human(["Person: answers decision rows, alone promotes candidate outputs and approves CANON lore"])
+
+    subgraph orch["orch: Coordination"]
+        orch_lead["orch-lead: holds the sequence"]
+    end
+    subgraph spec["spec: Specification Engine"]
+        spec_architect["spec-architect: Draft_PRD"]
+        spec_red_team["spec-red-team: RedTeam_Report"]
+        spec_resolve["spec-resolve: mission and slice specs"]
+    end
+    subgraph build["build: Execution Engine"]
+        build_execute["build-execute: code for one slice"]
+        build_audit["build-audit: verdict against the proof contract"]
+    end
+    subgraph desk["desk: Record"]
+        desk_scribe["desk-scribe: docs and the docs commit"]
+    end
+
+    orch_lead -->|"delegates_to"| spec_architect
+    orch_lead -->|"delegates_to"| spec_red_team
+    orch_lead -->|"delegates_to"| spec_resolve
+    orch_lead -->|"delegates_to"| build_execute
+    orch_lead -->|"delegates_to"| build_audit
+    orch_lead -->|"delegates_to"| desk_scribe
+    orch_lead -.->|"can_observe"| spec_red_team
+    orch_lead -.->|"can_observe"| build_audit
+    spec_architect -->|"delegates_to: Draft_PRD"| spec_red_team
+    spec_red_team -->|"delegates_to: RedTeam_Report"| spec_resolve
+    build_execute -->|"delegates_to: the slice build"| build_audit
+
+    spec_resolve ==>|"next stage: one slice at a time"| build_execute
+    build_audit ==>|"FAIL: back to execute, at most 5 iterations"| build_execute
+    build_audit ==>|"PASS on the last slice"| desk_scribe
+    orch_lead ==>|"Replan: a stopped slice goes back to resolve"| spec_resolve
+    desk_scribe ==>|"update: docs commit, nothing pushed"| or_channel
+    orch_lead -.->|"dispatches every stage as a queue row"| or_queue
+    orch_lead -.->|"decision rows"| or_channel
+    or_channel -.->|"asks"| human
+    human -.->|"answers"| orch_lead
+```
+
+The diagram is checked against [`openrig/hacf/rig.yaml`](openrig/hacf/rig.yaml) by `dev/tests/docs/test_readme_mermaid.py`: every seat, pod and spec edge (`delegates_to`, `can_observe`) must match. The lead dispatches every stage as a queue row; the thick arrows show the order work moves in. The audit fix loop and Replan are queue handoffs, not topology edges.
+
+- **Get the team spec.** `bash HACF-install.sh --rig` copies it to `openrig/hacf/` in your project (or `--rig=<dir>` elsewhere) and names the rig `<slug>-hacf`. The copy is yours: upgrades never refresh it. Planning, launching and recovering a team are in [docs/OpenRig-Team.md](docs/OpenRig-Team.md); the seats and how work moves are in [openrig/hacf/README.md](openrig/hacf/README.md).
+- **Which OpenRig versions HACF calls.** HACF calls `rig` for two things, `rig proof add` and `rig scope audit`. `.agents/config/openrig_contract.yml` lists the accepted versions, 0.6.13, 0.7.16 and 0.7.21, and one probed range, 0.7.x with x at least 16: an unlisted version in that range is called only after an isolated probe passes. With any other version, HACF writes the OpenRig manifests and proof artifacts itself and prints a warning; with no `rig` on `PATH` it writes them silently.
+- **Launching is manual and not covered by HACF's tests.** You start a team yourself with `rig up` (run `--plan` first). HACF recorded one throwaway launch, on OpenRig 0.7.16, with the shipped `permission_policy: builtin:yolo` and `non_interruptive: true`: the seats run with permission prompts off. Other permission modes are untested, and `rig down --delete` leaves `.claude/plugins/openrig-core/` and `.claude/settings.local.json` behind (see the [0.6.1 known issues](CHANGELOG.md#known-issues)).
+- **Maintainer tooling, not installed into projects.** `dev/openrig_compat.sh <version>` checks a new OpenRig release against HACF in isolation, and an optional daily watcher (`dev/openrig_watch.sh`, a systemd user timer) runs it on each new release. The watcher's notifications are settings, `HACF_WATCH_NOTIFY_CMD` and `HACF_WATCH_ROW_DESTINATION`, both unset by default, and its evidence root defaults to `${XDG_STATE_HOME:-~/.local/state}/hacf/evidence`. See [DEVELOPMENT.md](DEVELOPMENT.md#openrig-compatibility).
+
 ## 📂 Directory Structure
+
+What HACF creates and uses in your project after an install:
 
 | Path | Purpose |
 |---|---|
 | `SPEC.md` | Project system of record (`hacf_type: SystemOfRecord`) |
 | `project.yaml`, `workspace.yaml` | OpenRig project and workspace manifests |
-| `lore_hypergraph.yml` | Lore graph (`hacf.lore/v1`), written only by `hyper_lore.py` |
+| `lore_hypergraph.yml` | The context hypergraph: the lore graph (`hacf.lore/v1`), written only by `hyper_lore.py` |
 | `lore/` | `MAP.md` (start here), `CANON.md`, `ADRs/`, `STORIES/`, `proposed/`, immutable `canon/` |
 | `missions/<mission>/` | `SPEC.md` (SuperPRD), `mission.yaml`, `slices/<NN-slug>/SPEC.md` (MiniPRD) |
 | `spec/active/` | Workbench: `Draft_PRD.md`, `RedTeam_Report.md` (temporary) |
-| `spec/compiled/` | `architecture.yml` (ledger v2); legacy flat `MiniPRD_*.md` |
+| `spec/compiled/` | `architecture.yml` (the component ledger, v2); legacy flat `MiniPRD_*.md` |
+| `openrig/hacf/` | Optional: the OpenRig team spec, copied only by `--rig` |
 | `spec/archive/` | Written only by `archive_specs.py`; agents never read it |
 | `spec/process/` | Process documents; blocked from commits by the hooks |
 | `tests/candidate_outputs/` | Unverified outputs awaiting human review; agents never read it |
@@ -343,13 +422,21 @@ The engine caps spending per phase (`autonomy.max_budget_usd_per_phase`) and per
 
 *(For an in-depth guide, see [Troubleshooting.md](docs/Troubleshooting.md))*
 
--   **Hallucinations**: usually a forgotten archive. Run `python3 .agents/scripts/archive_specs.py --paths <files>` (or `--miniprd <path>`).
+-   **Agents citing stale or finished specs**: usually a forgotten archive. Run `python3 .agents/scripts/archive_specs.py --paths <files>` (or `--miniprd <path>`).
 -   **Desynchronization**: the builder skipped the blast-radius update. Run `python3 .agents/scripts/hypergraph_updater.py spec/compiled/architecture.yml <node_id>`.
 -   **Broken ledger**: `python3 .agents/scripts/hyper_ledger.py validate` names the problem; `repair-text` folds description scalars that break YAML; `init` writes an empty ledger.
 -   **Lore index out of date**: `python3 .agents/scripts/hyper_lore.py index` regenerates `lore/MAP.md` and `lore/CANON.md`.
 -   **Lore approval refused**: switch Claude Code to default or acceptEdits mode (Shift+Tab) and retry. See [docs/Lore.md](docs/Lore.md).
 -   **Scope Creep**: the Red Team suggests features. Re-run `/hyper-redteam` with a strict scope.
 -   **Infinite Loop**: vague answers to the Architect. Give quantified technical details.
+
+## 🚧 Known Issues and Limitations
+
+- **Open items per release** are in the "Known issues" lists of [CHANGELOG.md](CHANGELOG.md).
+- **HACF's own development records** (its lore, missions and specs) are kept private; this repository holds the product.
+- **Some tests are left out of the public v0.6.0-v0.6.2 trees**: test files that read HACF's private history, and 3 sets of recorded live-session captures that carry account metadata, with the tests that read them. Left out: v0.6.0, 9 test files with 100 test functions; v0.6.1, 13 files with 126; v0.6.2, 13 files with 127. They run in the private repository at every release and are planned to return in v0.6.3.
+- **Releases are unsigned** in v0.6.x (see [Updating with `/hyper-update`](#updating-with-hyper-update)).
+- **The code graph's index goes stale** after every commit until it is re-indexed (see [The Optional Code Graph](#the-optional-code-graph)).
 
 ## 🗺️ Roadmap
 
@@ -364,7 +451,10 @@ The engine caps spending per phase (`autonomy.max_budget_usd_per_phase`) and per
   - [x] Zed (via AGENTS.md)
   - [ ] Aider
   - [ ] Continue.dev
-- [x] v0.6.0: missions and slices, lore and the CANON gate, ledger v2, the sandboxed workflow engine, managed-block installer
+- [x] v0.6.0: missions and slices, lore and the CANON gate, ledger v2, the optional code graph, the sandboxed workflow engine, managed-block installer
+- [x] v0.6.1: the OpenRig team spec (`--rig`); OpenRig 0.6.13 and 0.7.16 accepted
+- [x] v0.6.2: the OpenRig contract file and range probe; OpenRig 0.7.21 accepted
+- [ ] v0.6.3: the left-out tests and normalised recorded fixtures return to the public repository
 - [ ] v0.7.0: legacy flat MiniPRDs are no longer read (no earlier than 2027-01-31)
 
 ## 🤝 Support
@@ -378,4 +468,4 @@ For support, bug reports, or feature requests, please open a GitHub issue.
 
 ## 📄 License
 
-This project is licensed under the terms of the MIT open source license. Please refer to the [LICENSE](./LICENSE) file for the full terms.
+HACF is written by Thomas J. L. Mustard Ph.D. This project is licensed under the terms of the MIT open source license. Please refer to the [LICENSE](./LICENSE) file for the full terms.

@@ -1,25 +1,32 @@
 """Live contract test: HACF's repo-root workspace against a real accepted rig (S02 CLI spike).
 
-The accepted versions are hyper_openrig.ACCEPTED_RIG_VERSIONS (rig 0.6.13 and 0.7.16); a version
-joins the set only after this test passes on it. Opt-in only: markers `live` and `openrig`, and it
-runs only when HACF_LIVE_OPENRIG=1, which the user sets after consenting to download and run
-`@openrig/cli@<RIG_VERSION>` (or with an accepted `rig` already on PATH):
+The accepted versions are hyper_openrig.ACCEPTED_RIG_VERSIONS, read from the contract file
+.agents/config/openrig_contract.yml; a version joins that file only after this test passes on it.
+Opt-in only: markers `live` and `openrig`, and it runs only when HACF_LIVE_OPENRIG=1, which the
+user sets after consenting to download and run `@openrig/cli@<RIG_VERSION>` (or with an accepted
+`rig` already on PATH):
 
     HACF_LIVE_OPENRIG=1 uv run --locked pytest -m 'live and openrig' \
         dev/tests/contract/test_openrig_live.py
 
 The harness, never the model, writes one verbatim capture per external call to
-dev/tests/fixtures/recorded/S02/<NN>-<step>.json (argv, stdout, stderr, exit code, `rig --version`,
-UTC date, and `git status --porcelain` after the call), computes spike_verdict_cli from the
-checks (`pass` only when every check passed) and writes verdict.json there (R27). rig runs
-against throwaway git repositories under tmp_path with OPENRIG_HOME in tmp_path; it writes
-nowhere else except npx's cache.
+dev/tests/fixtures/recorded/S02/<NN>-<step>.json, or HACF_LIVE_RECORD_DIR (argv, stdout, stderr,
+exit code, `rig --version`, UTC date, and `git status --porcelain` after the call), computes
+spike_verdict_cli from the checks (`pass` only when every check passed) and writes verdict.json
+there (R27). rig runs against throwaway git repositories under tmp_path with OPENRIG_HOME in
+tmp_path and OPENRIG_URL at the dead discard port (no daemon is reachable); it writes nowhere else
+except npx's cache.
+
+Two overrides exist for dev/openrig_compat.sh only (release-0.6.2 R13); no shipped file reads
+them. HACF_LIVE_ACCEPT_EXTRA=<M.m.p> adds that version to the accepted set for this run, and
+HACF_LIVE_RECORD_DIR=<absolute dir> records there instead of RECORDED.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 import _runtime
@@ -30,6 +37,29 @@ from conftest import FIXTURES_DIR, GitRepo
 RECORDED = FIXTURES_DIR / "recorded" / "S02"
 MISSION = "release-0.6.0"
 FIRST_CALL_TIMEOUT = 900  # the first npx call downloads and installs the package
+DEAD_OPENRIG_URL = "http://127.0.0.1:9"  # the discard port: nothing listens (release-0.6.2 R6)
+_PLAIN_VERSION = re.compile(r"^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\Z")
+
+
+def _accept_extra() -> list[str]:
+    """HACF_LIVE_ACCEPT_EXTRA (dev/openrig_compat.sh): one more accepted M.m.p for this run."""
+    value = os.environ.get("HACF_LIVE_ACCEPT_EXTRA", "")
+    if not value:
+        return []
+    if not _PLAIN_VERSION.match(value):
+        pytest.fail(f"HACF_LIVE_ACCEPT_EXTRA={value[:40]!r} is not a plain M.m.p version")
+    return [value]
+
+
+def _record_dir() -> Path:
+    """HACF_LIVE_RECORD_DIR (dev/openrig_compat.sh), else RECORDED."""
+    value = os.environ.get("HACF_LIVE_RECORD_DIR", "")
+    if not value:
+        return RECORDED
+    if not os.path.isabs(value):
+        pytest.fail(f"HACF_LIVE_RECORD_DIR={value[:80]!r} must be an absolute path")
+    return Path(value)
+
 
 pytestmark = [
     pytest.mark.live,
@@ -44,10 +74,11 @@ pytestmark = [
 class Spike:
     """Runs external calls, writes their captures and collects the check results."""
 
-    def __init__(self, prefix: list[str], env: dict[str, str]) -> None:
-        """Start an empty capture set; the caller cleared RECORDED first."""
+    def __init__(self, prefix: list[str], env: dict[str, str], recorded: Path = RECORDED) -> None:
+        """Start an empty capture set; the caller cleared the record dir first."""
         self.prefix = prefix
         self.env = env
+        self.recorded = recorded
         self.seq = 0
         self.rig_version: str | None = None
         self.captures: list[str] = []
@@ -84,7 +115,7 @@ class Spike:
             status = _porcelain(repo)
             record["git_status_after"] = status
             self.write_sets[step] = sorted(_paths(status))
-        (RECORDED / name).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        (self.recorded / name).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         self.captures.append(name)
         return proc
 
@@ -194,9 +225,10 @@ def _slice_files(rel: str) -> set[str]:
 
 
 def _rig_env(base: dict[str, str], tmp_path: Path, **extra: str) -> dict[str, str]:
-    """Return base without the user's OpenRig settings, with a throwaway OPENRIG_HOME."""
+    """Return base without the user's OpenRig settings, a throwaway OPENRIG_HOME and a dead URL."""
     env = {k: v for k, v in base.items() if not k.startswith(("OPENRIG_", "RIGGED_"))}
     env.update(
+        OPENRIG_URL=DEAD_OPENRIG_URL,
         OPENRIG_HOME=str(tmp_path / "openrig-qa-home"),
         NODE_COMPILE_CACHE=str(tmp_path / "node-compile-cache"),
         NO_UPDATE_NOTIFIER="1",
@@ -213,15 +245,16 @@ def test_openrig_cli_spike(tmp_path: Path) -> None:
     prefix = hyper_openrig.resolve_rig(allow_download=True)  # HACF_LIVE_OPENRIG=1 is the consent
     if prefix is None:
         pytest.fail("neither rig nor npx is on PATH; the spike cannot run (nothing was captured)")
-    RECORDED.mkdir(parents=True, exist_ok=True)
-    for stale in RECORDED.glob("*.json"):
+    recorded = _record_dir()
+    recorded.mkdir(parents=True, exist_ok=True)
+    for stale in recorded.glob("*.json"):
         stale.unlink()
     home = tmp_path / "openrig-qa-home"
     home.mkdir()
     (home / ".openrig-fixture").write_text("", encoding="utf-8")  # rig's fixture-home marker
 
     repo = _new_repo(tmp_path / "repo", tmp_path / "git-scratch")
-    spike = Spike(prefix, _rig_env(repo.env, tmp_path))
+    spike = Spike(prefix, _rig_env(repo.env, tmp_path), recorded)
     integrity: str | None = None
     try:
         integrity = _run_spike(spike, repo, tmp_path, _runtime.utc_now_iso()[:10])
@@ -240,7 +273,7 @@ def test_openrig_cli_spike(tmp_path: Path) -> None:
         "rig_write_sets": spike.write_sets,
         "captures": spike.captures,
     }
-    (RECORDED / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n", encoding="utf-8")
+    (recorded / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n", encoding="utf-8")
     failed = [name for name, ok in spike.checks.items() if not ok]
     assert verdict["spike_verdict_cli"] == "pass", f"failed checks: {failed}"
 
@@ -268,7 +301,8 @@ def _version_and_integrity(spike: Spike, repo: GitRepo, tmp_path: Path) -> str |
     argv = [*spike.prefix, "--version"]
     proc = spike.call("rig-version", argv, cwd=repo.path, repo=repo, timeout=FIRST_CALL_TIMEOUT)
     found = hyper_openrig.parse_version(proc.stdout)
-    accepted = [hyper_openrig.parse_version(v) for v in hyper_openrig.ACCEPTED_RIG_VERSIONS]
+    versions = [*hyper_openrig.ACCEPTED_RIG_VERSIONS, *_accept_extra()]
+    accepted = [hyper_openrig.parse_version(v) for v in versions]
     spike.check("rig_version_pinned", found in accepted)
     spike.check("rig_version_git_clean", _porcelain(repo) == [])
     version = ".".join(map(str, found)) if found else hyper_openrig.RIG_VERSION

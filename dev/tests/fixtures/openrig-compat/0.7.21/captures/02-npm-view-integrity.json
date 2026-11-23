@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "npm",
+    "view",
+    "@openrig/cli@<V>",
+    "dist.integrity"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "sha512-qMjMZnL+c37q6fhHQ30Py+w3VQFE51U5muG07Qd+oVrNdD0wTShATvuHkKinGYfLOsKV+quOUiS1WSw3sVAe6Q==\n",
+  "step": "npm-view-integrity"
+}

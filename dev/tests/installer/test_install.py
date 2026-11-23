@@ -262,7 +262,10 @@ def test_consent_prompt_shows_url_and_commit(project: Path, scratch: Path, upstr
     finally:
         done, status = os.waitpid(pid, os.WNOHANG)
         if done == 0:  # still running past the deadline: kill it so the test fails, never hangs
-            os.kill(pid, signal.SIGKILL)
+            try:
+                os.killpg(pid, signal.SIGKILL)  # a pty.fork child leads its session: pgid == pid
+            except ProcessLookupError:
+                pass
             _, status = os.waitpid(pid, 0)
         os.close(fd)
     text = output.decode("utf-8", "replace")

@@ -1,0 +1,24 @@
+Usage: rig scope slice close [options] <slice-path>
+
+Close a slice (move to <mission>/closed/ by default, or update status in place
+with --in-place)
+
+Arguments:
+  slice-path         Slice path (absolute, relative, or NN-slug)
+
+Options:
+  --reason <reason>  Closure reason: wontfix | deferred | superseded | stale |
+                     delivered
+  --in-place         Keep the slice under <mission>/slices/ instead of moving to
+                     <mission>/closed/
+  --note <text>      Optional closure note
+  --mission <name>   Hint mission when slice-path is just NN-slug
+  --json             Machine-readable output
+  -h, --help         display help for command
+
+Workspace: the parent option --workspace selects the missions root this command reads.
+  rig scope --workspace <project root> slice close ...
+A project root uses its project.yaml missions.root, else its missions/ folder; a
+folder named missions is used as is. Use it for a catalog project, for example
+$(rig config get workspace.projects_root)/<project>. Without --workspace,
+OPENRIG_WORK_ROOT applies, then the configured workspace.slices_root.
