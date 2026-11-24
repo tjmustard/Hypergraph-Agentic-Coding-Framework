@@ -51,9 +51,12 @@ is not recorded there; a warning says so. apply-outbox replays only ids that mat
 hyper_ledger's id pattern, so a write whose radius holds another id exits 2 and records
 nothing.
 
-Post-impact hook: after each impact, in both forms, `hyper_lore.stale_from_impact(<blast
-radius>, <changed paths>)` runs when hyper_lore imports (S05a provides it); a missing
-hyper_lore is skipped silently, and the hook never fails the updater.
+Post-impact hook: after each impact that writes (the positional form, and the diff form with
+--apply), `hyper_lore.stale_from_impact(<blast radius>, <changed paths>)` runs when hyper_lore
+imports (S05a provides it); a missing hyper_lore is skipped silently, and the hook never fails
+the updater. A read-only diff run writes no lore: the diff form's report carries
+`lore_stale_candidates`, the ids `hyper_lore.stale_candidates` says the change would mark
+([] without a lore graph or hyper_lore).
 """
 
 from __future__ import annotations
@@ -263,6 +266,25 @@ def post_impact(node_ids: list[str], changed_paths: list[str]) -> None:
         print(f"lore: marked stale: {', '.join(map(str, marked))}", file=sys.stderr)
 
 
+def lore_candidates(node_ids: list[str], changed_paths: list[str]) -> list[str]:
+    """Return the lore ids an impact would mark stale, writing nothing; [] without hyper_lore."""
+    try:
+        import hyper_lore
+    except ImportError:
+        return []
+    except Exception as exc:  # a broken hyper_lore must not fail the updater
+        print(f"warning: lore candidates skipped: hyper_lore: {exc}", file=sys.stderr)
+        return []
+    preview = getattr(hyper_lore, "stale_candidates", None)
+    if not callable(preview):
+        return []
+    try:
+        return [str(item) for item in preview(list(node_ids), list(changed_paths))]
+    except Exception as exc:  # stale_candidates catches its own errors; this is a backstop
+        print(f"warning: hyper_lore.stale_candidates failed: {exc}", file=sys.stderr)
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Positional form (984ca46 contract)
 # ---------------------------------------------------------------------------
@@ -351,14 +373,16 @@ def run_from_diff(yaml_path: str | None, ns: argparse.Namespace) -> int:
             _write(path, impact["nodes"], ns.slice, outbox, extra)
         else:
             print("--apply: no changed path maps to a node; nothing written", file=sys.stderr)
+    report["lore_stale_candidates"] = lore_candidates(report["blast_radius"], impact["changed"])
     if ns.json:
         print(json.dumps(report, indent=2))
     else:
         for key, items in report.items():
             print(f"{key}: {json.dumps(items)}")
     sys.stdout.flush()
-    with _outbox_env(outbox):
-        post_impact(report["blast_radius"], impact["changed"])
+    if ns.apply:  # a read-only run writes no lore; it reports lore_stale_candidates instead
+        with _outbox_env(outbox):
+            post_impact(report["blast_radius"], impact["changed"])
     return EXIT_OK
 
 

@@ -1,0 +1,3 @@
+# an old role table (stand-in)
+schema: hacf.roles/v1
+roles: {}

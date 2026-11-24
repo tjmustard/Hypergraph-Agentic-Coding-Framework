@@ -449,3 +449,56 @@ def test_codebase_memory_mcp_deny_fails(copy: Path, rule: str) -> None:
     assert f"role 'execute': '{rule}' denies codebase-memory-mcp, which stays allowed" in (
         result.stdout
     )
+
+
+# --- OPR.99.0.10.7: claude-in-chrome and easel denies; rig env keys (KI-opsa-1/-2) ------------
+
+NEW_SERVER_DENIES = ("mcp__claude-in-chrome", "mcp__easel")
+
+
+def test_every_role_emits_the_chrome_and_easel_denies() -> None:
+    """KI-opsa-2: every role's emitted deny set holds both bare server denies."""
+    roles = table()["roles"]
+    assert len(roles) == 7
+    for role in roles:
+        result = run("--role", role, "--json")
+        assert result.returncode == 0, result.stderr
+        deny = set(json.loads(result.stdout)["deny"])
+        for server in NEW_SERVER_DENIES:
+            assert server in deny, (role, server)
+
+
+def test_check_still_refuses_codebase_memory_mcp_beside_the_new_denies(copy: Path) -> None:
+    """With the two new denies in place, a codebase-memory-mcp deny is still refused, per role."""
+    roles = list(table()["roles"])
+    assert all(
+        set(NEW_SERVER_DENIES) <= set(entry["tools_deny"]) for entry in table()["roles"].values()
+    )
+    edit_yaml(
+        copy,
+        lambda d: [
+            d["roles"][role]["tools_deny"].append("mcp__codebase-memory-mcp") for role in roles
+        ],
+    )
+    result = check(copy)
+    assert result.returncode == 1
+    for role in roles:
+        assert (
+            f"role '{role}': 'mcp__codebase-memory-mcp' denies codebase-memory-mcp, "
+            "which stays allowed" in result.stdout
+        ), role
+
+
+def test_ops_md_rig_env_keys_section() -> None:
+    """KI-opsa-1: an env key takes effect only at a whole-rig down/up, the person's call."""
+    text = OPS.read_text()
+    heading = "## Rig env keys take effect at `rig down`/`rig up`"
+    assert heading in text
+    section = text.split(heading, 1)[1].split("\n## ", 1)[0]
+    flat = " ".join(section.split())
+    assert "reaches a seat only when the whole rig is brought down and up again" in flat
+    assert "`rig seat launch --fresh` does not re-read it" in flat
+    assert "operator's or the person's call" in flat
+    assert "a seat never runs `rig down` or `rig up` itself" in flat
+    assert "roles v2's bare denies cover the claude.ai connectors" in flat
+    assert "Never take the rig down and up to apply a seat rule" in flat

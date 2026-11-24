@@ -139,7 +139,8 @@ def test_local_install_bytes_and_manifest(
     assert record["kind"] == "local"
     assert record["schema"] == "hacf.install-source/v1"
     assert record["path"] == str(base_source.path.resolve())
-    assert record["ref"] == "HEAD" and record["commit"] == sha
+    # C3 (OPR.99.0.10.3): the ref is recorded as the resolved full sha, never "HEAD"
+    assert record["ref"] == sha and record["commit"] == sha
     assert f"--source={base_source.path} --ref={sha}" in report
 
 
@@ -273,9 +274,9 @@ def _refusal(case: str, tmp_path: Path, project: Path, src: Source, env: dict[st
     if case == "version-mismatch":
         installer = path / "HACF-install.sh"
         text = installer.read_text(encoding="utf-8")
-        installer.write_text(text.replace('HACF_VERSION="0.6.4"', 'HACF_VERSION="0.5.9"', 1))
+        installer.write_text(text.replace('HACF_VERSION="0.6.5"', 'HACF_VERSION="0.5.9"', 1))
         git(["-c", "commit.gpgsign=false", "commit", "-q", "-am", "old version"], path, env)
-        return str(path), project, [], None, "carries HACF 0.5.9; this installer is 0.6.4"
+        return str(path), project, [], None, "carries HACF 0.5.9; this installer is 0.6.5"
     if case == "symlinked-payload-root":
         git(["rm", "-r", "-q", "--", ".agents/rules"], path, env)
         os.symlink("../dev", path / ".agents" / "rules")

@@ -11,9 +11,12 @@ import fcntl
 import inspect
 import json
 import os
+import re
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -215,8 +218,11 @@ def test_nested_runs_complete_without_waiting(lock: Path) -> None:
     assert log_events(lock) == [("acquire", "outer"), ("release", "outer")]
 
 
-def tiny_suite(tmp_path: Path) -> Path:
-    """A tiny test dir whose conftest is a copy of dev/tests/conftest.py's lock hook."""
+def tiny_suite(tmp_path: Path, record: Path | None = None) -> Path:
+    """A tiny test dir whose conftest is a copy of dev/tests/conftest.py's lock hook.
+
+    With `record`, a third test writes the run's `os.environ["CBM_RUNTIME_DIR"]` to that file.
+    """
     suite = tmp_path / "tiny"
     suite.mkdir()
     hook = "\n\n".join(
@@ -231,6 +237,11 @@ def tiny_suite(tmp_path: Path) -> Path:
     (suite / "test_tiny.py").write_text(
         "def test_one():\n    pass\n\n\ndef test_two():\n    pass\n"
     )
+    if record is not None:
+        (suite / "test_record.py").write_text(
+            "import os\nfrom pathlib import Path\n\n\ndef test_record():\n"
+            f"    Path({str(record)!r}).write_text(os.environ['CBM_RUNTIME_DIR'])\n"
+        )
     return suite
 
 
@@ -278,6 +289,128 @@ def test_a_busy_host_ends_a_direct_pytest_with_75(lock: Path, tmp_path: Path) ->
                           check=False)  # fmt: skip
     assert proc.returncode == 75, proc.stdout + proc.stderr
     assert "host busy: MemAvailable 100 MB < 6144 MB; retry later" in proc.stdout + proc.stderr
+
+
+# ------------------------------------------------------------------- the run's CBM_RUNTIME_DIR
+
+
+@pytest.fixture
+def short_dir():
+    """Make short dirs under /tmp (as the gate's own CBM runtime dir is); remove each after."""
+    made: list[Path] = []
+
+    def make(tag: str) -> Path:
+        path = Path(tempfile.mkdtemp(prefix=f"hacf-hg-{tag}.", dir="/tmp"))
+        made.append(path)
+        return path
+
+    yield make
+    for path in made:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def long_dir(tmp_path: Path, tag: str) -> Path:
+    """An existing absolute dir whose path is over the socket budget (dir + 48 > 107 bytes)."""
+    path = tmp_path / tag / ("x" * 80)
+    path.mkdir(parents=True)
+    assert len(os.fsencode(str(path))) + 48 > 107
+    return path
+
+
+def snapshot(path: Path) -> tuple[str, list[tuple[str, bytes]]]:
+    """A dir's mode and its files' names and bytes."""
+    return oct(path.stat().st_mode), sorted((p.name, p.read_bytes()) for p in path.iterdir())
+
+
+def runtime_run(tmp_path: Path, caller: str | None, **env: str):
+    """Run the tiny suite with the lock off; return (process, the CBM_RUNTIME_DIR it saw)."""
+    record = tmp_path / "cbm-runtime.txt"
+    suite = tiny_suite(tmp_path, record)
+    child = child_env(HACF_HEAVY_LOCK="0", **env)
+    child.pop("CBM_RUNTIME_DIR", None)
+    if caller is not None:
+        child["CBM_RUNTIME_DIR"] = caller
+    proc = subprocess.run(pytest_argv(suite), env=child, capture_output=True, text=True,
+                          timeout=120, check=False)  # fmt: skip
+    return proc, (record.read_text() if record.exists() else None)
+
+
+def test_c1_a_short_caller_runtime_dir_is_kept(tmp_path: Path, short_dir) -> None:
+    """(c1) R65, the gate's step 10: a long XDG_RUNTIME_DIR and a short caller CBM_RUNTIME_DIR.
+
+    The run keeps the caller's dir: it never creates, chmods or removes it, and makes nothing
+    under XDG_RUNTIME_DIR. Before R65 the hook overwrote the value and exited 4.
+    """
+    xdg = long_dir(tmp_path, "xdg")
+    caller = short_dir("c1")
+    caller.chmod(0o750)
+    (caller / "kept.txt").write_text("the caller's own file\n")
+    before = snapshot(caller)
+    proc, seen = runtime_run(tmp_path, str(caller), XDG_RUNTIME_DIR=str(xdg))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "3 passed" in proc.stdout
+    assert seen == str(caller)
+    assert list(xdg.iterdir()) == []
+    assert snapshot(caller) == before
+
+
+def test_c2_no_caller_value_uses_xdg_and_removes_it(tmp_path: Path, short_dir) -> None:
+    """(c2) No caller value: the run's own `hacf-test-<pid>` under XDG_RUNTIME_DIR, gone after."""
+    xdg = short_dir("c2")
+    proc, seen = runtime_run(tmp_path, None, XDG_RUNTIME_DIR=str(xdg))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert seen is not None
+    assert Path(seen).parent == xdg and Path(seen).name.startswith("hacf-test-")
+    assert not Path(seen).exists()
+    assert list(xdg.iterdir()) == []
+
+
+@pytest.mark.parametrize("kind", ["over budget", "relative"])
+def test_c3_an_unfit_caller_value_is_passed_over(tmp_path: Path, short_dir, kind: str) -> None:
+    """(c3) A caller value over the budget, or a relative one: the run uses (ii).
+
+    The caller's dir is left as it was.
+    """
+    xdg = short_dir("c3")
+    caller_dir = long_dir(tmp_path, "caller")
+    (caller_dir / "kept.txt").write_text("the caller's own file\n")
+    before = snapshot(caller_dir)
+    caller = str(caller_dir) if kind == "over budget" else "relative/cbm-runtime"
+    proc, seen = runtime_run(tmp_path, caller, XDG_RUNTIME_DIR=str(xdg))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert seen is not None
+    assert Path(seen).parent == xdg and Path(seen).name.startswith("hacf-test-")
+    assert list(xdg.iterdir()) == []
+    assert snapshot(caller_dir) == before
+
+
+def test_c4_a_long_xdg_falls_to_the_temp_dir(tmp_path: Path, short_dir) -> None:
+    """(c4) XDG_RUNTIME_DIR over the budget and no caller value: (iii) under a short TMPDIR."""
+    xdg = long_dir(tmp_path, "xdg")
+    tmp = short_dir("c4")
+    proc, seen = runtime_run(tmp_path, None, XDG_RUNTIME_DIR=str(xdg), TMPDIR=str(tmp))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert seen is not None
+    assert Path(seen).parent == tmp and Path(seen).name.startswith("hacf-test-")
+    assert not Path(seen).exists()
+    assert list(xdg.iterdir()) == []
+
+
+def test_c5_no_candidate_fits_exits_4_naming_each(tmp_path: Path) -> None:
+    """(c5) Every candidate over the budget: exit 4, and the message names each with its bytes."""
+    caller = long_dir(tmp_path, "caller")
+    xdg = long_dir(tmp_path, "xdg")
+    tmp = long_dir(tmp_path, "tmp")
+    proc, seen = runtime_run(tmp_path, str(caller), XDG_RUNTIME_DIR=str(xdg), TMPDIR=str(tmp))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 4, out
+    assert seen is None
+    assert f"{caller} ({len(os.fsencode(str(caller)))} bytes)" in out, out
+    for base in (xdg, tmp):
+        found = re.search(rf"({re.escape(str(base))}/hacf-test-\d+) \((\d+) bytes\)", out)
+        assert found, out
+        assert int(found[2]) == len(os.fsencode(found[1]))
+    assert list(xdg.iterdir()) == [] and list(tmp.iterdir()) == []
 
 
 # ------------------------------------------------------------------------------- forged tokens

@@ -122,6 +122,48 @@ seat's rules). Then a fresh launch at a durable point, as above:
 `rig seat launch <seat> --fresh --stop --reason "hacf roles v2 rollback"`.
 Never `rig up` and never `rig down` to roll back.
 
+## Upgrading a live spec (v0.6.5)
+
+`bin/seat-config-upgrade.py` carries HACF's seat configuration from a HACF checkout into one rig's
+**live** spec. It changes files only; the seat half stays this recipe's per-seat steps. Run it from
+the checkout, never from the live spec:
+
+```sh
+python3 openrig/hacf/bin/seat-config-upgrade.py plan  --live-spec <live spec dir> --rig <rig>
+python3 openrig/hacf/bin/seat-config-upgrade.py apply --live-spec <live spec dir> --rig <rig>
+python3 openrig/hacf/bin/seat-config-upgrade.py restore <backup dir>
+```
+
+- **plan** writes nothing and shows every change: the always-HACF files (roles.yml, caps.yml,
+  OPS.md, bin/*), the adapted files (agents/**, startup/**, CULTURE.md, README.md, HARDENING.md;
+  one that is unmodified HACF text is replaced, a locally edited one is kept and its diff shown,
+  `--take-hacf <rel>` replaces it), the one rig.yaml key (`env.ENABLE_CLAUDEAI_MCP_SERVERS`, or
+  `rig.yaml: manual (<reason>)` for a shape it does not recognise), each seat's
+  `set-permissions` command and rollback, and the guard and checkpoint host lines for the rig.
+- **apply** first writes a backup to `$HOME/.hacf/<rig>/backups/seat-config-<UTC>/` (the whole
+  spec, SHA256SUMS, each seat's `before.json` and `rollback.json`, the plan), outside the spec
+  library, then writes each file atomically under a lock and runs `rig spec validate` (60 s). Any
+  failure after the backup exists (validate non-zero or timed out, a write error, SIGTERM/SIGINT)
+  restores the backup by itself and prints `apply failed (<reason>); auto-restored from <backup>`.
+  If that restore fails too, it says `AUTO-RESTORE FAILED`: run `restore <backup>` by hand.
+- **plan and apply refuse** a HACF checkout with uncommitted or untracked changes under the files
+  they copy (commit or clean them first), and refuse while a backup still holds
+  `APPLY_IN_PROGRESS` (an apply that was killed): run the `restore` it names.
+- **restore** puts the files back byte for byte and prints each seat's rollback.
+- **The seat half:** apply never runs `rig seat set-permissions`. Run the printed commands one
+  seat at a time as in "Apply, one seat at a time" above. Live seats change at their next fresh
+  launch at a durable point, orch-lead last, never by a mass restart (never `rig up`/`rig down`).
+
+## Rig env keys take effect at `rig down`/`rig up` (never a seat's step)
+
+A rig-level or member `env:` key in the live spec reaches a seat only when the whole rig is
+brought down and up again (KI-opsa-1). `rig seat launch --fresh` does not re-read it (OPS-A,
+KI-opsa-1), so a fresh launch of one seat does not apply a changed key.
+That restart is a whole-rig action at an idle point, and it is the operator's or the
+person's call: a seat never runs `rig down` or `rig up` itself.
+Until then, roles v2's bare denies cover the claude.ai connectors.
+Never take the rig down and up to apply a seat rule; seat rules take a fresh launch per seat.
+
 ## OPS-A: rig hacf's live spec only
 
 The shipped `rig.yaml` sets `ENABLE_CLAUDEAI_MCP_SERVERS: "false"` for every seat (v0.6.4), which

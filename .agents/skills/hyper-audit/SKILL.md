@@ -51,7 +51,7 @@ Your objective is to verify newly written code against its strict requirements a
      python3 .agents/scripts/hypergraph_updater.py --from-diff <base> --json
      ```
 
-     The second command also runs the lore stale hook, so it can change `lore_hypergraph.yml` and `lore/MAP.md`, even without `--apply`.
+     The second command is read-only, so it writes nothing, `lore_hypergraph.yml` and `lore/MAP.md` included. Its `lore_stale_candidates` lists the lore ids the change would mark stale.
   2. **`unmapped` is a finding.** A non-empty `unmapped` list must be resolved: register a node for those paths, or accept the gap in writing in the audit report.
   3. Launch a sub-agent with the Agent tool (`subagent_type: "general-purpose"`). Give it the template's `instructions` and `patch_schema` and have it read each listed node's files from disk. It returns only the JSON patch, and it writes nothing.
   4. Check the patch against the code, write it to a temp file outside the repository (`mktemp`), then apply it. The patch is applied only this way and is never hand-merged:
@@ -65,7 +65,7 @@ Your objective is to verify newly written code against its strict requirements a
 
 ### [PHASE 3.5: Lore Gate]
 * **Trigger:** Phase 3 passed.
-* **Action:** Select the nodes this slice proposed plus the stale nodes in its blast radius. `<radius_ids>` is the comma-joined `blast_radius` from Phase 3 (omit `--source` for a v6 slice):
+* **Action:** Select the nodes this slice proposed, plus every id in Phase 3's `lore_stale_candidates`, plus the nodes in its blast radius that are already stale. `lore-check` lists the proposed and already-stale nodes; add each `lore_stale_candidates` id it did not list. `<radius_ids>` is the comma-joined `blast_radius` from Phase 3 (omit `--source` for a v6 slice):
 
   ```bash legacy
   python3 .agents/scripts/hyper_gates.py lore-check --slice <SID> --source <spec> --nodes <radius_ids> --json

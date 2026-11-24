@@ -65,6 +65,7 @@ SOURCE_FILE_REL=".agents/state/install/source.json"   # per-machine record of a 
 SOURCE_SCHEMA="hacf.install-source/v1"
 LEGACY_REL=".agents/config/legacy_file_hashes.json"
 CODEGRAPH_STATE_REL=".agents/state/codegraph/project.json"
+SAVED_INSTALLER_REL=".agents/state/hacf/installer/HACF-install.sh"   # the installer's saved copy (C2)
 
 # NEVER_COPY (target layout in HACF's design notes; the same list as HACF-install.sh): the
 # uninstaller refuses to delete any of these. A trailing / means the directory and everything
@@ -1192,6 +1193,21 @@ for entry in entries if isinstance(entries, list) else []:
 ' "$MANIFEST_REL" </dev/null 2>/dev/null || true)
 }
 
+remove_saved_installer() {
+  # C2 (OPR.99.0.10.3): the installer's saved copy and its empty directories, before the manifest.
+  [ "$MODE" = "manifest" ] || return 0
+  [ -e "$SAVED_INSTALLER_REL" ] || [ -L "$SAVED_INSTALLER_REL" ] || return 0
+  if $DRY_RUN; then
+    echo "    [DRY-RUN] would delete $SAVED_INSTALLER_REL"
+  elif [ "$FAILURES" -eq 0 ]; then
+    rm -f -- "$SAVED_INSTALLER_REL"
+    rmdir .agents/state/hacf/installer 2>/dev/null && rmdir .agents/state/hacf 2>/dev/null || true
+    echo "    ✗  $SAVED_INSTALLER_REL"
+  else
+    report "$SAVED_INSTALLER_REL kept: $FAILURES step(s) failed; fix them and re-run the uninstaller."
+  fi
+}
+
 remove_manifest() {
   [ "$MODE" = "manifest" ] || return 0
   if $DRY_RUN; then
@@ -1275,6 +1291,7 @@ main() {
   edit_settings_and_mcp          # Tasks 17-19
   delete_files                   # Task 20
   report_rig_specs               # R4: a --rig copy is reported, never deleted
+  remove_saved_installer
   remove_manifest
   remove_self                    # R64: the project's own copy, last
 

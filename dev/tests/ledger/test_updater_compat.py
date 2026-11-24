@@ -236,6 +236,7 @@ def test_from_diff(tmp_git_repo):
         'nodes: ["core"]',
         'blast_radius: ["cli", "core", "legacy"]',
         "unmapped: []",
+        "lore_stale_candidates: []",
     ]
     # One revision compares the working tree, untracked files included; a v1-style node
     # without files matches its associated_file. The leading ledger path is optional.
@@ -247,6 +248,7 @@ def test_from_diff(tmp_git_repo):
         "nodes": ["cli", "legacy"],
         "blast_radius": ["cli", "legacy"],
         "unmapped": [],
+        "lore_stale_candidates": [],
     }
     assert ledger.read_bytes() == before
 
@@ -292,6 +294,7 @@ def test_from_diff_unmapped(tmp_git_repo):
         "nodes: []",
         "blast_radius: []",
         'unmapped: [".agentignore", "HACF-install.sh"]',
+        "lore_stale_candidates: []",
     ]
     proc = _updater(tmp_git_repo, "--from-diff", "HEAD^..HEAD", "--json")
     assert proc.returncode == 0, proc.stderr
@@ -299,6 +302,7 @@ def test_from_diff_unmapped(tmp_git_repo):
         "nodes": [],
         "blast_radius": [],
         "unmapped": [".agentignore", "HACF-install.sh"],
+        "lore_stale_candidates": [],
     }
 
 
@@ -337,7 +341,9 @@ def test_from_diff_golden_fixtures(tmp_git_repo):
         assert sorted(changed) == sorted(scenario["changes"]), path.stem
         proc = _updater(tmp_git_repo, "--from-diff", "HEAD^..HEAD", "--json")
         assert proc.returncode == 0, f"{path.stem}: {proc.stderr}"
-        assert json.loads(proc.stdout) == scenario["expected"], path.stem
+        got = json.loads(proc.stdout)
+        assert got.pop("lore_stale_candidates") == [], path.stem  # no lore graph here
+        assert got == scenario["expected"], path.stem
 
 
 # -- outbox and the post-impact hook ------------------------------------------------------
@@ -441,19 +447,23 @@ def test_post_impact_hook(tmp_git_repo, monkeypatch, capsys):
         calls.append((node_ids, changed_paths, os.environ.get("HACF_OUTBOX")))
         return ["ADR-0003"]
 
+    def stale_candidates(node_ids, changed_paths):
+        return ["ADR-0003"]
+
     fake = types.ModuleType("hyper_lore")
     fake.stale_from_impact = stale_from_impact
+    fake.stale_candidates = stale_candidates
     monkeypatch.setitem(sys.modules, "hyper_lore", fake)
     assert hypergraph_updater.main(["--from-diff", "HEAD^..HEAD", "--json"]) == 0
     captured = capsys.readouterr()
     assert json.loads(captured.out)["blast_radius"] == ["cli", "core", "legacy"]
-    assert "lore: marked stale: ADR-0003" in captured.err
+    assert json.loads(captured.out)["lore_stale_candidates"] == ["ADR-0003"]
+    assert "lore: marked stale" not in captured.err  # a read-only run writes no lore
     assert hypergraph_updater.main([LEDGER, "docs"]) == 0
     outbox = tmp_git_repo.scratch / "outbox"
     args = ["--from-diff", "HEAD^..HEAD", "--apply", "--outbox", str(outbox)]
     assert hypergraph_updater.main(args) == 0
     assert calls == [
-        (["cli", "core", "legacy"], ["src/core.py"], ""),
         (["docs"], [], ""),
         (["cli", "core", "legacy"], ["src/core.py"], str(outbox)),
     ]
@@ -464,7 +474,12 @@ def test_post_impact_hook(tmp_git_repo, monkeypatch, capsys):
         raise RuntimeError("lore graph unreadable")
 
     fake.stale_from_impact = broken
+    fake.stale_candidates = broken
     assert hypergraph_updater.main(["--from-diff", "HEAD^..HEAD"]) == 0
+    err = capsys.readouterr().err
+    assert "stale_candidates failed: lore graph unreadable" in err
+    assert "stale_from_impact" not in err
+    assert hypergraph_updater.main(["--from-diff", "HEAD^..HEAD", "--apply"]) == 0
     assert "stale_from_impact failed: lore graph unreadable" in capsys.readouterr().err
 
     monkeypatch.setitem(sys.modules, "hyper_lore", None)  # import hyper_lore raises ImportError

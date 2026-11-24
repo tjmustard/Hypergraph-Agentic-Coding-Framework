@@ -80,15 +80,40 @@ def run(*args: str) -> subprocess.CompletedProcess:
     )
 
 
-def run_on(*cards: Path, extra: tuple[str, ...] = ()) -> subprocess.CompletedProcess:
-    """Run on these scorecards with the shipped caps and rig spec; assert caps.yml untouched."""
-    before = fingerprint(CAPS)
+def run_on(
+    *cards: Path, extra: tuple[str, ...] = (), caps: Path = CAPS
+) -> subprocess.CompletedProcess:
+    """Run on these scorecards with the caps (shipped by default) and rig spec; caps untouched."""
+    before = fingerprint(caps)
     args = []
     for card in cards:
         args += ["--scorecard", str(card)]
-    result = run(*args, "--caps", str(CAPS), "--rig-spec", str(RIG_SPEC), *extra)
-    assert fingerprint(CAPS) == before
+    result = run(*args, "--caps", str(caps), "--rig-spec", str(RIG_SPEC), *extra)
+    assert fingerprint(caps) == before
     return result
+
+
+# The caps.yml values before TJ's 2026-11-24 approval (OPR.99.0.10.1). The statistics tests read
+# this synthetic copy, so a cap change shows in test_caps.py alone (ADR-0044).
+OLD_CAPS = {
+    "lead": 350000,
+    "architect": 300000,
+    "red-team": 250000,
+    "resolve": 300000,
+    "execute": 300000,
+    "audit": 250000,
+    "scribe": 150000,
+}
+
+
+def old_caps(tmp: Path) -> Path:
+    """A copy of the shipped caps document with the old cap_tokens, written under tmp."""
+    doc = yaml.safe_load(CAPS.read_text())
+    for role, cap in OLD_CAPS.items():
+        doc["seats"][role]["cap_tokens"] = cap
+    path = tmp / "old-caps.yml"
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    return path
 
 
 SIX = [occupant(f"s{i}", i * 100000) for i in range(1, 7)]
@@ -97,7 +122,7 @@ SIX = [occupant(f"s{i}", i * 100000) for i in range(1, 7)]
 def test_six_execute_occupants(tmp_path: Path) -> None:
     """Peaks 100k..600k: median 350000, p90 600000, proposed 600000."""
     card = scorecard(tmp_path, "a.json", {"build-execute@hacf": SIX})
-    result = run_on(card, extra=("--json",))
+    result = run_on(card, extra=("--json",), caps=old_caps(tmp_path))
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
     e = data["roles"]["execute"]
@@ -175,7 +200,7 @@ def test_table_output(tmp_path: Path) -> None:
     card = scorecard(
         tmp_path, "a.json", {"build-execute@hacf": SIX, "pm-planner@hacf": [occupant("p", 1)]}
     )
-    result = run_on(card)
+    result = run_on(card, caps=old_caps(tmp_path))
     assert result.returncode == 0, result.stderr
     lines = result.stdout.strip().splitlines()
     assert lines[0].split() == [

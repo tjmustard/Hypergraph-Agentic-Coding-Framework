@@ -67,6 +67,7 @@ This skill implements a spec precisely, minimally, and in full, adhering to exis
    - When the node is new, `ensure-node` also needs `--dimension Module` (or another dimension the spec names).
 
 7. **Flag the Blast Radius (MANDATORY)**
+   - First, when `.agents/local/hacf.yml` selects a code-graph backend other than `none`, refresh the index: `python3 .agents/scripts/hyper_codegraph.py index --if-stale`. It re-indexes only when the recorded commit is not HEAD. Report a non-zero exit in the summary of step 10; it never blocks the slice.
    - v6: mark the nodes the diff touches. This form also reports `unmapped`, the changed paths no node covers:
 
      ```bash v6

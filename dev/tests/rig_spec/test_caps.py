@@ -22,27 +22,27 @@ CAPS = HACF / "caps.yml"
 ROLES = HACF / "roles.yml"
 GUARD = HACF / "bin" / "context-guard.sh"
 
-# TJ 2026-11-23 23:57Z, as the slice states it
+# TJ 2026-11-23 23:57Z, as approved again on 2026-11-24 ("Approve caps", OPR.99.0.10.1)
 TJ_CAPS = {
     "lead": {"cap_tokens": 350000, "behaviour": "planned_handover", "reset_scope": "mission"},
     "architect": {
-        "cap_tokens": 300000,
+        "cap_tokens": 190000,
         "behaviour": "restart_at_durable_point",
         "reset_scope": "mission",
     },
     "red-team": {
-        "cap_tokens": 250000,
+        "cap_tokens": 190000,
         "behaviour": "restart_at_durable_point",
         "reset_scope": "mission",
     },
     "resolve": {
-        "cap_tokens": 300000,
+        "cap_tokens": 270000,
         "behaviour": "restart_at_durable_point",
         "reset_scope": "mission",
     },
-    "execute": {"cap_tokens": 300000, "behaviour": "checkpoint_message", "reset_scope": "slice"},
+    "execute": {"cap_tokens": 330000, "behaviour": "checkpoint_message", "reset_scope": "slice"},
     "audit": {
-        "cap_tokens": 250000,
+        "cap_tokens": 220000,
         "behaviour": "restart_at_durable_point",
         "reset_scope": "slice",
     },

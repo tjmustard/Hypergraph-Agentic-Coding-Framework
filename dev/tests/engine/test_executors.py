@@ -456,22 +456,35 @@ def _stub_argv(config: dict, scenario: str, prompt: str = "hyper-execute") -> li
     return [sys.executable, str(STUB), *argv[2:]]
 
 
-def _gone(pid: int) -> bool:
-    """True when pid no longer exists or is a zombie waiting for its reaper."""
-    try:
-        with open(f"/proc/{pid}/stat", encoding="utf-8") as handle:
-            return handle.read().rsplit(")", 1)[1].split()[0] == "Z"
-    except (FileNotFoundError, ProcessLookupError):  # the process went away mid-read
-        return True
-
-
 def _proc_state(pid: int) -> str:
     """The state field of /proc/<pid>/stat, or `gone` when the file does not exist."""
     try:
         with open(f"/proc/{pid}/stat", encoding="utf-8") as handle:
             return handle.read().rsplit(")", 1)[1].split()[0]
-    except (FileNotFoundError, ProcessLookupError):
+    except (FileNotFoundError, ProcessLookupError):  # the process went away mid-read
         return "gone"
+
+
+def _is_gone(state: str) -> bool:
+    """True for a missing /proc entry, a zombie (Z) or a task being released (X, old spelling x).
+
+    A reaped child passes Z, then X, then gone, so each of them means the kill landed.
+    """
+    return state in ("gone", "Z", "X", "x")
+
+
+def _wait_gone(pids: dict[str, int], deadline_s: float, read=_proc_state) -> dict[str, str]:
+    """Poll until every pid is gone or deadline_s passes; return the last snapshot.
+
+    Each poll reads every pid once, and the caller judges that same snapshot, never a re-read:
+    three reads of a reaped child can see Z, X and gone, and flap the assert.
+    """
+    deadline = time.monotonic() + deadline_s
+    while True:
+        snapshot = {name: read(pid) for name, pid in pids.items()}
+        if all(_is_gone(state) for state in snapshot.values()) or time.monotonic() >= deadline:
+            return snapshot
+        time.sleep(0.1)
 
 
 def test_timeout_kills_process_group(config, tmp_path):
@@ -491,12 +504,10 @@ def test_timeout_kills_process_group(config, tmp_path):
     assert elapsed >= 10 + 1.5 - 0.5
     # SIGKILL reaches a task in uninterruptible I/O only when the I/O returns, so under load the
     # child can outlive the kill by seconds (R16b): wait up to 30 s; a green run returns at once.
-    deadline = time.monotonic() + 30
-    while not (_gone(leader) and _gone(child)) and time.monotonic() < deadline:
-        time.sleep(0.1)
-    assert _gone(leader) and _gone(child), (
-        f"still present 30 s after the group SIGKILL: leader {leader} {_proc_state(leader)}, "
-        f"child {child} {_proc_state(child)}"
+    snapshot = _wait_gone({"leader": leader, "child": child}, 30)
+    assert all(_is_gone(state) for state in snapshot.values()), (
+        f"still present 30 s after the group SIGKILL: leader {leader} {snapshot['leader']}, "
+        f"child {child} {snapshot['child']}"
     )
     assert hx.get_executor("stub", config).parse_result(completed).failure_type == "timeout"
 
@@ -504,6 +515,44 @@ def test_timeout_kills_process_group(config, tmp_path):
         [sys.executable, "-c", "print('hi')"], env=env, cwd=tmp_path, timeout=30, kill_grace_s=1
     )
     assert (quick.returncode, quick.stdout, quick.timed_out) == (0, "hi\n", False)
+
+
+@pytest.mark.parametrize("state", ["R", "S", "D", "T", "t", "I", "Z", "X", "x", "gone"])
+def test_is_gone_counts_zombie_dead_and_gone(state):
+    """(a) Z (zombie), X/x (EXIT_DEAD) and a missing /proc entry are gone; a live state is not."""
+    assert _is_gone(state) is (state in ("Z", "X", "x", "gone"))
+
+
+def _scripted(states: dict[str, list[str]]):
+    """Return a /proc reader replaying each pid's states (the last repeats), and its call log."""
+    calls: list[int] = []
+
+    def read(pid: int) -> str:
+        calls.append(pid)
+        script = states[str(pid)]
+        return script.pop(0) if len(script) > 1 else script[0]
+
+    return read, calls
+
+
+def test_wait_gone_one_snapshot_per_poll():
+    """(b) A reaped child read as Z, then X, then gone is gone at the first poll, read once."""
+    read, calls = _scripted({"1": ["gone"], "2": ["Z", "X", "gone"]})
+    assert _wait_gone({"leader": 1, "child": 2}, 30, read=read) == {"leader": "gone", "child": "Z"}
+    assert calls == [1, 2]  # one read per pid, and none after the snapshot is returned
+    read, calls = _scripted({"1": ["gone"], "2": ["S", "X", "gone"]})
+    assert _wait_gone({"leader": 1, "child": 2}, 30, read=read) == {"leader": "gone", "child": "X"}
+    assert calls == [1, 2, 1, 2]
+
+
+def test_wait_gone_returns_live_snapshot_at_deadline():
+    """(c) A pid that stays S yields a not-gone snapshot once the deadline passes."""
+    read, _ = _scripted({"1": ["gone"], "2": ["S"]})
+    started = time.monotonic()
+    snapshot = _wait_gone({"leader": 1, "child": 2}, 0.2, read=read)
+    assert time.monotonic() - started >= 0.2
+    assert snapshot == {"leader": "gone", "child": "S"}
+    assert not all(_is_gone(state) for state in snapshot.values())
 
 
 # ---------------------------------------------------------------------------

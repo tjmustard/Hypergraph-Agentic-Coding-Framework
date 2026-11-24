@@ -186,11 +186,11 @@ baseline changes, and per release or month):
 | role | `cap_tokens` | `behaviour` | `reset_scope` |
 |---|---|---|---|
 | lead | 350000 | `planned_handover` | mission |
-| architect | 300000 | `restart_at_durable_point` | mission |
-| red-team | 250000 | `restart_at_durable_point` | mission |
-| resolve | 300000 | `restart_at_durable_point` | mission |
-| execute | 300000 | `checkpoint_message` | slice |
-| audit | 250000 | `restart_at_durable_point` | slice |
+| architect | 190000 | `restart_at_durable_point` | mission |
+| red-team | 190000 | `restart_at_durable_point` | mission |
+| resolve | 270000 | `restart_at_durable_point` | mission |
+| execute | 330000 | `checkpoint_message` | slice |
+| audit | 220000 | `restart_at_durable_point` | slice |
 | scribe | 150000 | `restart_at_durable_point` | mission |
 
 A seat's role is its `profile` in `rig ps`. The guard checks the file with PyYAML against the
@@ -268,6 +268,10 @@ active `context-usage-threshold` job targeting it, at its role's `cap_tokens`:
   is added: the operator stops the extras;
 - an unreadable list arms nothing this tick; the restart logic runs either way.
 
+`--arm-checkpoints` registers **per rig**: it reads that rig's seats (`rig ps --nodes --rig <rig>`)
+and arms jobs for that rig's seats only, so each rig's host line arms its own team. Arming the guard
+on another rig is the operator's step, under the standing policy.
+
 The job fires **once per occupant**, so one long-lived job re-arms itself for every fresh launch.
 The builder's message tells it to write a checkpoint note, never to commit, and to ask the lead
 for a fresh launch; the lead's tells it to plan its handover (`guidance/execute.md`,
@@ -278,15 +282,26 @@ edit `caps.yml`, then find the old job with `rig watchdog list --json` and stop 
 ### The host line
 
 The script changes nothing on the host by itself. The operator runs it from the host's existing
-digest timer — no new unit — for rig `hacf` only, with one `--project-root` per git checkout the
-rig works in (the guard finds their worktrees itself). From v0.6.4 the line needs `--caps` and
-adds `--arm-checkpoints`; until the operator applies this line (OPS-A), the v0.6.3 line exits 2 at
+digest timer — no new unit — with **one line per HACF rig on the host**. Each line names its rig
+as `rig whoami --json` reports it (`identity.rigName`) and that rig's own `--project-root`, one per
+git checkout the rig works in (the guard finds their worktrees itself). The guard keeps each rig's
+state, log and lock apart (`~/.hacf/<rig>`). From v0.6.4 the line needs `--caps` and adds
+`--arm-checkpoints`; until the operator applies this line (OPS-A), the v0.6.3 line exits 2 at
 usage every tick:
 
 ```bash
-# HACF context guard: rig hacf only, one tick per digest run (OPS-A, v0.6.4)
-"<hacf checkout>/openrig/hacf/bin/context-guard.sh" --rig hacf --project-root "<project root>" --caps "<hacf checkout>/openrig/hacf/caps.yml" --arm-checkpoints --apply || true
+# HACF context guard: one line per HACF rig on this host, one tick per digest run (OPS-A, v0.6.5)
+"<hacf checkout>/openrig/hacf/bin/context-guard.sh" --rig <rig> --project-root "<project root>" --caps "<hacf checkout>/openrig/hacf/caps.yml" --arm-checkpoints --apply || true
 ```
+
+The worked example, for the rig `hacf` working in HACF's own repository:
+
+```bash
+"<hacf checkout>/openrig/hacf/bin/context-guard.sh" --rig hacf --project-root "<hacf checkout>" --caps "<hacf checkout>/openrig/hacf/caps.yml" --arm-checkpoints --apply || true
+```
+
+Adding a line for another rig arms that rig's checkpoints too, so it is the operator's step under
+the standing policy; this spec turns nothing on by itself.
 
 ## Permissions
 

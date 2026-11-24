@@ -101,8 +101,12 @@ def workspace(wid, *, layout=SCRAMBLED, labels=SEATS, tabs=None):
     )
 
 
-def setup(tmp_path, wss, *, rig_nodes=None, rig_exit=0, fail_move=None, herdr=True):
-    """Fake binaries and state; return the env for the script."""
+def setup(tmp_path, wss, *, rig_nodes=None, rig_exit=0, fail_move=None, herdr=True, ws_labels=None):
+    """Fake binaries and state; return the env for the script.
+
+    Each workspace is labelled RIG, as Herdr names a rig's workspace, unless ws_labels says
+    otherwise (OPR.99.0.10.8: view-layout arranges only the workspace labelled --rig).
+    """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "rig").write_text(
@@ -118,7 +122,8 @@ def setup(tmp_path, wss, *, rig_nodes=None, rig_exit=0, fail_move=None, herdr=Tr
         f.chmod(0o755)
     state = {"workspaces": [], "panes": {}, "layouts": {}, "arranged": {}, "fail_move": fail_move}
     for wid, (panes, layout, arranged) in wss.items():
-        state["workspaces"].append({"workspace_id": wid, "label": f"label-{wid}"})
+        label = (ws_labels or {}).get(wid, RIG)
+        state["workspaces"].append({"workspace_id": wid, "label": label})
         state["panes"][wid], state["layouts"][wid], state["arranged"][wid] = panes, layout, arranged
     (tmp_path / "state.json").write_text(json.dumps(state))
     (tmp_path / "herdr.log").write_text("")
@@ -278,7 +283,7 @@ def test_failed_move_recovers_panes(tmp_path) -> None:
         [p(s) if x is None else x for x in recover] for s in ("build.execute", "build.audit")
     ]
     assert moves(tmp_path) == want
-    assert "label-w1 (w1)" in r.stderr and "FAILED" in r.stderr
+    assert f"{RIG} (w1)" in r.stderr and "FAILED" in r.stderr
 
 
 def test_failed_return_move_recovers_the_rest(tmp_path) -> None:
@@ -325,3 +330,55 @@ def test_script_has_no_host_literals() -> None:
     text = SCRIPT.read_text(encoding="utf-8")
     for bad in ("/" + "home/", ".nvm", "PATH="):
         assert bad not in text
+
+
+# --- OPR.99.0.10.8: only the workspace labelled --rig (R40, F13) ------------------------------
+
+
+def moves_for(wid):
+    """The exact moves that arrange workspace wid's scrambled view."""
+    return [out_tab(s, wid) for s in SEATS[1:]] + [
+        back(seat, target, split, ratio, wid)
+        for seat, target, split, ratio in (
+            ("build.execute", "orch.lead", "down", "0.3333"),
+            ("spec.architect", "build.execute", "down", "0.5"),
+            ("build.audit", "build.execute", "right", "0.3333"),
+            ("desk.scribe", "build.audit", "right", "0.5"),
+            ("spec.red-team", "spec.architect", "right", "0.3333"),
+            ("spec.resolve", "spec.red-team", "right", "0.5"),
+        )
+    ]
+
+
+def test_two_teams_only_the_named_rig_moves(tmp_path) -> None:
+    """Workspaces hacf and demo-hacf, each with seven panes: --rig demo-hacf moves only its own."""
+    env = setup(
+        tmp_path,
+        {"wa": workspace("wa"), "wb": workspace("wb")},
+        ws_labels={"wa": "hacf", "wb": RIG},
+    )
+    r = run(env, "--rig", RIG)
+    assert r.returncode == 0, r.stderr
+    assert moves(tmp_path) == moves_for("wb")
+    assert not any("wa" in arg for call in herdr_calls(tmp_path) for arg in call)
+    assert f"{RIG} (wb): rearranging" in r.stdout and "hacf (wa)" not in r.stdout
+
+
+def test_no_workspace_labelled_rig_moves_nothing(tmp_path) -> None:
+    """No workspace labelled --rig: exit 0, the one line, and no herdr write call."""
+    env = setup(tmp_path, {"wa": workspace("wa")}, ws_labels={"wa": "hacf"})
+    r = run(env, "--rig", RIG)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == f"view-layout: no Herdr workspace labelled {RIG}; nothing moved"
+    assert herdr_calls(tmp_path) == [["workspace", "list"]]
+    assert moves(tmp_path) == []
+
+
+def test_help_documents_the_renamed_workspace_limit(tmp_path) -> None:
+    """--help says only the workspace labelled --rig is arranged, and a renamed one is not found."""
+    env = setup(tmp_path, {})
+    r = run(env, "--help")
+    assert r.returncode == 0
+    flat = " ".join(r.stdout.split())
+    assert "labelled exactly --rig" in flat
+    assert "A workspace a person renamed is not found." in flat

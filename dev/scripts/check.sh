@@ -5,6 +5,10 @@
 # and otherwise the Python files this branch changed since the merge-base with main; untracked
 # Python files in both cases (hacf_ruff_files in dev/scripts/check_env.sh). Both ruff calls pass
 # --force-exclude, so pyproject's extend-exclude (PRDs/) holds for the explicit paths.
+# The fifth leg is the privacy scan of the work tree, `python3 dev/release_export.py scan --tree
+# worktree` (the release gate's rules on the would-be export set; v064-upgrade-path R31). Its
+# exit 3 (no digest file) is "unknown": named in the summary and the final line, neither a pass
+# nor a failure.
 #
 #   bash dev/scripts/check.sh
 #
@@ -48,7 +52,7 @@ PY310=${HACF_PY310:-/usr/bin/python3}
 export PYTHONDONTWRITEBYTECODE=1
 
 # --- 1. Preflight: the 3.10 leg must be able to run (before any pytest leg) ---
-echo "==> [1/4] preflight: $PY310 can import pytest, yaml and xdist"
+echo "==> [1/5] preflight: $PY310 can import pytest, yaml and xdist"
 if ! "$PY310" -c 'import pytest, yaml, xdist'; then
     # The lock's versions, read only on this failure path.
     read -r xv ev < <(uv run --locked python -c \
@@ -187,14 +191,14 @@ pytest_leg() {
 }
 
 # --- 2. pytest under the uv-managed 3.11 venv ---
-pytest_leg "[2/4] pytest (uv venv)" 2-pytest-uv uv run --locked pytest -m 'not live' "${XDIST[@]}"
+pytest_leg "[2/5] pytest (uv venv)" 2-pytest-uv uv run --locked pytest -m 'not live' "${XDIST[@]}"
 
 # --- 3. pytest under the system 3.10 (the same binary the preflight checked) ---
-pytest_leg "[3/4] pytest ($PY310)" 3-pytest-py310 "$PY310" -m pytest -m 'not live' "${XDIST[@]}"
+pytest_leg "[3/5] pytest ($PY310)" 3-pytest-py310 "$PY310" -m pytest -m 'not live' "${XDIST[@]}"
 
 # --- 4. ruff: every tracked *.py on a fresh clone or on main, else those changed since the
 # merge-base with main; untracked *.py in both cases (hacf_ruff_mode, hacf_ruff_files) ---
-echo "==> [4/4] ruff on Python files"
+echo "==> [4/5] ruff on Python files"
 RUFF_LOG=$RUN_DIR/4-ruff.log
 : >"$RUFF_LOG"
 # The leg's own lines go where its commands' output goes.
@@ -239,10 +243,29 @@ else
         fi
     fi
 fi
-"${SUMMARIZE[@]}" --raw --label "[4/4] ruff" --exit "$ruff_rc" --note "$ruff_note" \
+"${SUMMARIZE[@]}" --raw --label "[4/5] ruff" --exit "$ruff_rc" --note "$ruff_note" \
     --log "$RUFF_LOG" || true
 if [[ $ruff_rc -ne 0 ]]; then
-    failed+=("[4/4] ruff")
+    failed+=("[4/5] ruff")
+fi
+
+# --- 5. privacy scan of the work tree: exit 0 pass, 1 or 2 fail, 3 unknown (no digest file) ---
+echo "==> [5/5] privacy scan of the work tree"
+SCAN_LOG=$RUN_DIR/5-privacy-scan.log
+: >"$SCAN_LOG"
+run_leg "$SCAN_LOG" python3 "$ROOT/dev/release_export.py" scan --tree worktree
+scan_unknown=""
+if [[ $LEG_RC -eq 3 ]]; then
+    scan_unknown=1
+    echo "    [5/5] privacy scan: unknown (no digest file)"
+    echo "      log: $SCAN_LOG"
+else
+    scan_note=$(grep -m1 '^scan worktree: ' "$SCAN_LOG" || true)
+    "${SUMMARIZE[@]}" --raw --label "[5/5] privacy scan" --exit "$LEG_RC" --note "$scan_note" \
+        --log "$SCAN_LOG" || true
+    if [[ $LEG_RC -ne 0 ]]; then
+        failed+=("[5/5] privacy scan")
+    fi
 fi
 
 if [[ ${#failed[@]} -gt 0 ]]; then
@@ -250,4 +273,8 @@ if [[ ${#failed[@]} -gt 0 ]]; then
     echo "❌  check.sh failed: ${joined%, }" >&2
     exit 1
 fi
-echo "✅  check.sh passed (uv venv and $PY310 legs, ruff)."
+if [[ -n $scan_unknown ]]; then
+    echo "✅  check.sh passed (uv venv and $PY310 legs, ruff; privacy scan unknown)."
+else
+    echo "✅  check.sh passed (uv venv and $PY310 legs, ruff, privacy scan)."
+fi

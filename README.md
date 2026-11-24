@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-    <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/releases/latest"><img src="https://img.shields.io/badge/release-v0.6.4-blue" alt="Latest Release"/></a>
+    <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/releases/latest"><img src="https://img.shields.io/badge/release-v0.6.5-blue" alt="Latest Release"/></a>
     <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/stargazers"><img src="https://img.shields.io/github/stars/tjmustard/Hypergraph-Agentic-Coding-Framework?style=social" alt="GitHub stars"/></a>
     <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/blob/main/LICENSE"><img src="https://img.shields.io/github/license/tjmustard/Hypergraph-Agentic-Coding-Framework" alt="License"/></a>
 </p>
@@ -156,6 +156,8 @@ bash /path/to/hacf/HACF-install.sh --source=/path/to/hacf [--ref=<commit|branch|
 - The full sha is printed before anything is written.
 - The committed manifest records only `source: {kind: local, commit}`. The checkout's absolute path goes only to the gitignored, per-machine `.agents/state/install/source.json`.
 - A plain re-run of `HACF-install.sh` (no `--source`, `--repo-url` or `--branch`) uses the recorded checkout and reinstalls the manifest's `installed_commit`. If the checkout's `HEAD` has moved to another commit, the re-run refuses, writes nothing, and prints the two commands to choose from: `--ref=<installed sha>` to reinstall what is installed, or `--ref=<head sha>` to move. `--source=<the recorded checkout>` without `--ref` is pinned the same way; `--source` naming another checkout installs that checkout's `HEAD`. To move, pass `--ref` alone: on a project installed from a local checkout, `--ref` no longer needs `--source`. This protects re-runs of a v0.6.3+ installer; a checkout moved to an older commit runs that commit's older installer. A plain `HACF-uninstall.sh` uses the recorded checkout and the installed commit (`--ref` defaults to the manifest's `installed_commit`). Both refuse, and change nothing, when the recorded source is gone or no longer matches the install: pass `--source=<checkout>`, or `--repo-url=<https url>` to use a remote instead.
+- Every install saves a copy of the installer at `.agents/state/hacf/installer/HACF-install.sh` (git-ignored) and records its sha256 in the manifest. Re-run it with no flags to reinstall from the recorded source and pin:
+  `bash .agents/state/hacf/installer/HACF-install.sh`. The copy first checks its own sha256 against the manifest and refuses on a mismatch. This is corruption detection, not a boundary against a seat that can write the repo: such a seat can change the copy and the manifest together.
 - `--source` cannot be combined with `--repo-url` or `--branch`, on either script.
 - `/hyper-update` cannot update a local-source install yet; see the [0.6.0 known issues](CHANGELOG.md#known-issues-1).
 
@@ -474,13 +476,15 @@ The engine caps spending per phase (`autonomy.max_budget_usd_per_phase`) and per
 - **HACF's own development records** (its lore, missions and specs) are kept private; this repository holds the product.
 - **Some tests are left out of the public v0.6.0-v0.6.2 trees**: test files that read HACF's private history, and 3 sets of recorded live-session captures that carry account metadata, with the tests that read them. Left out: v0.6.0, 9 test files with 100 test functions; v0.6.1, 13 files with 126; v0.6.2, 13 files with 127. From v0.6.3, 110 of those 127 are back in the public suite and the recorded captures ship as keep-list-cleaned copies; the 17 that read HACF's private records stay in `dev/tests/private_records/`, the one test directory still left out.
 - **The repository moved** to <https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework>. An existing install keeps its pinned old URL and works through GitHub's redirect; to move it, run `/hyper-update --upstream-url https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git`.
-- **The optional code graph** shares one codebase-memory-mcp daemon per user unless `CBM_RUNTIME_DIR` differs, and caps a project name (derived from the checkout path) at 128 characters: use a shorter checkout path.
-- **A pinned re-run (D1)** protects only re-runs of a v0.6.3 or later installer; a checkout moved to an older commit runs that commit's older installer. The saved installer copy that cures it is scheduled for v0.6.5.
+- **The optional code graph:** HACF's own code-graph runs get a per-project daemon (v0.6.5), but the server Claude Code launches from `.mcp.json` still shares one codebase-memory-mcp daemon per user; an `env` block for that entry is planned for v0.6.6. codebase-memory-mcp caps a project name (derived from the checkout path) at 128 characters: use a shorter checkout path.
 - **A record correction:** the v0.6.0 export commit message says the S04, S08 and S11 recorded fixtures ship unedited; they were left out of v0.6.0-v0.6.2 and ship cleaned from v0.6.3 (see [CHANGELOG.md](CHANGELOG.md)).
 - **Releases are unsigned** in v0.6.x (see [Updating with `/hyper-update`](#updating-with-hyper-update)).
-- **The code graph's index goes stale** after every commit until it is re-indexed (see [The Optional Code Graph](#the-optional-code-graph)).
-- **Scheduled for v0.6.5** (mission `v064-upgrade-path`): a seat-config upgrade path for an existing OpenRig team (until then the operator applies seat changes per seat, `openrig/hacf/OPS.md`); the saved installer copy; a plain re-run no longer rewriting `source.json`'s pinned ref; an install without `--source` recording the fetched version; a per-project code-graph runtime and shared uv caches; the six v0.6.0 known issues; K9, K10, K11 and D2; and four code-graph items. See the 0.6.4 Known issues in [CHANGELOG.md](CHANGELOG.md).
-- **The OpenRig team's context guard and checkpoint watchdogs** are enforced on the rig named `hacf` only; per-rig lines for other teams come with v0.6.5.
+- **The code graph's index goes stale** after every commit until it is re-indexed (see [The Optional Code Graph](#the-optional-code-graph)); `/hyper-execute` refreshes it with `index --if-stale` before its blast-radius step when a backend is selected.
+- **Scheduled for v0.6.6:** the six v0.6.0 known issues; K9, K10, K11 and D2; `symbol_impact --include-tests`; and the `.mcp.json` `env` block for the code-graph daemon. Shared uv caches are not yet scheduled. See the 0.6.5 Known issues in [CHANGELOG.md](CHANGELOG.md).
+- **The OpenRig team's context guard and checkpoint watchdogs** are armed on the rig named `hacf` only. The host line is documented per rig; arming another team is the operator's step at that team's upgrade.
+- **The bare denies of the `claude-in-chrome` and `easel` MCP servers** ship in the role table, but their effect on live seats is unmeasured; no token saving is claimed.
+- **A rig `env:` key** reaches a running OpenRig team only at a whole-rig `rig down`/`rig up` (`openrig/hacf/OPS.md`).
+- **Live seats' first-turn context** (about 48.7k-50.4k tokens) is above the headless probe's 36.9k-41.9k; not re-measured in v0.6.5.
 
 ## 🗺️ Roadmap
 
@@ -500,7 +504,8 @@ The engine caps spending per phase (`autonomy.max_budget_usd_per_phase`) and per
 - [x] v0.6.2: the OpenRig contract file and range probe; OpenRig 0.7.21 accepted
 - [x] v0.6.3: the left-out tests and normalised recorded fixtures return to the public repository
 - [x] v0.6.4: the OpenRig team's per-role context caps, guard and checkpoints, startup trim, context telemetry, the two-line commit footer, the team view layout, and the confidence and lore-capture lint gates
-- [ ] v0.6.5: the upgrade path for an existing team, and the known issues scheduled in the 0.6.4 CHANGELOG (mission `v064-upgrade-path`)
+- [x] v0.6.5: the upgrade path for an existing team (seat-config plan/apply/restore, the saved installer copy and the kept pin, the `.mcp.json` entry following the recorded install method), a per-project code-graph runtime for HACF's own runs with `index --if-stale`, the working-tree privacy scan, and the upgrade copy test
+- [ ] v0.6.6: the six v0.6.0 known issues, K9, K10, K11 and D2, `symbol_impact --include-tests`, and the `.mcp.json` `env` block for the code-graph daemon
 - [ ] v0.7.0: legacy flat MiniPRDs are no longer read (no earlier than 2027-01-31)
 
 ## 🤝 Support

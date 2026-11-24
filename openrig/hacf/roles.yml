@@ -29,6 +29,8 @@
 #   - a bare `mcp__<server>` deny for each MCP server the inventory listed. codebase-memory-mcp is
 #     never denied (TJ: keep it where MCP is on), and seat-rules.py --check refuses a deny of it.
 #     A server on another host that is not in this list is not denied.
+#   - v0.6.5 (KI-opsa-2): `mcp__claude-in-chrome` and `mcp__easel` are denied on every role as
+#     well; live seats showed both, and the v0.6.4 inventory did not list them.
 # mcp: off is recorded intent. No guidance file or HACF skill calls an MCP tool (the code graph is
 #   the hyper_codegraph.py CLI). No `rig seat` verb sets MCP loading on an existing seat
 #   (OpenRig 0.7.21), so OPS.md does not change it and the saving is reported unknown.
@@ -57,7 +59,7 @@ roles:
        mcp__plugin_product-management_gmail, mcp__plugin_product-management_similarweb,
        mcp__plugin_human-resources_google_calendar, mcp__plugin_human-resources_gmail,
        mcp__claude_ai_Claude_Docs, mcp__claude_ai_Google_Drive, mcp__claude_ai_Gmail,
-       mcp__claude_ai_Google_Calendar]
+       mcp__claude_ai_Google_Calendar, mcp__claude-in-chrome, mcp__easel]
     mcp: off
     skills: [adversarial-agent-hardening]
 
@@ -82,7 +84,7 @@ roles:
        mcp__plugin_product-management_gmail, mcp__plugin_product-management_similarweb,
        mcp__plugin_human-resources_google_calendar, mcp__plugin_human-resources_gmail,
        mcp__claude_ai_Claude_Docs, mcp__claude_ai_Google_Drive, mcp__claude_ai_Gmail,
-       mcp__claude_ai_Google_Calendar]
+       mcp__claude_ai_Google_Calendar, mcp__claude-in-chrome, mcp__easel]
     mcp: off
     skills: [adversarial-agent-hardening]
 
@@ -107,7 +109,7 @@ roles:
        mcp__plugin_product-management_gmail, mcp__plugin_product-management_similarweb,
        mcp__plugin_human-resources_google_calendar, mcp__plugin_human-resources_gmail,
        mcp__claude_ai_Claude_Docs, mcp__claude_ai_Google_Drive, mcp__claude_ai_Gmail,
-       mcp__claude_ai_Google_Calendar]
+       mcp__claude_ai_Google_Calendar, mcp__claude-in-chrome, mcp__easel]
     mcp: off
     skills: [adversarial-agent-hardening]
 
@@ -132,7 +134,7 @@ roles:
        mcp__plugin_product-management_gmail, mcp__plugin_product-management_similarweb,
        mcp__plugin_human-resources_google_calendar, mcp__plugin_human-resources_gmail,
        mcp__claude_ai_Claude_Docs, mcp__claude_ai_Google_Drive, mcp__claude_ai_Gmail,
-       mcp__claude_ai_Google_Calendar]
+       mcp__claude_ai_Google_Calendar, mcp__claude-in-chrome, mcp__easel]
     mcp: off
     skills: [adversarial-agent-hardening]
 
@@ -157,7 +159,7 @@ roles:
        mcp__plugin_product-management_gmail, mcp__plugin_product-management_similarweb,
        mcp__plugin_human-resources_google_calendar, mcp__plugin_human-resources_gmail,
        mcp__claude_ai_Claude_Docs, mcp__claude_ai_Google_Drive, mcp__claude_ai_Gmail,
-       mcp__claude_ai_Google_Calendar]
+       mcp__claude_ai_Google_Calendar, mcp__claude-in-chrome, mcp__easel]
     mcp: off
     skills: [adversarial-agent-hardening]
 
@@ -183,7 +185,7 @@ roles:
        mcp__plugin_product-management_gmail, mcp__plugin_product-management_similarweb,
        mcp__plugin_human-resources_google_calendar, mcp__plugin_human-resources_gmail,
        mcp__claude_ai_Claude_Docs, mcp__claude_ai_Google_Drive, mcp__claude_ai_Gmail,
-       mcp__claude_ai_Google_Calendar]
+       mcp__claude_ai_Google_Calendar, mcp__claude-in-chrome, mcp__easel]
     mcp: off
     skills: [adversarial-agent-hardening]
 
@@ -208,6 +210,6 @@ roles:
        mcp__plugin_product-management_gmail, mcp__plugin_product-management_similarweb,
        mcp__plugin_human-resources_google_calendar, mcp__plugin_human-resources_gmail,
        mcp__claude_ai_Claude_Docs, mcp__claude_ai_Google_Drive, mcp__claude_ai_Gmail,
-       mcp__claude_ai_Google_Calendar]
+       mcp__claude_ai_Google_Calendar, mcp__claude-in-chrome, mcp__easel]
     mcp: off
     skills: [adversarial-agent-hardening]

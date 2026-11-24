@@ -43,7 +43,7 @@ export PYTHONDONTWRITEBYTECODE=1
 # or a user-level change. Each such action runs only when its own flag is given, or when you
 # answer y on /dev/tty. Every consent prompt shows the upstream URL and commit.
 #
-# Design: dev/design/v0.6.0/subsystems.md#installer (MiniPRD S12b).
+# Design: the installer section of HACF's design notes (MiniPRD S12b).
 #
 # Manifest (.agents/hacf-manifest.json), read by the uninstaller and /hyper-update:
 #   {version, installed_commit, installed_at,
@@ -88,6 +88,9 @@ Consent flags (each one is the consent for its action):
 
 Other:
   --firewall=auto|off        render .agentignore into each selected IDE (default auto)
+  --no-mcp-entry             write no codebase-memory-mcp MCP entry and leave an existing one
+                             alone; recorded, so a plain re-run keeps skipping it
+  --mcp-entry                write the entry again (reverses a recorded --no-mcp-entry)
   --repo-url=URL             upstream repository (https:// only)
   --branch=NAME              upstream branch (default main)
   --source=PATH              install from a commit of a local HACF git checkout (never its
@@ -105,7 +108,7 @@ USAGE
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-HACF_VERSION="0.6.4"
+HACF_VERSION="0.6.5"
 DEFAULT_REPO_URL="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git"
 DEFAULT_BRANCH="main"
 CBM_VERSION="0.12.1"
@@ -115,6 +118,15 @@ STATUSLINE_COMMAND="npx -y ccstatusline@latest"
 MANIFEST_REL=".agents/hacf-manifest.json"
 SOURCE_FILE_REL=".agents/state/install/source.json"   # per-machine, gitignored (--source path)
 SOURCE_SCHEMA="hacf.install-source/v1"
+# C2 (OPR.99.0.10.3): the installer copy each install saves, checked against the manifest's
+# installer_sha256 when it is re-run (corruption detection, not a security boundary).
+SAVED_INSTALLER_REL=".agents/state/hacf/installer/HACF-install.sh"
+SELF_SCRIPT="${BASH_SOURCE[0]:-}"   # this script's absolute path; empty under `curl | bash`
+if [ -n "$SELF_SCRIPT" ] && [ -f "$SELF_SCRIPT" ]; then
+  SELF_SCRIPT="$(cd -- "$(dirname -- "$SELF_SCRIPT")" && pwd -P)/$(basename -- "$SELF_SCRIPT")"
+else
+  SELF_SCRIPT=""
+fi
 FRAGMENT_REL=".agents/install-templates/claude-settings.fragment.json"
 
 # IDE definitions: "id|Display Name|directories (space-sep)|files (space-sep)".
@@ -137,7 +149,7 @@ AGENT_SYSTEM_SUBDIRS=("scripts" "schemas" "config" "rules" "install-templates")
 ROOT_COPY_FILES=(".agentignore" "HACF-uninstall.sh")
 INSTRUCTION_FILES=("AGENTS.md" "CLAUDE.md" "GEMINI.md")
 
-# NEVER_COPY (dev/design/v0.6.0/schemas.md#target-layout): never copied into a project, even
+# NEVER_COPY (target layout in HACF's design notes): never copied into a project, even
 # when listed above. A trailing / means the directory and everything under it. Any other root
 # file not in ROOT_COPY_FILES is refused as well.
 NEVER_COPY=(
@@ -189,6 +201,7 @@ INSTALL_DEPS=false
 CODE_GRAPH=""
 INSTALL_CODE_GRAPH=false
 FIREWALL="auto"
+MCP_ENTRY_FLAG=""      # --no-mcp-entry (skip) | --mcp-entry (write) | "" (the manifest's record)
 MIGRATE=false
 STATUSLINE=false
 FLAG_REPO_URL=""
@@ -210,6 +223,7 @@ PIN_SOURCE_ARG=""      # D1: " --source=<p>" when the re-run named the recorded 
 REPO_URL=""
 BRANCH=""
 UPSTREAM_SHA=""
+INSTALL_VERSION="$HACF_VERSION"   # the manifest's version: the fetched installer's (C4)
 ANNOUNCED_SHA=""
 INTERACTIVE=false
 UPGRADE_MODE=false
@@ -315,6 +329,11 @@ ide_dirs()    { echo "${1}" | cut -d'|' -f3; }
 ide_files()   { echo "${1}" | cut -d'|' -f4; }
 all_ide_ids() { local def out=""; for def in "${IDE_DEFS[@]}"; do out="$out $(ide_id "$def")"; done; echo "$out"; }
 contains_id() { local id="$1"; shift; [[ " $* " == *" $id "* ]]; }
+
+# read_hacf_version <text>: the HACF_VERSION="..." an installer's text assigns, or "".
+read_hacf_version() {
+  if [[ "$1" =~ (^|$'\n')HACF_VERSION=\"([^\"]*)\" ]]; then printf '%s' "${BASH_REMATCH[2]}"; fi
+}
 
 py_sha() { python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1" </dev/null; }
 
@@ -479,9 +498,52 @@ def cmd_sync(args):
     print(f"    {'[DRY-RUN] ' if dry else ''}{', '.join(rels)}: {summary or 'nothing to copy'}")
 
 
+BARE_CBM_ENTRY = {"type": "stdio", "command": "codebase-memory-mcp", "args": []}
+UVX_CBM_ARG = re.compile(r"codebase-memory-mcp@0\.[0-9]+\.[0-9]+")
+
+
+def hacf_mcp_entry(current, previous):
+    """Whether an existing MCP entry is HACF's (F21, OPR.99.0.10.4); the one ownership rule.
+
+    HACF's: the manifest-recorded entry, the bare uv-tool form, or a `uvx
+    codebase-memory-mcp@<0.x.y>` form. Anything else is the user's and is never rewritten.
+    """
+    if previous is not None and current == previous:
+        return True
+    if current == BARE_CBM_ENTRY:
+        return True
+    return (
+        isinstance(current, dict)
+        and set(current) == {"type", "command", "args"}
+        and current["type"] == "stdio"
+        and current["command"] == "uvx"
+        and isinstance(current["args"], list)
+        and len(current["args"]) == 1
+        and isinstance(current["args"][0], str)
+        and UVX_CBM_ARG.fullmatch(current["args"][0]) is not None
+    )
+
+
+def _argv(entry):
+    if isinstance(entry, dict) and isinstance(entry.get("command"), str):
+        args = entry.get("args") if isinstance(entry.get("args"), list) else []
+        return " ".join([entry["command"], *map(str, args)])
+    return json.dumps(entry, sort_keys=True)
+
+
 def cmd_mcp(args):
-    """mcp FILE SERVER ENTRY_JSON RECORDS DRY: merge one MCP server entry; keep the others."""
-    path, server, entry_json, records, dry = args
+    """mcp FILE SERVER ENTRY_JSON RECORDS DRY [STATUS]: merge one MCP server entry; keep others.
+
+    STATUS, when given, gets one `FILE<TAB>written|kept (user's)|unchanged<TAB>argv` line (MR 3).
+    """
+    path, server, entry_json, records, dry = args[:5]
+    status_path = args[5] if len(args) > 5 else None
+
+    def status(word, which):
+        if status_path and dry != "1":
+            with open(status_path, "a", encoding="utf-8") as handle:
+                handle.write(f"{path}\t{word}\t{_argv(which)}\n")
+
     entry = json.loads(entry_json)
     previous = ((old_manifest().get("mcp_entries") or {}).get(path) or {}).get(server)
     try:
@@ -507,8 +569,10 @@ def cmd_mcp(args):
     current = servers.get(server)
     if current == entry:
         print(f"    ✓  {path}: {server} already registered")
-    elif current is not None and current != previous:
+        status("unchanged", entry)
+    elif current is not None and not hacf_mcp_entry(current, previous):
         print(f"    ⚠️   {path}: {server} exists with your own settings; left unchanged")
+        status("kept (user's)", current)
         return 0
     elif dry == "1":
         print(f"    [DRY-RUN] would merge {server} into {path}")
@@ -517,6 +581,7 @@ def cmd_mcp(args):
         servers[server] = entry
         atomic_write(path, (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode())
         print(f"    ✅  {path}: {server} merged ({len(servers) - 1} other server(s) kept)")
+        status("written", entry)
     if dry != "1":
         append_record(records, {"path": path, "server": server, "entry": entry})
     return 0
@@ -642,7 +707,11 @@ def relative_inside(rel):
 
 
 def cmd_manifest(args):
-    """manifest VERSION COMMIT RECORDS OWNED MCP HOOKS TEMPLATES_DIR SOURCE_JSON IDES RIG_JSON.
+    """manifest VERSION COMMIT RECORDS OWNED MCP HOOKS TEMPLATES_DIR SOURCE_JSON IDES RIG_JSON
+    INSTALLER_SHA.
+
+    INSTALLER_SHA is the sha256 of the saved installer copy (C2); `installer_sha256` when set.
+    MCP_ENTRY is "skipped" under --no-mcp-entry or its record (`mcp_entry: skipped`), else "".
 
     SOURCE_JSON is the provenance recorded as the manifest's `source` key: {"kind": "local",
     "commit"} or {"kind": "remote", "url", "branch", "commit"}; never a local path. IDES is the
@@ -655,7 +724,8 @@ def cmd_manifest(args):
     {"outside_project": true, "commit"}; never an absolute path, and no `rig_spec` key when the
     list is empty. The copies are the user's: nothing here refreshes or checks their content.
     """
-    version, commit, records, owned_path, mcp_path, hooks_path, templates, source_json, ides, rig_json = args
+    (version, commit, records, owned_path, mcp_path, hooks_path, templates, source_json, ides,
+     rig_json, installer_sha, mcp_entry) = args
     source = json.loads(source_json)
     sys.path.insert(0, os.path.abspath(".agents/scripts"))
     import _runtime
@@ -744,6 +814,8 @@ def cmd_manifest(args):
     manifest = {
         "version": version,
         "installed_commit": commit,
+        **({"installer_sha256": installer_sha} if installer_sha else {}),
+        **({"mcp_entry": "skipped"} if mcp_entry == "skipped" else {}),
         "installed_at": _runtime.utc_now_iso(),
         "files": dict(sorted(files.items())),
         "settings_rules": rules,
@@ -890,6 +962,8 @@ parse_args() {
       --code-graph=*)          CODE_GRAPH="${1#--code-graph=}" ;;
       --install-code-graph)    INSTALL_CODE_GRAPH=true ;;
       --firewall=*)            FIREWALL="${1#--firewall=}" ;;
+      --no-mcp-entry)          MCP_ENTRY_FLAG="skip" ;;
+      --mcp-entry)             MCP_ENTRY_FLAG="write" ;;
       --migrate)               MIGRATE=true ;;
       --statusline)            STATUSLINE=true ;;
       --dry-run)               DRY_RUN=true ;;
@@ -1147,7 +1221,7 @@ resolve_local_source() {
   if [ -n "$PIN_COMMIT" ] && [ "$SRC_COMMIT" != "$PIN_COMMIT" ]; then
     if ! [[ "$PIN_COMMIT" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] \
         || ! git -C "$SOURCE_REAL" cat-file -e "$PIN_COMMIT^{commit}" 2>/dev/null </dev/null; then
-      refuse_recorded "its installed_commit is not a commit in that checkout"
+      refuse_recorded "its installed_commit is not a commit in that checkout; to install one of its commits, pass --ref=<commit>"
     fi
     local again="bash $(q "$PIN_PATH")/HACF-install.sh$PIN_SOURCE_ARG"
     die "refusing a plain re-run: the recorded HACF checkout $(q "$PIN_PATH") is at $SRC_COMMIT, but this project is installed at $PIN_COMMIT.
@@ -1158,7 +1232,7 @@ Nothing was written."
   # 8. Version guard: the commit's own installer must be this version.
   local blob version=""
   blob=$(git -C "$SOURCE_REAL" show "$SRC_COMMIT:HACF-install.sh" 2>/dev/null </dev/null || true)
-  if [[ "$blob" =~ (^|$'\n')HACF_VERSION=\"([^\"]*)\" ]]; then version="${BASH_REMATCH[2]}"; fi
+  version=$(read_hacf_version "$blob")
   if [ "$version" != "$HACF_VERSION" ]; then
     local tmp_installer="${TMPDIR:-/tmp}/HACF-install-${SRC_COMMIT:0:12}.sh"
     die "commit $SRC_COMMIT carries HACF ${version:-(no HACF_VERSION)}; this installer is $HACF_VERSION; run it from that commit: git -C $(q "$SOURCE_REAL") show $SRC_COMMIT:HACF-install.sh > $(q "$tmp_installer"); bash $(q "$tmp_installer") --source=$(q "$SOURCE_REAL") --ref=$SRC_COMMIT
@@ -1489,7 +1563,11 @@ clone_upstream() {
   if [ -n "$ANNOUNCED_SHA" ] && [ "$ANNOUNCED_SHA" != "$UPSTREAM_SHA" ]; then
     die "upstream moved from $ANNOUNCED_SHA (shown in the consent prompt) to $UPSTREAM_SHA; re-run. Nothing was written."
   fi
-  echo "    ✅  upstream $REPO_URL @ $UPSTREAM_SHA"
+  # C4 (OPR.99.0.10.3): the manifest records the fetched installer's version, not this script's.
+  INSTALL_VERSION=$(read_hacf_version "$(cat -- "$SRC/HACF-install.sh" 2>/dev/null || true)")
+  [ -n "$INSTALL_VERSION" ] \
+    || die "the fetched HACF-install.sh carries no readable HACF_VERSION. Nothing was written."
+  echo "    ✅  upstream $REPO_URL @ $UPSTREAM_SHA (HACF $INSTALL_VERSION)"
   echo ""
 }
 
@@ -1852,8 +1930,46 @@ merge_settings() {
   echo ""
 }
 
+# mcp_entry_method (MR 1, OPR.99.0.10.4): this run's consented method, else code_graph.install_method
+# from .agents/local/hacf.yml, else "" (today's default, the uvx form).
+mcp_entry_method() {
+  if [ -n "$CODE_GRAPH_METHOD" ]; then echo "$CODE_GRAPH_METHOD"; return 0; fi
+  python3 -c '
+import sys
+import yaml
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        data = yaml.safe_load(handle) or {}
+    method = (data.get("code_graph") or {}).get("install_method")
+except Exception:
+    method = None
+print(method if isinstance(method, str) else "")
+' .agents/local/hacf.yml </dev/null 2>/dev/null || true
+}
+
+# mcp_entry_record (MR 4): "skipped" when this run skips the entry (--no-mcp-entry, or a plain
+# re-run of a project whose manifest records mcp_entry: skipped); "" otherwise.
+mcp_entry_record() {
+  case "$MCP_ENTRY_FLAG" in
+    skip) echo "skipped"; return 0 ;;
+    write) echo ""; return 0 ;;
+  esac
+  [ -f "$MANIFEST_REL" ] || return 0
+  python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        data = json.load(handle)
+except (OSError, ValueError):
+    data = {}
+print("skipped" if isinstance(data, dict) and data.get("mcp_entry") == "skipped" else "")
+' "$MANIFEST_REL" </dev/null 2>/dev/null || true
+}
+
 mcp_entry_json() {
-  if [ "$CODE_GRAPH_METHOD" = "uv-tool" ] || [ "$CODE_GRAPH_METHOD" = "path" ]; then
+  local method
+  method=$(mcp_entry_method)
+  if [ "$method" = "uv-tool" ] || [ "$method" = "path" ]; then
     echo '{"type": "stdio", "command": "codebase-memory-mcp", "args": []}'
   else
     echo "{\"type\": \"stdio\", \"command\": \"uvx\", \"args\": [\"codebase-memory-mcp@$CBM_VERSION\"]}"
@@ -1941,16 +2057,31 @@ register_mcp() {
   # FLOW 11: merge the stdio entry for the selected claude, cursor and roo targets only.
   [ "$CODE_GRAPH_BACKEND" = "codebase-memory-mcp" ] || return 0
   echo "🔌  MCP registration (selected IDEs only; other servers are kept):"
-  local entry dry target id file any=false
+  local entry dry target id file any=false status_file="$TMP_DIR/mcp-status.tsv" line
+  local f_file f_status f_argv
   entry=$(mcp_entry_json)
   dry=$($DRY_RUN && echo 1 || echo 0)
+  if [ "$(mcp_entry_record)" = "skipped" ]; then
+    # MR 4: --no-mcp-entry (or its record) writes no entry and leaves an existing one alone.
+    echo "    ⏭️   codebase-memory-mcp entry skipped (--no-mcp-entry; --mcp-entry writes it)"
+    report "code graph MCP entry: skipped: $(python3 -c 'import json,sys; e=json.loads(sys.argv[1]); print(" ".join([e["command"]] + e["args"]))' "$entry" </dev/null)"
+    echo ""
+    return 0
+  fi
+  : >"$status_file"
   for target in "claude:.mcp.json" "cursor:.cursor/mcp.json" "roo:.roo/mcp.json"; do
     id="${target%%:*}"; file="${target#*:}"
     contains_id "$id" $SELECTED_IDE_IDS || continue
     any=true
-    hx mcp "$file" codebase-memory-mcp "$entry" "$TMP_DIR/mcp.jsonl" "$dry" </dev/null || \
+    hx mcp "$file" codebase-memory-mcp "$entry" "$TMP_DIR/mcp.jsonl" "$dry" "$status_file" </dev/null || \
       report "$file: invalid JSON; the MCP entry was not merged and the file was not changed."
   done
+  # MR 3: one summary line per MCP file (the file named when it is not .mcp.json).
+  while IFS=$'\t' read -r f_file f_status f_argv; do
+    line="code graph MCP entry: $f_status: $f_argv"
+    [ "$f_file" = ".mcp.json" ] || line="$line ($f_file)"
+    report "$line"
+  done <"$status_file"
   for id in windsurf cline antigravity; do
     contains_id "$id" $SELECTED_IDE_IDS || continue
     echo "    ℹ️   $id: add this MCP server by hand (config format UNVERIFIED): command \"$(python3 -c 'import json,sys; e=json.loads(sys.argv[1]); print(" ".join([e["command"]] + e["args"]))' "$entry" </dev/null)\", transport stdio."
@@ -2014,6 +2145,51 @@ install_hooks() {
   echo ""
 }
 
+# save_installer (C2): copy the installing script's bytes (under `curl | bash`, the fetched
+# commit's installer) to SAVED_INSTALLER_REL, mode 0755, temp file plus rename; sets its sha256.
+SAVED_INSTALLER_SHA=""
+save_installer() {
+  local from="$SRC/HACF-install.sh" dir tmp
+  if [ -n "$SELF_SCRIPT" ] && [ -f "$SELF_SCRIPT" ] && [ -r "$SELF_SCRIPT" ]; then
+    from="$SELF_SCRIPT"
+  fi
+  dir=$(dirname -- "$SAVED_INSTALLER_REL")
+  mkdir -p -- "$dir"
+  tmp=$(mktemp "$dir/.HACF-install.sh.XXXXXX")
+  cat -- "$from" >"$tmp" && chmod 0755 "$tmp" && mv -f -- "$tmp" "$SAVED_INSTALLER_REL" \
+    || { rm -f -- "$tmp"; die "could not save the installer copy $SAVED_INSTALLER_REL"; }
+  SAVED_INSTALLER_SHA=$(py_sha "$SAVED_INSTALLER_REL")
+  echo "    ✅  $SAVED_INSTALLER_REL (re-run: bash $SAVED_INSTALLER_REL)"
+}
+
+# check_saved_copy (C2): run from SAVED_INSTALLER_REL (realpath compare), this script's sha256
+# must equal the manifest's installer_sha256 beside it, before anything else happens.
+check_saved_copy() {
+  [ -n "$SELF_SCRIPT" ] && [ -f "$SELF_SCRIPT" ] || return 0
+  local verdict
+  verdict=$(python3 -c '
+import hashlib, json, os, sys
+self = os.path.realpath(sys.argv[1])
+suffix = os.sep + sys.argv[2]
+if not self.endswith(suffix):
+    print("not-saved")
+    sys.exit(0)
+root = self[: -len(suffix)]
+try:
+    with open(os.path.join(root, sys.argv[3]), encoding="utf-8") as handle:
+        want = json.load(handle).get("installer_sha256")
+except (OSError, ValueError, AttributeError):
+    want = None
+with open(self, "rb") as handle:
+    have = hashlib.sha256(handle.read()).hexdigest()
+print("ok" if isinstance(want, str) and want == have else "mismatch")
+' "$SELF_SCRIPT" "$SAVED_INSTALLER_REL" "$MANIFEST_REL" </dev/null 2>/dev/null || echo mismatch)
+  case "$verdict" in
+    not-saved|ok) return 0 ;;
+    *) die "saved installer copy does not match the manifest; re-run the installer from the HACF source" ;;
+  esac
+}
+
 write_manifest() {
   # FLOW 14 (R25.5): installed_commit is the clone's HEAD.
   echo "🧾  Manifest:"
@@ -2031,13 +2207,15 @@ write_manifest() {
     source_json=$(python3 -c 'import json,sys; print(json.dumps({"kind": "remote", "url": sys.argv[1], "branch": sys.argv[2], "commit": sys.argv[3]}))' \
       "$REPO_URL" "$BRANCH" "$UPSTREAM_SHA" </dev/null)
   fi
-  hx manifest "$HACF_VERSION" "$UPSTREAM_SHA" "$TMP_DIR/files.jsonl" "$TMP_DIR/owned.jsonl" \
+  save_installer
+  hx manifest "$INSTALL_VERSION" "$UPSTREAM_SHA" "$TMP_DIR/files.jsonl" "$TMP_DIR/owned.jsonl" \
     "$TMP_DIR/mcp.jsonl" "$TMP_DIR/hooks.jsonl" "$SRC/.agents/install-templates" "$source_json" \
-    "$SELECTED_IDE_IDS" "$RIG_JSON" </dev/null
+    "$SELECTED_IDE_IDS" "$RIG_JSON" "$SAVED_INSTALLER_SHA" "$(mcp_entry_record)" </dev/null
   # Task 8: the per-machine source file, ignored through .agents/state/ (managed .gitignore
   # block and the scaffold's .agents/state/.gitignore). A remote install removes a stale one.
   if [ "$SOURCE_KIND" = "local" ]; then
-    hx sourcefile "$SOURCE_FILE_REL" "$SOURCE_REAL" "$SOURCE_REF" "$UPSTREAM_SHA" </dev/null
+    # C3 (OPR.99.0.10.3): the ref is the resolved full sha, never "HEAD".
+    hx sourcefile "$SOURCE_FILE_REL" "$SOURCE_REAL" "$SRC_COMMIT" "$UPSTREAM_SHA" </dev/null
   elif [ -e "$SOURCE_FILE_REL" ] || [ -L "$SOURCE_FILE_REL" ]; then
     rm -f -- "$SOURCE_FILE_REL"
     echo "    ✅  removed $SOURCE_FILE_REL (this install is from a remote)"
@@ -2144,6 +2322,7 @@ print_report() {
 # Main
 # ---------------------------------------------------------------------------
 main() {
+  check_saved_copy
   parse_args "$@"
   resolve_upstream
   if ! $AUTO_YES && tty_available; then INTERACTIVE=true; fi

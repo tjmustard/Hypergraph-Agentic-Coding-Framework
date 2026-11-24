@@ -38,6 +38,7 @@ CLI:
     hyper_codegraph.py <capability> [--repo-root DIR] [--project NAME] [--base REF]
         [--symbol NAME] [--pattern REGEX] [--json]
     hyper_codegraph.py doctor [--repo-root DIR] [--json]
+    hyper_codegraph.py index --if-stale [--repo-root DIR]
 
 Capabilities: index, status, list_projects, diff_impact, symbol_impact, search, delete. `index`
 also runs list_projects and records the project in the state file; `delete` removes the backend
@@ -45,6 +46,18 @@ index of the project the state file names (the uninstaller offers it, R24.9). `d
 the resolution chain, the backend version against the pin, the config layers found, the index
 status and the `verified` flag. `diff_impact --base` takes a branch name (default: hacf.yml
 `base_branch`) or a full commit id, which hypergraph_updater.py --from-diff passes (R34).
+Per-project daemon runtime (C5, R47, lead ruling P31): every backend subprocess gets
+`CBM_RUNTIME_DIR` = `$XDG_RUNTIME_DIR/hacf-cbm/<12-hex>`, or without XDG_RUNTIME_DIR
+`${XDG_CACHE_HOME:-$HOME/.cache}/hacf-cbm/run/<12-hex>` (<12-hex>: sha256 of the repo root's
+realpath), created 0700 component by component. A caller's own CBM_RUNTIME_DIR is kept;
+CBM_CACHE_DIR is never set. codebase-memory-mcp 0.12.1 does not create a missing
+CBM_RUNTIME_DIR, refuses one whose parent is not yours or is group/world-writable, and cannot
+bind a socket path over 107 bytes. When the dir (a caller's included) would break any of these,
+the run is refused before any backend process starts, with the reason as its error (`doctor`
+warns): the adapter never falls back to the shared /tmp/cbm-daemon-<uid>/.
+`index --if-stale` re-indexes only when the state file's `last_index` commit is not HEAD: it
+prints `index: up to date (<sha12>)`, `index: re-indexed (<old12> -> <new12>)` or, with backend
+`none`, `index: backend none; nothing to do`.
 
 Results: diff_impact and search name files, so their impacted files map to ledger components
 through `files:` globs. symbol_impact cannot: trace_path names no file, so its entries have a
@@ -66,6 +79,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import copy
+import hashlib
 import json
 import os
 import re
@@ -154,6 +168,11 @@ GIT_TIMEOUT = 30.0
 KILL_GRACE = 5.0  # seconds to collect output after killing a timed-out process group
 
 FALLBACK = "blast radius from git diff plus files: globs"
+# sockaddr_un.sun_path holds 108 bytes with the NUL. codebase-memory-mcp 0.12.1 binds
+# <runtime>/cbm-daemon-<uid>/cbm-<16 hex>.sock: at most 48 bytes after the runtime dir
+# (a 10-digit uid).
+SUN_PATH_MAX = 107
+CBM_SOCKET_TAIL_MAX = len("/cbm-daemon-") + 10 + len("/cbm-") + 16 + len(".sock")
 
 # The parsed content of .agents/config/code_graph.defaults.yml, which test_embedded_defaults_match
 # keeps equal to the file.
@@ -298,19 +317,148 @@ def _kill_group(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
+def repo_hash(repo_root: Path) -> str:
+    """The first 12 hex digits of the sha256 of the repo root's realpath (one per project)."""
+    return hashlib.sha256(os.path.realpath(str(repo_root)).encode()).hexdigest()[:12]
+
+
+def _too_long(target: str) -> str | None:
+    """MR 2's refusal when target's worst-case CBM socket path is over SUN_PATH_MAX bytes."""
+    length = len(os.fsencode(target)) + CBM_SOCKET_TAIL_MAX
+    if length <= SUN_PATH_MAX:
+        return None
+    return (
+        f"code-graph runtime path too long ({length} > {SUN_PATH_MAX} bytes): "
+        "set XDG_RUNTIME_DIR or CBM_RUNTIME_DIR to a shorter dir"
+    )
+
+
+def runtime_dir_plan(
+    repo_root: Path, environ: dict | None = None
+) -> tuple[Path | None, str, str | None]:
+    """(the CBM_RUNTIME_DIR the backend gets, its source, why the run is refused). Creates nothing.
+
+    A caller's own CBM_RUNTIME_DIR is kept unchanged but still has to fit the socket budget.
+    """
+    env = os.environ if environ is None else environ
+    if env.get("CBM_RUNTIME_DIR"):
+        caller = env["CBM_RUNTIME_DIR"]
+        return Path(caller), "caller", _too_long(caller)
+    if env.get("XDG_RUNTIME_DIR"):
+        target, source = Path(env["XDG_RUNTIME_DIR"]) / "hacf-cbm" / repo_hash(repo_root), "xdg"
+    else:
+        cache = env.get("XDG_CACHE_HOME") or (
+            str(Path(env["HOME"]) / ".cache") if env.get("HOME") else ""
+        )
+        if not cache:
+            return (
+                None,
+                "none",
+                (
+                    "code-graph runtime dir: neither XDG_RUNTIME_DIR, XDG_CACHE_HOME nor HOME is "
+                    "set: set XDG_RUNTIME_DIR or CBM_RUNTIME_DIR"
+                ),
+            )
+        target, source = Path(cache) / "hacf-cbm" / "run" / repo_hash(repo_root), "cache"
+    if not target.is_absolute():
+        return (
+            None,
+            source,
+            (
+                f"code-graph runtime dir {target} is not absolute: set XDG_RUNTIME_DIR or "
+                "CBM_RUNTIME_DIR to an absolute dir"
+            ),
+        )
+    refused = _too_long(str(target))
+    if refused is not None:
+        return None, source, refused
+    # codebase-memory-mcp checks only the runtime dir's immediate parent (spike run K). The dir
+    # we would create the first missing part in is held to the same rule, so no part is ever
+    # made inside a directory that is not ours, or that others can write.
+    probe = target
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    parent = target.parent if probe == target else probe
+    try:
+        st = parent.stat()
+    except OSError:
+        st = None
+    if st is None or st.st_uid not in (os.getuid(), 0) or st.st_mode & 0o022:
+        return (
+            None,
+            source,
+            (
+                f"code-graph runtime dir unusable: {parent} is not owned by you or root, or is "
+                "group/world-writable: set XDG_RUNTIME_DIR or CBM_RUNTIME_DIR to another dir"
+            ),
+        )
+    return target, source, None
+
+
+def ensure_runtime_dir(target: Path) -> bool:
+    """Create target and its missing parents 0700 each; True when it is a private dir of yours."""
+    try:
+        missing = []
+        probe = target
+        while not probe.exists():
+            missing.append(probe)
+            probe = probe.parent
+        for path in reversed(missing):
+            path.mkdir(mode=0o700)
+            path.chmod(0o700)  # mkdir's mode is masked by the umask
+        st = target.lstat()
+    except OSError:
+        return False
+    return (
+        not target.is_symlink()
+        and target.is_dir()
+        and st.st_uid == os.getuid()
+        and not st.st_mode & 0o077
+    )
+
+
+def backend_env(repo_root: Path) -> tuple[dict[str, str] | None, str | None]:
+    """(the backend child's environment or None for ours unchanged, why the run is refused).
+
+    A refused run starts no backend process: the adapter never lets codebase-memory-mcp fall
+    back to its shared /tmp/cbm-daemon-<uid>/ (lead ruling P31).
+    """
+    target, source, why = runtime_dir_plan(repo_root)
+    if why is not None:
+        return None, why
+    if source == "caller":
+        return None, None
+    if not ensure_runtime_dir(target):
+        return None, (
+            f"code-graph runtime dir unusable: {target} is not a private dir of yours: "
+            "set XDG_RUNTIME_DIR or CBM_RUNTIME_DIR to another dir"
+        )
+    env = dict(os.environ)
+    env["CBM_RUNTIME_DIR"] = str(target)
+    return env, None
+
+
 def _run(argv: list[str], *, cwd: Path | None, timeout: float) -> Completed:
     """Run argv, a list of strings and never a shell string, with a timeout.
 
     Every subprocess this module starts goes through here. The child gets its own process group
     and no stdin, so a timeout kills it together with anything it started. A missing executable
-    comes back as 127; a timeout as returncode None with timed_out set.
+    comes back as 127; a timeout as returncode None with timed_out set. A backend child (any argv
+    but git's, run in a repository) also gets the project's CBM_RUNTIME_DIR (backend_env); when
+    that is refused, nothing starts and the result is exit 1 with the reason on stderr.
     """
     if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
         raise TypeError("argv must be a non-empty list of strings")
+    env = None
+    if cwd is not None and argv[0] != "git":
+        env, refused = backend_env(cwd)
+        if refused is not None:
+            return Completed(argv, 1, "", refused + "\n")
     try:
         proc = subprocess.Popen(
             argv,
             cwd=None if cwd is None else str(cwd),
+            env=env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -1071,6 +1219,12 @@ def _dispatch(
         result["status"] = "ok"
         result["warnings"].append(f"no project recorded in {STATE_REL}; nothing to delete")
         return
+    # A runtime dir CBM cannot use refuses the run before any backend process (even --version)
+    # starts; the shared default daemon is never the fallback (MR 2, lead ruling P31).
+    _, refused = backend_env(root)
+    if refused is not None:
+        result.update(status="error", error=refused)
+        return
     # A missing executable is the root cause, so it is reported before any index state.
     prefix, _, found = _resolve(cfg)
     if prefix is None:
@@ -1159,6 +1313,24 @@ def _index(cfg: Config, prefix: list[str], values: dict[str, str], result: dict)
         )
 
 
+def index_if_stale(repo_root: Path) -> tuple[int, list[str], dict | None]:
+    """`index --if-stale`: (exit code, output lines, the index result when one ran)."""
+    if configured_backend(repo_root) == BACKEND_NONE:
+        return EXIT_OK, ["index: backend none; nothing to do"], None
+    state, _ = load_state(repo_root)
+    last = state.get("last_index")
+    old = last.get("head") if isinstance(last, dict) else None
+    head = head_commit(repo_root)
+    if old is not None and old == head:
+        return EXIT_OK, [f"index: up to date ({head[:12]})"], None
+    result = run_capability("index", repo_root=repo_root)
+    if result["status"] != "ok":
+        return (EXIT_ERROR if result["status"] == "error" else EXIT_OK), [], result
+    new_state, _ = load_state(repo_root)
+    new = (new_state.get("last_index") or {}).get("head")
+    return EXIT_OK, [f"index: re-indexed ({(old or 'none')[:12]} -> {(new or 'none')[:12]})"], None
+
+
 def _forget_project(cfg: Config, project: str) -> None:
     """Drop a deleted project from the state file (the file goes when nothing else is left)."""
     if cfg.state.get("project_name") != project:
@@ -1193,11 +1365,19 @@ def doctor(repo_root: Path) -> dict:
         "prefix": None,
         "backend_version": None,
         "index": None,
+        "runtime_dir": None,
         "warnings": [],
     }
     if cfg.backend == BACKEND_NONE:
         report["warnings"].append("code-graph backend is none; " + FALLBACK)
         return report
+    target, source, why = runtime_dir_plan(repo_root)
+    report["runtime_dir"] = {
+        "path": None if target is None or why is not None else str(target),
+        "source": source,
+    }
+    if why is not None:
+        report["warnings"].append(why)
     report["verified"] = bool(cfg.entry.get("verified", False))
     report["pinned_version"] = str(cfg.entry.get("pinned_version", PINNED_VERSION))
     if not report["verified"]:
@@ -1252,6 +1432,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--symbol", metavar="NAME", help="symbol_impact function name")
     parser.add_argument("--pattern", metavar="REGEX", help="search name pattern")
     parser.add_argument("--json", action="store_true", help="print one JSON object")
+    parser.add_argument(
+        "--if-stale",
+        action="store_true",
+        help="index only: re-index only when the recorded commit is not HEAD",
+    )
     return parser
 
 
@@ -1279,6 +1464,7 @@ def _print_doctor(report: dict) -> None:
             f"version: {report['backend_version'] or 'unknown'} (pinned {report['pinned_version']})"
         )
         print(f"index: {json.dumps(report['index'])}")
+        print(f"runtime dir: {json.dumps(report['runtime_dir'])}")
     for warning in report["warnings"]:
         print(f"warning: {warning}")
 
@@ -1291,7 +1477,22 @@ def main(argv: list[str] | None = None) -> int:
         ns = parser.parse_args(argv)
     except SystemExit as exc:  # argparse: --help (0) or a usage error (2)
         return exc.code if isinstance(exc.code, int) else EXIT_USAGE
+    if ns.if_stale and (ns.command != "index" or ns.json):
+        print(
+            "hyper_codegraph.py: --if-stale goes with index only, without --json", file=sys.stderr
+        )
+        return EXIT_USAGE
     try:
+        if ns.if_stale:
+            root = validate_placeholders({"repo_root": ns.repo_root or str(default_repo_root())})[
+                "repo_root"
+            ]
+            code, lines, ran = index_if_stale(Path(root))
+            for line in lines:
+                print(line)
+            if ran is not None:
+                _print_result(ran)
+            return code
         if ns.command == "doctor":
             root = validate_placeholders({"repo_root": ns.repo_root or str(default_repo_root())})[
                 "repo_root"

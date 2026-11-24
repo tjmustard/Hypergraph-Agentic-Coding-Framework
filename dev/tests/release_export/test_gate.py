@@ -11,6 +11,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
+import sqlite3
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -1114,3 +1116,211 @@ def test_ruff_lints_a_python_file_unchanged_since_the_base(tmp_path: Path) -> No
     for argv in ruff:
         assert argv[-3:] == ["--force-exclude", "--", "app.py"]
     assert out.note == "1 tracked .py file(s)"
+
+
+# ----------------------------------------------------- step 9: code-graph state by meaning (R66)
+
+STORE_SCHEMA = {
+    "projects": "CREATE TABLE projects (name TEXT PRIMARY KEY, indexed_at TEXT, root_path TEXT)",
+    "file_hashes": "CREATE TABLE file_hashes (project TEXT, rel_path TEXT, sha256 TEXT)",
+    "nodes": (
+        "CREATE TABLE nodes (id INTEGER PRIMARY KEY, project TEXT, label TEXT, name TEXT, "
+        "qualified_name TEXT, file_path TEXT, start_line INTEGER, end_line INTEGER)"
+    ),
+    "edges": (
+        "CREATE TABLE edges (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, "
+        "source_id INTEGER, target_id INTEGER, type TEXT)"
+    ),
+}
+STORE_FILES = (("app.txt", "a" * 64), ("lib.py", "b" * 64))
+STORE_NODES = (
+    (1, "Project", "<P>", "", 0, 0),
+    (2, "Function", "<P>.lib.f", "lib.py", 1, 3),
+    (3, "Function", "<P>.lib.g", "lib.py", 5, 9),
+)
+STORE_EDGES = ((1, 2, "DEFINES"), (1, 3, "DEFINES"), (2, 3, "CALLS"))
+
+
+def cg_state(project: Path, name: str, at: str, nodes: int = 3, app: str = "same\n") -> None:
+    """An installed project with the code-graph state an indexed install writes."""
+    state = rx.CODEGRAPH_STATE
+    write(project, "app.txt", app)
+    record = {"last_index": {"at": at, "head": None}, "project_name": name,
+              "version": rx.CBM_STORE_VERSION}  # fmt: skip
+    write(project, state + "project.json", json.dumps(record))
+    index = {"project": name, "status": "indexed", "nodes": nodes, "edges": 3,
+             "not_indexed_files_count": 0, "skipped_count": 0, "parse_partial_count": 0,
+             "parse_unusable_count": 0}  # fmt: skip
+    write(project, state + "raw/index.json", json.dumps(index))
+    listing = {"projects": [{"name": name, "root_path": str(project)}], "total": 1}
+    write(project, state + "raw/list_projects.json", json.dumps(listing))
+
+
+def cbm_store(cache: Path, name: str, *, files=STORE_FILES, nodes=STORE_NODES,
+              edges=STORE_EDGES, similar=(), tables=rx.CBM_STORE_TABLES) -> Path:  # fmt: skip
+    """A small CBM store with the four tables MR 4 reads; `<P>` stands for the project name."""
+    cache.mkdir(parents=True, exist_ok=True)
+    path = cache / f"{name}.db"
+    con = sqlite3.connect(path)
+    for table in tables:
+        con.execute(STORE_SCHEMA[table])
+    if "projects" in tables:
+        con.execute("INSERT INTO projects VALUES (?, ?, ?)", (name, "t", f"/x/{name}"))
+    if "file_hashes" in tables:
+        con.executemany("INSERT INTO file_hashes VALUES (?, ?, ?)",
+                        [(name, rel, digest) for rel, digest in files])  # fmt: skip
+    if "nodes" in tables:
+        rows = [(i, name, label, q.replace("<P>", name), q.replace("<P>", name), f, s, e)
+                for i, label, q, f, s, e in nodes]  # fmt: skip
+        con.executemany("INSERT INTO nodes VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    if "edges" in tables:
+        rows = [(name, s, t, kind) for s, t, kind in edges]
+        rows += [(name, s, t, rx.CBM_SIMILARITY_EDGE) for s, t in similar]
+        con.executemany(
+            "INSERT INTO edges (project, source_id, target_id, type) VALUES (?, ?, ?, ?)", rows
+        )
+    con.commit()
+    con.close()
+    return path
+
+
+def cg_pair(tmp_path: Path, export: dict | None = None, source: dict | None = None,
+            state: dict | None = None):  # fmt: skip
+    """Two installs (export, source) with their own state and stores; return (a, b, cache)."""
+    a, b = tmp_path / "export" / "project", tmp_path / "source" / "project"
+    cache = tmp_path / "cache" / "cbm_cache_dir"
+    for project, side, store in ((a, "export", export or {}), (b, "source", source or {})):
+        name = f"w-{side}-project"
+        cg_state(project, name, f"2026-01-0{1 if side == 'export' else 2}T00:00:00+00:00",
+                 **(state or {}).get(side, {}))  # fmt: skip
+        cbm_store(cache, name, **store)
+    return a, b, cache
+
+
+def compare(a: Path, b: Path, cache: Path | None, tmp_path: Path) -> tuple[list[str], list[str]]:
+    """The new comparison with step 9's arguments; return (differences, log)."""
+    log: list[str] = []
+    return rx.compare_installs(a, b, {}, cache, tmp_path / "step", log), log
+
+
+def test_g1_codegraph_state_and_similarity_edges_alone_are_equal(tmp_path: Path) -> None:
+    """(g1) Installs differ only in `.agents/state/codegraph/**`; stores only in similarity edges.
+
+    No difference; the log names both semantic counts. The stores are read from copies, and
+    the pin MR 4 depends on is the backend's pinned version.
+    """
+    a, b, cache = cg_pair(tmp_path, {"similar": ((2, 3), (3, 2))}, {"similar": ((2, 3), (1, 2))})
+    stores = {p: p.read_bytes() for p in cache.iterdir()}
+    diff, log = compare(a, b, cache, tmp_path)
+    assert diff == []
+    assert "SEMANTICALLY_RELATED edges: 1 only in the export, 1 only in the source " \
+        "(path-derived; logged, never a difference)" in log  # fmt: skip
+    assert "code-graph store (export): 2 file hashes, 3 nodes, 3 structural edges, " \
+        "2 SEMANTICALLY_RELATED" in log  # fmt: skip
+    assert {p: p.read_bytes() for p in cache.iterdir()} == stores
+    copies = sorted(p.name for p in (tmp_path / "step" / "cbm-stores").rglob("*.db"))
+    assert copies == ["w-export-project.db", "w-source-project.db"]
+    pins = TOOL.parents[1] / ".agents/config/code_graph.defaults.yml"
+    defaults = yaml.safe_load(pins.read_text())
+    assert defaults["backends"]["codebase-memory-mcp"]["pinned_version"] == rx.CBM_STORE_VERSION
+
+
+def test_g2_a_structural_edge_difference_is_a_difference(tmp_path: Path) -> None:
+    """(g2) One CALLS edge differs: a difference."""
+    a, b, cache = cg_pair(tmp_path, {"edges": ((1, 2, "DEFINES"), (1, 3, "DEFINES"),
+                                               (3, 2, "CALLS"))})  # fmt: skip
+    diff, _ = compare(a, b, cache, tmp_path)
+    assert diff == [
+        "code-graph index differs: structural edges (1 only in the export, 1 only in the source)"
+    ]
+
+
+def test_g3_a_file_hash_difference_is_a_difference(tmp_path: Path) -> None:
+    """(g3) One file_hashes sha differs: a difference."""
+    a, b, cache = cg_pair(tmp_path, {"files": (("app.txt", "a" * 64), ("lib.py", "c" * 64))})
+    diff, _ = compare(a, b, cache, tmp_path)
+    assert diff == [
+        "code-graph index differs: file hashes (1 only in the export, 1 only in the source)"
+    ]
+
+
+def test_g4_a_node_count_difference_is_a_difference(tmp_path: Path) -> None:
+    """(g4) The node count differs, in index.json and in the store: each is a difference."""
+    more = (*STORE_NODES, (4, "Function", "<P>.lib.h", "lib.py", 11, 12))
+    a, b, cache = cg_pair(tmp_path, {"nodes": more}, state={"export": {"nodes": 4}})
+    diff, _ = compare(a, b, cache, tmp_path)
+    assert diff == [
+        "code-graph index differs: nodes 4 (export) != 3 (source)",
+        "code-graph index differs: nodes (1 only in the export, 0 only in the source)",
+    ]
+
+
+@pytest.mark.parametrize("broken", ["missing", "no edges table"])
+def test_g5_an_unreadable_store_cannot_be_verified(tmp_path: Path, broken: str) -> None:
+    """(g5) A missing store, or one without `edges`: `cannot verify`, so the step fails closed."""
+    a, b, cache = cg_pair(tmp_path)
+    store = cache / "w-export-project.db"
+    store.unlink()
+    if broken == "no edges table":
+        cbm_store(cache, "w-export-project", tables=("projects", "file_hashes", "nodes"))
+    diff, _ = compare(a, b, cache, tmp_path)
+    assert len(diff) == 1
+    assert diff[0].startswith("cannot verify the code-graph index: the export store: ")
+    want = "no store w-export-project.db" if broken == "missing" else "lacks table(s) edges"
+    assert want in diff[0]
+
+
+def test_g6_a_file_outside_the_codegraph_state_still_differs(tmp_path: Path) -> None:
+    """(g6) The exclusion is narrow: a file outside `.agents/state/codegraph/` still differs."""
+    a, b, cache = cg_pair(tmp_path, state={"export": {"app": "changed\n"}})
+    diff, _ = compare(a, b, cache, tmp_path)
+    assert diff == ["differs: app.txt"]
+
+
+def test_g7_codegraph_state_in_one_install_only_is_a_difference(tmp_path: Path) -> None:
+    """(g7) Only one install has `.agents/state/codegraph/`: a difference."""
+    a, b, cache = cg_pair(tmp_path)
+    shutil.rmtree(b / ".agents/state/codegraph")
+    diff, _ = compare(a, b, cache, tmp_path)
+    assert diff == ["only in the export install: .agents/state/codegraph/"]
+
+
+class CodegraphRunner(FakeRunner):
+    """A FakeRunner whose code-graph installs also index: state, and a store in CBM_CACHE_DIR."""
+
+    def run(self, argv, cwd, env):
+        """Act as FakeRunner, then write what the index writes for a code-graph install."""
+        result = super().run(argv, cwd, env)
+        if (
+            argv[0] == "bash"
+            and argv[1].endswith("HACF-install.sh")
+            and ("--install-code-graph" in argv)
+        ):
+            side = Path(cwd).parent.name
+            name = f"w-{side}-project"
+            cg_state(Path(cwd), name, f"at-{side}")
+            similar = ((2, 3),) if side == "export" else ((3, 2),)
+            cbm_store(Path(env["CBM_CACHE_DIR"]), name, similar=similar)
+        return result
+
+
+def test_g8_step_8_is_unchanged_and_step_9_compares_the_stores(
+    gw: GateWorld, digests: Path, tmp_path: Path
+) -> None:
+    """(g8) Step 8's plain pair is compared as before; step 9 passes its CBM_CACHE_DIR (MR 4-5).
+
+    The existing install tests pass untouched; this one adds the step-9 wiring end to end.
+    """
+    profile = gw.profile()
+    build_both(gw, profile)
+    code, report_dir = run_gate(gw, profile, "0.2.0", digests, tmp_path / "r", CodegraphRunner())
+    assert code == 0
+    plain = (report_dir / "logs" / "08-install-plain.log").read_text()
+    assert "equal except the named record fields" in plain
+    assert "code-graph store" not in plain
+    log = (report_dir / "logs" / "09-install-codegraph.log").read_text()
+    assert "SEMANTICALLY_RELATED edges: 1 only in the export, 1 only in the source" in log
+    assert ".agents/state/codegraph/** (per-machine, gitignored; compared by MR 3-4 instead)" in log
+    report = (report_dir / "REPORT.md").read_text()
+    assert "installs equal, code-graph indexes equal (structure), three MCP entries, doctor ok" \
+        in report  # fmt: skip

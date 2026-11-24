@@ -7,6 +7,123 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-11-24
+
+### Added
+- `openrig/hacf/bin/seat-config-upgrade.py` (plan/apply/restore): carries HACF's seat configuration
+  into a live rig spec. It changes files only (backup outside the spec library, atomic writes under
+  a lock, one rig.yaml key, auto-restore on any failure after the backup, a refusal on a dirty
+  source checkout) and prints the seat half, orch-lead last.
+- A per-project daemon runtime for HACF's own code-graph runs: every codebase-memory-mcp process
+  `hyper_codegraph.py` starts gets `CBM_RUNTIME_DIR=$XDG_RUNTIME_DIR/hacf-cbm/<12-hex>` (or
+  `${XDG_CACHE_HOME:-~/.cache}/hacf-cbm/run/<12-hex>`), created 0700; a caller's own value is kept,
+  and `CBM_CACHE_DIR` is untouched. A dir codebase-memory-mcp cannot use (socket path over 107
+  bytes, a parent that is not yours or is group/world-writable) refuses the run before any process
+  starts, never falling back to the shared `/tmp/cbm-daemon-<uid>/`; `doctor` reports the dir.
+- `dev/scripts/upgrade_copy_test.py` (dev only, not shipped): the upgrade copy test. `fixture`
+  mode (offline, the auditor's run) and `live` mode (the lead's run on throwaway copies, inside
+  bwrap) both run nine checks: originals hashed and copied, a pinned `--source --ref` install,
+  `.mcp.json` byte-identical across two installs, seat-config plan/apply, `rig spec validate`,
+  a byte-identical restore, untouched originals and an unchanged `rig specs ls`.
+- `hyper_codegraph.py index --if-stale` re-indexes only when the recorded commit is not HEAD;
+  hyper-execute runs it before the blast-radius updater when a code-graph backend is selected.
+- `--no-mcp-entry` (recorded as `mcp_entry: skipped`, kept by a plain re-run) and `--mcp-entry`:
+  the installer writes no codebase-memory-mcp MCP entry and leaves an existing one alone.
+- The saved installer copy (C2): each install writes `.agents/state/hacf/installer/HACF-install.sh`
+  and records its `installer_sha256`; run from there, the copy refuses on a sha256 mismatch. The
+  uninstaller removes it.
+- `release_export.py scan --tree worktree|head` and check.sh's privacy-scan leg (exit 3 = unknown
+  without the per-user digest file).
+
+### Changed
+- The per-role caps in `openrig/hacf/caps.yml` follow TJ's 2026-11-24 approval: architect 190000,
+  red-team 190000, resolve 270000, execute 330000, audit 220000; lead and scribe unchanged.
+- Every role in `openrig/hacf/roles.yml` also denies `mcp__claude-in-chrome` and `mcp__easel`
+  (bare server denies), and OPS.md says a rig `env:` key reaches a running rig only at a whole-rig
+  `rig down`/`rig up`, the operator's or the person's call (`rig seat launch --fresh` does not re-read it).
+- The context guard's host line is documented per rig: one `--rig <rig>` line per HACF rig on the
+  host, with `hacf` as the worked example; `--arm-checkpoints` arms only that rig's seats.
+
+### Fixed
+- A plain installer re-run keeps the recorded pin (C3): `source.json` records the resolved
+  full sha, never `HEAD`, and a recorded commit missing from the checkout refuses and names `--ref`.
+- A remote install records the fetched installer's version, not the running script's (C4).
+- An upgrade no longer flips the code-graph MCP entry: the recorded install method decides its form, an
+  older HACF uvx entry is upgraded, a user's entry is kept, and the report names what was written.
+- The lore gate allows `propose`, `note` and the read verbs (`list`, `show`, `validate`, `graph`)
+  in a shell heredoc, and denies hyper_lore behind an unknown wrapper (`flock`, `script`,
+  `unbuffer`, …): a command that mentions hyper_lore and is neither a resolved call nor a read of
+  data by one of a closed list of programs is unresolved. A Python body's bypass reason names
+  `--body-file`.
+- The lore gate denies hyper_lore fed its verb through `xargs`/`parallel` (stdin, a replace
+  string or `:::`), and a read of hyper_lore that a leading assignment, an earlier command in the
+  same call or a path could redirect to another program. It no longer denies HACF's own pytest and
+  ledger commands that name hyper_lore files: a closed list (`pytest`, `python3 -m pytest`, and
+  `python3 .agents/scripts/` + `hyper_ledger.py`, `hyper_spec.py`, `hyper_scope.py`,
+  `hypergraph_updater.py`, `archive_specs.py`, optionally after `uv run --locked`).
+- `view-layout.sh` arranges only the Herdr workspace labelled with its `--rig`, so a second HACF
+  team on the same Herdr is left alone; no such workspace moves nothing.
+- A read-only updater run (`--from-diff` without `--apply`) no longer re-marks lore stale: it
+  writes no lore and reports the ids it would mark as `lore_stale_candidates`.
+- The lore gate no longer takes `--` or an option as hyper_lore's verb: a call resolves only when its
+  first argument is exactly one of hyper_lore's subcommands (`-h`/`--help` alone gets no decision).
+
+### Known issues
+- Record correction: the v0.6.0 export commit message says the S04, S08 and S11 recorded live-test
+  fixtures ship unedited. They were left out of v0.6.0-v0.6.2; from v0.6.3 they ship as
+  keep-list-cleaned copies (`dev/tests/fixtures/recorded/`). A pushed commit message cannot change.
+  (still open in 0.6.5)
+- The optional code graph (codebase-memory-mcp) shares one daemon per user unless
+  `CBM_RUNTIME_DIR` differs between runs. (still open in 0.6.5 for the daemon Claude Code launches
+  from `.mcp.json`; HACF's own runs are now isolated, below)
+- codebase-memory-mcp caps a project name at 128 characters, and the name is derived from the
+  checkout path; the workaround is a shorter checkout path. (still open in 0.6.5)
+- The repository moved to `https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework` (the
+  old URL is in the 0.6.3 Known issues). An existing install keeps its pinned old URL and works
+  through GitHub's redirect; to move it, run
+  `/hyper-update --upstream-url https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git`.
+  (still open in 0.6.5)
+- Of the 127 test functions left out of the public v0.6.2 tree, 110 are back in the public suite.
+  The 17 that read HACF's private development records stay in `dev/tests/private_records/`, the one
+  test directory still left out of every export; on a public clone that directory skips with one
+  stated reason. (still open in 0.6.5)
+- The code-graph daemon that Claude Code launches from `.mcp.json` is still shared across
+  projects. HACF's own code-graph runs are isolated per project (Added, above), and an upgrade
+  leaves `.mcp.json` unchanged. A host-neutral `env` block for that entry is planned for v0.6.6:
+  codebase-memory-mcp does not create a missing runtime directory, so the directory must exist
+  before Claude Code starts the server.
+- Shared uv caches, the other half of 0.6.4's per-project item: not addressed in v0.6.5 and not
+  yet scheduled. (still open in 0.6.5)
+- The six v0.6.0 known issues (lock files left in `.git/hacf/locks`, `/hyper-update` refusing after
+  a local-source install, `source.json` surviving uninstall, narrowing `--ides` leaving files,
+  `/hyper-update` without `--source`, the double write of `.claude/settings.json`): scheduled for
+  v0.6.6.
+- K9 (the `hyper-tutorial` pointers, the empty `.claude/commands/hyper-tutorial.md` and the
+  `AGENTS.hacf-v0.6.0.md` sidecar left after uninstall), K10 (`--rig` uses the GNU-only `mv -T`),
+  K11 (exact ruff parity for a nested config in a root-excluded tree) and D2 (a
+  `hyper_migrate.py detect` false positive on an edited `.agents/memory/activeContext.md`):
+  scheduled for v0.6.6.
+- `symbol_impact --include-tests` has no defined semantics yet: scheduled for v0.6.6.
+- The role table's bare denies of `mcp__claude-in-chrome` and `mcp__easel` ship, but their effect
+  on live seats is unmeasured: the headless `claude -p` probe attaches neither server (0 names,
+  and a deny leaves server entries listed anyway). It is checked only after the operator applies
+  the roles, by a live tool-list probe per seat. No token saving is claimed.
+- A rig `env:` key reaches a running rig only at a whole-rig `rig down`/`rig up`
+  (`openrig/hacf/OPS.md`); OpenRig has no verb that updates a running rig's env.
+- Live seats' first-turn context (about 48.7k-50.4k tokens) is above the headless probe's
+  36.9k-41.9k after 0.6.4's start-up trim; the gap is probably host MCP servers, onboarding and a
+  live `CULTURE.md`. Not re-measured in 0.6.5.
+- The hacf OpenRig team's context guard and its checkpoint watchdogs are armed on the rig named
+  `hacf` only. The host line is now documented per rig; arming it on another team is the
+  operator's step at that team's own upgrade.
+- B2 (directional, not a release gate): not met by the collector's rule, n = 20 slices since the
+  roles-v2 rollout against B0's 29. The median tokens per slice fell 41.4% (32.2M to 18.9M;
+  cost-weighted -41.2%), past the 30% target, but escapes per slice read 0 for B0 and 0.2 for B2,
+  and B0's 0 predates the escape counter that sees audit FAILs and builder halts, so that half is
+  not like for like.
+- Privacy scan of the working tree: no v0.6.5 audit recorded an `unknown` result (13 of 14 audits
+  ran it; the first predates the scan leg).
+
 ## [0.6.4] - 2026-11-24
 
 ### Changed

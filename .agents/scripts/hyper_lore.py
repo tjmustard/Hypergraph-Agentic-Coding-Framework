@@ -1708,15 +1708,39 @@ def stale_from_impact(node_ids: list[str], changed_paths: list[str]) -> list[str
             return []
         outbox = outbox_dir()
         if outbox is not None:
-            _, data = read_graph(top)
-            preview = copy.deepcopy(data)
-            marked = _mark_stale(preview, _stale_selector(args))
+            marked = stale_candidates(node_ids, changed_paths)
             if marked:
                 write_outbox_entry(outbox, "stale", args)
             return marked
         return do_stale(top, args)[0]
     except Exception as exc:  # the updater must never fail because of lore
         print(f"warning: hyper_lore.stale_from_impact: {exc}", file=sys.stderr)
+        return []
+
+
+def stale_candidates(node_ids: list[str], changed_paths: list[str]) -> list[str]:
+    """Return the ids stale_from_impact would mark (reason `impact`), writing nothing.
+
+    The read-only preview: no graph gives [], and it never raises (a failure is a warning on
+    stderr and an empty result).
+    """
+    try:
+        found = hyper_ledger.repo_toplevel(Path.cwd())
+        top = found.resolve() if found is not None else None
+        if top is None or not graph_path(top).exists():
+            return []
+        args = {
+            "nodes": [str(item) for item in node_ids if hyper_ledger.ID_RE.match(str(item))],
+            "files": [str(item) for item in changed_paths if str(item).strip()],
+            "reason": "impact",
+        }
+        if not args["nodes"] and not args["files"]:
+            return []
+        _, data = read_graph(top)
+        preview = copy.deepcopy(data)
+        return _mark_stale(preview, _stale_selector(args))
+    except Exception as exc:  # the updater must never fail because of lore
+        print(f"warning: hyper_lore.stale_candidates: {exc}", file=sys.stderr)
         return []
 
 

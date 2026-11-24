@@ -29,11 +29,19 @@ LEAD = "orch-lead@hacf"
 SEAT = "build-execute@hacf"
 OTHER = "build-audit@hacf"
 HOST_LINE = (
-    '"<hacf checkout>/openrig/hacf/bin/context-guard.sh" --rig hacf '
+    '"<hacf checkout>/openrig/hacf/bin/context-guard.sh" --rig <rig> '
     '--project-root "<project root>" --caps "<hacf checkout>/openrig/hacf/caps.yml" '
     "--arm-checkpoints --apply || true"
 )
-HOST_COMMENT = "# HACF context guard: rig hacf only, one tick per digest run (OPS-A, v0.6.4)"
+HOST_EXAMPLE = (
+    '"<hacf checkout>/openrig/hacf/bin/context-guard.sh" --rig hacf '
+    '--project-root "<hacf checkout>" --caps "<hacf checkout>/openrig/hacf/caps.yml" '
+    "--arm-checkpoints --apply || true"
+)
+HOST_COMMENT = (
+    "# HACF context guard: one line per HACF rig on this host, one tick per digest run "
+    "(OPS-A, v0.6.5)"
+)
 # the test caps: every role at the old 150000 default, so the v0.6.3 cases keep their numbers
 TEST_CAP = 150000
 
@@ -625,12 +633,13 @@ def test_usage_exit_2(world: World, args: list[str], env: dict) -> None:
 
 
 def test_readme_documents_the_host_line() -> None:
-    """The README carries the OPS-2 host line exactly once."""
+    """The README carries the per-rig host line template once, then the hacf worked example."""
     text = README.read_text()
     assert text.count(HOST_LINE) == 1
     line = next(ln for ln in text.splitlines() if 'context-guard.sh" --rig' in ln)
     assert line.strip() == HOST_LINE
-    assert line.count("--apply") == 1 and line.count("--rig hacf") == 1
+    assert line.count("--apply") == 1 and line.count("--rig <rig>") == 1
+    assert text.count(HOST_EXAMPLE) == 1
     assert line.count("--caps") == 1
     assert HOST_COMMENT in text
     files = text.split("## Files", 1)[1]
@@ -825,8 +834,8 @@ def test_stale_sample_needs_idle_and_known(world: World) -> None:
     ids=["execute-at", "execute-over", "scribe-at", "scribe-over"],
 )
 def test_role_caps(world: World, logical: str, session: str, tokens: int, restarts: bool) -> None:
-    """Each seat is held to its own role's cap from --caps (here the shipped caps.yml)."""
-    world.caps = REPO_ROOT / "openrig" / "hacf" / "caps.yml"
+    """Each seat is held to its own role's cap from --caps (synthetic caps, OPR.99.0.10.1)."""
+    world.caps = write_caps(world.tmp / "rolecaps", caps_doc(execute=300000, scribe=150000))
     world.ps([lead(), node(logical, session, tokens)])
     result = world.run()
     assert result.returncode == 0, result.stderr
@@ -953,6 +962,8 @@ def armw(world: World) -> World:
 
 def test_arm_registers_one_per_checkpoint_seat(armw: World) -> None:
     """No jobs + --apply: exactly two registers, thresholds and messages from caps.yml."""
+    # synthetic caps (OPR.99.0.10.1): the shipped values are pinned by test_caps.py alone
+    armw.caps = write_caps(armw.tmp / "armcaps", caps_doc(execute=300000, lead=350000))
     result = armw.run("--arm-checkpoints", apply=True)
     assert result.returncode == 0, result.stderr
     regs = registers(armw)
@@ -1128,3 +1139,46 @@ def test_guard_never_names_watchdog_stop() -> None:
     """The shipped guard has no code path that stops or updates a watchdog."""
     code = GUARD.read_text()
     assert '"watchdog", "stop"' not in code and '"watchdog", "update"' not in code
+
+
+# --- OPR.99.0.10.8: the guard per rig (R40) ----------------------------------------------------
+
+DEMO = "demo-hacf"  # a stand-in rig name
+
+
+def test_readme_host_line_is_per_rig() -> None:
+    """MR 1: one line per HACF rig, named as rig whoami reports it; arming is per rig."""
+    flat = " ".join(README.read_text().split())
+    assert "one line per HACF rig on the host" in flat
+    assert "as `rig whoami --json` reports it" in flat
+    assert "`--arm-checkpoints` registers **per rig**" in flat
+    assert "arms jobs for that rig's seats only" in flat
+    assert "the operator's step, under the standing policy" in flat
+
+
+def test_guard_runs_per_rig_beside_hacf(world: World) -> None:
+    """--rig demo-hacf beside hacf: its own state dir, only its seats armed, hacf untouched."""
+    hacf_state = world.home / ".hacf" / RIG
+    hacf_state.mkdir(parents=True)
+    (hacf_state / "context-guard.log").write_text("hacf line\n")
+    before = {p.name: p.read_bytes() for p in hacf_state.iterdir()}
+    demo_lead, demo_seat = f"orch-lead@{DEMO}", f"build-execute@{DEMO}"
+    world.ps([node("orch.lead", demo_lead, 50000), node("build.execute", demo_seat, 100000)])
+    # hacf's own checkpoint jobs are active; they must neither count for nor block demo-hacf
+    world.put("watchdog-list.json", json.dumps([job(SEAT, "wd-h1"), job(LEAD, "wd-h2")]))
+    caps = write_caps(world.tmp / "democaps", caps_doc(execute=300000, lead=350000))
+    args = ["bash", str(GUARD), "--rig", DEMO, "--project-root", str(world.root)]
+    args += ["--caps", str(caps), "--arm-checkpoints", "--apply"]
+    result = subprocess.run(args, env=world.env, capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr
+    demo_state = world.home / ".hacf" / DEMO
+    assert (demo_state / "context-guard.log").is_file()
+    assert any(
+        f"rig={DEMO} " in ln for ln in (demo_state / "context-guard.log").read_text().splitlines()
+    )
+    ps_calls = [c for c in world.calls if c[:1] == ["ps"]]
+    assert ps_calls and all(arg(c, "--rig") == DEMO for c in ps_calls)
+    regs = registers(world)
+    assert {arg(r, "--target-session") for r in regs} == {demo_seat, demo_lead}
+    assert all(arg(r, "--registered-by") == demo_lead for r in regs)
+    assert {p.name: p.read_bytes() for p in hacf_state.iterdir()} == before

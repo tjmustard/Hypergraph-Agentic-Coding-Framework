@@ -61,6 +61,7 @@ except ImportError:  # pragma: no cover - PyYAML is a dev dependency; its absenc
 
 EXIT_OK, EXIT_FAIL, EXIT_REFUSED = 0, 1, 2
 EXIT_BUSY = host_gate.EXIT_BUSY  # 75: the host stayed busy; retry later, never a verdict
+EXIT_UNKNOWN = 3  # `scan --tree` without a digest file: never a verdict, like 75
 SCHEMA = "hacf.release-export/v2"
 PROFILE_MAX_BYTES = 256 * 1024
 ZERO_SHA = "0" * 40
@@ -1402,6 +1403,76 @@ def scan_command(
     return EXIT_FAIL if result.failures else EXIT_OK
 
 
+def tree_digest_path(arg: str | None) -> str | None:
+    """`scan --tree`'s digest file: --digests, $HACF_EXPORT_DIGESTS, then the per-user file.
+
+    The first of these that names a readable file wins; None when none does. The path is never
+    printed.
+    """
+    config = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.environ.get("HOME", "/nonexistent"), ".config"
+    )
+    for source in (arg, os.environ.get("HACF_EXPORT_DIGESTS"), f"{config}/hacf/export-digests"):
+        if source and os.path.isfile(source) and os.access(source, os.R_OK):
+            return source
+    return None
+
+
+def worktree_items(repo: Path) -> list[ScanItem]:
+    """Scan items for the work tree: tracked and untracked, not ignored, files that exist.
+
+    A symlink is scanned by its target text, as a committed symlink's blob reads; a deleted
+    tracked file, and anything that is neither a regular file nor a symlink, is skipped.
+    """
+    out = git(repo, "ls-files", "-z", "-co", "--exclude-standard").stdout
+    data: dict[str, bytes] = {}
+    for path in sorted({p for p in out.split("\0") if p}):
+        full = repo / path
+        if full.is_symlink():
+            data[path] = os.fsencode(os.readlink(full))
+        elif full.is_file():
+            data[path] = full.read_bytes()
+    items = [ScanItem(p, blob, "blob") for p, blob in data.items()]
+    items += [ScanItem(p, p.encode("utf-8", "surrogateescape"), "name") for p in data]
+    return items
+
+
+def scan_tree_command(
+    repo: Path, profile_path: Path, tree: str, digests_arg: str | None, overlay: str | None
+) -> int:
+    """`scan --tree worktree|head`: the gate's rules on the work tree or HEAD (R31, R37).
+
+    Paths an exclude row of the profile's latest release row covers are dropped; no overlay.
+    Without a readable digest file the answer is unknown (exit 3), never a verdict.
+    """
+    if overlay is not None:
+        raise Refusal("--overlay-commit needs --version")
+    profile = load_profile(profile_path)
+    if not profile.releases:
+        raise Refusal("the profile has no release row")
+    latest = max(profile.releases, key=lambda r: vkey(r.version)).version
+    source = tree_digest_path(digests_arg)
+    if source is None:
+        emit(
+            f"scan {tree}: unknown (no digest file: pass --digests, set HACF_EXPORT_DIGESTS "
+            "or place the per-user file)"
+        )
+        return EXIT_UNKNOWN
+    digests = load_digests(source)
+    require_labels(digests, profile)
+    if tree == "head":
+        items = tree_items(repo, tree_entries(repo, "HEAD"))
+    else:
+        items = worktree_items(repo)
+    rows = [r for r in profile.exclude if applies(r.versions, latest)]
+    items = [i for i in items if not any(excluded(i.path, r) for r in rows)]
+    result = run_scan(items, profile, latest, digests)
+    files = sum(1 for i in items if i.kind == "blob")
+    emit(f"scan {tree}: {files} files, latest row {latest}")
+    emit(result.render(), end="")
+    return EXIT_FAIL if result.failures else EXIT_OK
+
+
 # -------------------------------------------------------------------------------------- gate
 
 
@@ -1860,6 +1931,8 @@ def normalise_install(project: Path, placeholders: dict[str, str]) -> dict[str, 
         rel = path.relative_to(project).as_posix()
         if rel == ".git" or rel.startswith(".git/") or (path.is_dir() and not path.is_symlink()):
             continue
+        if rel.startswith(CODEGRAPH_STATE):  # R66: per-machine; compare_codegraph compares it
+            continue
         key = BACKUP_STAMP_RE.sub(r".agents/.backup/<stamp>\1", rel)
         if path.is_symlink():
             data, kind = os.readlink(path).encode(), "link"
@@ -1885,18 +1958,218 @@ def normalise_install(project: Path, placeholders: dict[str, str]) -> dict[str, 
     return tree
 
 
-def compare_installs(a: Path, b: Path, sources: dict[str, str]) -> list[str]:
-    """The differences between two installed projects, after normalisation."""
+def compare_installs(
+    a: Path,
+    b: Path,
+    sources: dict[str, str],
+    cbm_cache: Path | None = None,
+    scratch: Path | None = None,
+    log: list[str] | None = None,
+) -> list[str]:
+    """The differences between two installed projects, after normalisation.
+
+    `.agents/state/codegraph/` leaves the byte comparison and is compared by meaning instead
+    (R66, compare_codegraph); with `cbm_cache` (step 9) the two CBM stores are compared too, on
+    copies under `scratch`, and the similarity counts go to `log`.
+    """
     left = normalise_install(a, {str(a): "<project>", **sources})
     right = normalise_install(b, {str(b): "<project>", **sources})
     diff = [f"only in the export install: {p}" for p in sorted(set(left) - set(right))]
     diff += [f"only in the source install: {p}" for p in sorted(set(right) - set(left))]
     diff += [f"differs: {p}" for p in sorted(set(left) & set(right)) if left[p] != right[p]]
+    diff += compare_codegraph(a, b, cbm_cache, scratch, log if log is not None else [])
     return diff
 
 
-def install_pair(run: GateRun, out: StepOutcome, step: Path, flags: list[str], env: dict[str, str]):
-    """Install from the clone (A) and from the private source (B); return (A, B, ok)."""
+CODEGRAPH_STATE = ".agents/state/codegraph/"  # per-machine and gitignored in an install (R66)
+CBM_STORE_VERSION = "0.12.1"  # the pinned backend; MR 4 reads this version's private store schema
+CBM_STORE_TABLES = ("projects", "file_hashes", "nodes", "edges")
+CBM_SIMILARITY_EDGE = "SEMANTICALLY_RELATED"  # path-derived (R66): logged, never a difference
+INDEX_COUNTS = (
+    "nodes",
+    "not_indexed_files_count",
+    "skipped_count",
+    "parse_partial_count",
+    "parse_unusable_count",
+)
+CBM_PROJECT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
+
+def _json_object(path: Path) -> dict:
+    """The JSON object in `path`, or {} when it is missing, unreadable or not an object."""
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def compare_codegraph(
+    a: Path, b: Path, cbm_cache: Path | None, scratch: Path | None, log: list[str]
+) -> list[str]:
+    """The code-graph state of two installs, compared by meaning (R66, MR 3-4).
+
+    Each failed assertion is one difference. Neither install having the state is equal (step 8).
+    """
+    sides = (("export", a / CODEGRAPH_STATE), ("source", b / CODEGRAPH_STATE))
+    present = [name for name, state in sides if state.is_dir()]
+    if not present:
+        return []
+    if len(present) == 1:
+        return [f"only in the {present[0]} install: {CODEGRAPH_STATE}"]
+    diff: list[str] = []
+    indexes = {}
+    names = {}
+    for name, state in sides:
+        project = _json_object(state / "project.json")
+        index = _json_object(state / "raw" / "index.json")
+        indexes[name] = index
+        names[name] = project.get("project_name")
+        if project.get("version") != CBM_STORE_VERSION:
+            diff.append(
+                f"code-graph state: the {name} project.json version {project.get('version')!r} "
+                f"is not the pinned {CBM_STORE_VERSION}"
+            )
+        last = project.get("last_index")
+        if not (isinstance(last, dict) and last.get("at")):
+            diff.append(f"code-graph state: the {name} project.json has no last_index.at")
+        if index.get("status") != "indexed":
+            diff.append(
+                f"code-graph state: the {name} raw/index.json status is "
+                f"{index.get('status')!r}, not 'indexed'"
+            )
+    for key in INDEX_COUNTS:
+        left, right = indexes["export"].get(key), indexes["source"].get(key)
+        if left != right:
+            diff.append(f"code-graph index differs: {key} {left!r} (export) != {right!r} (source)")
+    if cbm_cache is not None:
+        if scratch is None:
+            raise ValueError("comparing the CBM stores needs a scratch dir for their copies")
+        diff += compare_cbm_stores(names, cbm_cache, scratch, log)
+    return diff
+
+
+class CBMStoreError(Exception):
+    """A CBM store that cannot be copied, read or does not have the expected tables."""
+
+
+def read_cbm_store(cbm_cache: Path, name: object, into: Path) -> dict[str, Any]:
+    """One install's CBM store, read from a copy under `into`; project names become `<P>`.
+
+    Returns the `(rel_path, sha256)` set, the node and structural-edge multisets and the
+    `SEMANTICALLY_RELATED` edge multiset. The store in `cbm_cache` is copied, never opened.
+    """
+    import sqlite3
+    from collections import Counter
+
+    if not (isinstance(name, str) and CBM_PROJECT_RE.fullmatch(name)):
+        raise CBMStoreError(f"no usable project_name in project.json: {name!r}")
+    store = cbm_cache / f"{name}.db"
+    if not store.is_file():
+        raise CBMStoreError(f"no store {store.name} in the CBM cache dir")
+    into.mkdir(parents=True, exist_ok=True)
+    copy = into / store.name
+    try:
+        for suffix in ("", "-wal", "-shm"):
+            source = Path(f"{store}{suffix}")
+            if source.is_file():
+                shutil.copyfile(source, Path(f"{copy}{suffix}"))
+        con = sqlite3.connect(copy)
+        try:
+            listed = con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            tables = {row[0] for row in listed}
+            missing = [t for t in CBM_STORE_TABLES if t not in tables]
+            if missing:
+                raise CBMStoreError(f"{store.name} lacks table(s) {', '.join(missing)}")
+
+            def qn(value: str) -> str:
+                return value.replace(name, "<P>")
+
+            hashes = set(
+                con.execute("SELECT rel_path, sha256 FROM file_hashes WHERE project = ?", (name,))
+            )
+            nodes = Counter(
+                (label, qn(q), path, start, end)
+                for label, q, path, start, end in con.execute(
+                    "SELECT label, qualified_name, file_path, start_line, end_line "
+                    "FROM nodes WHERE project = ?",
+                    (name,),
+                )
+            )
+            structural: Counter = Counter()
+            similar: Counter = Counter()
+            rows = con.execute(
+                "SELECT s.qualified_name, s.file_path, t.qualified_name, t.file_path, e.type "
+                "FROM edges e JOIN nodes s ON s.id = e.source_id "
+                "JOIN nodes t ON t.id = e.target_id WHERE e.project = ?",
+                (name,),
+            )
+            for sq, sf, tq, tf, kind in rows:
+                edge = (qn(sq), sf, qn(tq), tf, kind)
+                (similar if kind == CBM_SIMILARITY_EDGE else structural)[edge] += 1
+        finally:
+            con.close()
+    except (OSError, sqlite3.Error) as exc:
+        raise CBMStoreError(f"{store.name}: {exc}") from exc
+    return {"hashes": hashes, "nodes": nodes, "edges": structural, "similar": similar}
+
+
+def compare_cbm_stores(
+    names: dict[str, object], cbm_cache: Path, scratch: Path, log: list[str]
+) -> list[str]:
+    """MR 4: equal file hashes, nodes and structural edges in the two installs' CBM stores.
+
+    `SEMANTICALLY_RELATED` edges depend on the project path (R66): their counts are logged and
+    never a difference. A store that cannot be read fails closed.
+    """
+    stores = {}
+    for side in ("export", "source"):
+        try:
+            stores[side] = read_cbm_store(cbm_cache, names[side], scratch / "cbm-stores" / side)
+        except CBMStoreError as exc:
+            return [f"cannot verify the code-graph index: the {side} store: {exc}"]
+    ex, src = stores["export"], stores["source"]
+    for side, store in stores.items():
+        log.append(
+            f"code-graph store ({side}): {len(store['hashes'])} file hashes, "
+            f"{sum(store['nodes'].values())} nodes, {sum(store['edges'].values())} structural "
+            f"edges, {sum(store['similar'].values())} {CBM_SIMILARITY_EDGE}"
+        )
+    only_ex = sum((ex["similar"] - src["similar"]).values())
+    only_src = sum((src["similar"] - ex["similar"]).values())
+    log.append(
+        f"{CBM_SIMILARITY_EDGE} edges: {only_ex} only in the export, {only_src} only in the "
+        "source (path-derived; logged, never a difference)"
+    )
+    diff = []
+    if ex["hashes"] != src["hashes"]:
+        diff.append(
+            "code-graph index differs: file hashes "
+            f"({len(ex['hashes'] - src['hashes'])} only in the export, "
+            f"{len(src['hashes'] - ex['hashes'])} only in the source)"
+        )
+    for key, what in (("nodes", "nodes"), ("edges", "structural edges")):
+        if ex[key] != src[key]:
+            diff.append(
+                f"code-graph index differs: {what} "
+                f"({sum((ex[key] - src[key]).values())} only in the export, "
+                f"{sum((src[key] - ex[key]).values())} only in the source)"
+            )
+    return diff
+
+
+def install_pair(
+    run: GateRun,
+    out: StepOutcome,
+    step: Path,
+    flags: list[str],
+    env: dict[str, str],
+    cbm_cache: Path | None = None,
+):
+    """Install from the clone (A) and from the private source (B); return (A, B, ok).
+
+    Step 9 passes its `cbm_cache`, so the two CBM stores are compared too (R66, MR 4).
+    """
     reference = reference_source(run)
     # One basename for both: the installer writes it into the scaffolded SPEC.md heading
     # (`# Project - <basename>`), so differently named dirs would differ on that line alone.
@@ -1908,12 +2181,16 @@ def install_pair(run: GateRun, out: StepOutcome, step: Path, flags: list[str], e
         argv = ["bash", str(source / "HACF-install.sh"), f"--source={source}", f"--ref={ref}"]
         code, _ = run_logged(run, out, [*argv, "-y", "--ides=all", *flags], project, env)
         codes.append(code)
-    diff = compare_installs(a, b, {str(run.clone): "<hacf>", str(reference): "<hacf>"})
+    sources = {str(run.clone): "<hacf>", str(reference): "<hacf>"}
+    store_log: list[str] = []
+    diff = compare_installs(a, b, sources, cbm_cache, step, store_log)
     out.log += ["install comparison:", *(diff or ["equal except the named record fields"])]
+    out.log += store_log
     out.log.append(
         "named record fields: "
         f"{MANIFEST_REL} installed_commit, installed_at, source.commit; "
-        f"{SOURCE_RECORD_REL} path, ref, commit, written_at; .agents/.backup/<stamp>/"
+        f"{SOURCE_RECORD_REL} path, ref, commit, written_at; .agents/.backup/<stamp>/; "
+        f"{CODEGRAPH_STATE}** (per-machine, gitignored; compared by MR 3-4 instead)"
     )
     problems = [f"install exit {c}" for c in codes if c != 0]
     if diff:
@@ -1939,7 +2216,7 @@ def step_install_codegraph(run: GateRun, out: StepOutcome) -> None:
     caches = run.cache_env(step)
     env = run.heavy_env(step, **caches)
     flags = [f"--code-graph={CODE_GRAPH_SERVER}", "--install-code-graph"]
-    project, problems = install_pair(run, out, step, flags, env)
+    project, problems = install_pair(run, out, step, flags, env, Path(caches["CBM_CACHE_DIR"]))
     for rel in MCP_FILES:
         try:
             servers = json.loads((project / rel).read_text(encoding="utf-8")).get("mcpServers", {})
@@ -1967,7 +2244,9 @@ def step_install_codegraph(run: GateRun, out: StepOutcome) -> None:
         "prefix, and backend_version equal to pinned_version"
     )
     out.verdict = "FAIL" if problems else "PASS"
-    out.note = "; ".join(problems) or "installs equal, three MCP entries, doctor ok"
+    out.note = "; ".join(problems) or (
+        "installs equal, code-graph indexes equal (structure), three MCP entries, doctor ok"
+    )
 
 
 CBM_RUNTIME_BASE = "/tmp"  # lead ruling P11: short, because of the AF_UNIX path limit
@@ -2671,8 +2950,17 @@ def main(argv: list[str] | None = None) -> int:
     build_cmd.add_argument("--version", required=True)
     build_cmd.add_argument("--replace-unpushed", action="store_true")
     build_cmd.add_argument("--remote", default="origin")
-    scan_cmd = sub.add_parser("scan", help="scan a version's would-be export tree (read only)")
-    scan_cmd.add_argument("--version", required=True)
+    scan_cmd = sub.add_parser(
+        "scan", help="scan a version's would-be export tree, or HEAD or the work tree (read only)"
+    )
+    scan_what = scan_cmd.add_mutually_exclusive_group(required=True)
+    scan_what.add_argument("--version")
+    scan_what.add_argument(
+        "--tree",
+        choices=["worktree", "head"],
+        help="scan the work tree or HEAD with the latest release row's excludes; exit 3 "
+        "(unknown) without a digest file",
+    )
     scan_cmd.add_argument("--overlay-commit")
     scan_cmd.add_argument("--digests")
     gate_cmd = sub.add_parser("gate", help="prove one export; write its REPORT.md")
@@ -2709,6 +2997,10 @@ def main(argv: list[str] | None = None) -> int:
             profile_check(repo, args.profile)
         elif args.command == "build":
             emit(build(repo, args.profile, args.version, args.replace_unpushed, args.remote))
+        elif args.command == "scan" and args.tree:
+            return scan_tree_command(
+                repo, args.profile, args.tree, args.digests, args.overlay_commit
+            )
         elif args.command == "scan":
             return scan_command(repo, args.profile, args.version, args.overlay_commit, args.digests)
         elif args.command == "gate":

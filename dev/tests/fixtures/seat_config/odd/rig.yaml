@@ -1,0 +1,19 @@
+version: "0.2"
+name: demo-hacf
+env: {OTHER_FLAG: "1"}
+
+pods:
+  - id: orch
+    members:
+      - id: lead
+        agent_ref: "local:agents/hacf"
+        profile: lead
+        runtime: claude-code
+        cwd: ../..
+  - id: build
+    members:
+      - id: execute
+        agent_ref: "local:agents/hacf"
+        profile: execute
+        runtime: claude-code
+        cwd: ../..

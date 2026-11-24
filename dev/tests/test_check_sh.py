@@ -70,7 +70,7 @@ def test_check_sh_fails_without_310_leg(tmp_path):
     assert proc.returncode != 0, output
     assert "cannot import pytest, yaml and xdist" in output
     assert "This is a failure, not a skip" in output
-    assert "[2/4]" not in output, "check.sh ran a pytest leg after the preflight failed"
+    assert "[2/5]" not in output, "check.sh ran a pytest leg after the preflight failed"
 
 
 def _env_fn(call: str, unset: tuple[str, ...] = (), **env: str) -> subprocess.CompletedProcess:
@@ -176,7 +176,7 @@ def test_check_sh_refuses_temp_inside_tree(tmp_path):
     output = proc.stdout + proc.stderr
     assert proc.returncode == 1, output
     assert "is inside the work tree" in output
-    assert "[2/4]" not in output, "check.sh ran a pytest leg with its temp inside the tree"
+    assert "[2/5]" not in output, "check.sh ran a pytest leg with its temp inside the tree"
     assert not probe.exists()
 
 
@@ -192,7 +192,7 @@ def test_check_sh_rejects_bad_workers(tmp_path):
     output = proc.stdout + proc.stderr
     assert proc.returncode == 2, output
     assert "HACF_TEST_WORKERS=abc is not valid" in output
-    assert "[2/4]" not in output, "check.sh ran a pytest leg with an invalid worker count"
+    assert "[2/5]" not in output, "check.sh ran a pytest leg with an invalid worker count"
 
 
 def test_check_sh_header_documents_the_host_lock():
@@ -290,6 +290,16 @@ elif tool == "uv" and args[:3] == ["run", "--locked", "pytest"]:
 elif tool == "uv" and args[:3] == ["run", "--locked", "ruff"]:
     print("stub ruff")
     sys.exit(int(os.environ.get("STUB_RUFF_RC", "0")))
+elif tool == "python3" and args and args[0].endswith("release_export.py"):
+    mode = os.environ.get("STUB_SCAN", "pass")
+    if mode == "unknown":
+        print("scan worktree: unknown (no digest file)")
+        sys.exit(3)
+    print("scan worktree: 3 files, latest row 0.1.0")
+    print("stub scan table")
+    sys.exit(0 if mode == "pass" else 1)
+elif tool == "python3":
+    os.execv(sys.executable, [sys.executable, *args])
 elif tool == "py310" and args[:2] == ["-m", "pytest"]:
     leg("py310")
 elif tool == "py310" and args[0] == "-c":
@@ -301,10 +311,13 @@ else:
 
 
 def _stub_env(tmp_path, **extra):
-    """check.sh's environment with `uv` and HACF_PY310 stubs, its lock and logs under tmp_path."""
+    """check.sh's environment with `uv`, HACF_PY310 and `python3` stubs, lock and logs in tmp_path.
+
+    The `python3` stub fakes only the privacy scan (STUB_SCAN) and runs every other script.
+    """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    for name in ("uv", "py310"):
+    for name in ("uv", "py310", "python3"):
         stub = bin_dir / name
         stub.write_text(f"#!{sys.executable}\n{STUB}", encoding="utf-8")
         stub.chmod(0o755)
@@ -337,18 +350,18 @@ def test_check_sh_failing_leg_runs_every_leg(tmp_path):
     assert proc.returncode == 1, out + proc.stderr
     run = _run_dir(tmp_path)
     assert f"==> logs: {run}" in out
-    for header in ("==> [2/4] pytest (uv venv)", "==> [3/4] pytest (", "==> [4/4] ruff"):
+    for header in ("==> [2/5] pytest (uv venv)", "==> [3/5] pytest (", "==> [4/5] ruff"):
         assert header in out, header
     assert (
-        "    [2/4] pytest (uv venv): FAIL (exit 1) 1 passed, 1 failed, 0 errors, 0 skipped in 1.5s"
+        "    [2/5] pytest (uv venv): FAIL (exit 1) 1 passed, 1 failed, 0 errors, 0 skipped in 1.5s"
         in out
     )
     assert "      FAILED dev/tests/x/test_a.py::test_b" in out
     assert "        assert 1 == 2" in out
     assert f"      log: {run}/2-pytest-uv.log  junit: {run}/2-pytest-uv.xml" in out
-    assert "[3/4] pytest (" in out and "): PASS (exit 0) 1 passed, 0 failed" in out
-    assert "    [4/4] ruff: PASS (exit 0)" in out
-    assert "❌  check.sh failed: [2/4] pytest (uv venv)" in proc.stderr
+    assert "[3/5] pytest (" in out and "): PASS (exit 0) 1 passed, 0 failed" in out
+    assert "    [4/5] ruff: PASS (exit 0)" in out
+    assert "❌  check.sh failed: [2/5] pytest (uv venv)" in proc.stderr
     assert "✅" not in out
     assert "STUB FULL OUTPUT" not in out, "the full output belongs only in the log"
     log = (run / "2-pytest-uv.log").read_text()
@@ -370,9 +383,41 @@ def test_check_sh_ruff_failure_fails_the_run(tmp_path):
     """A failing ruff leg is a FAIL with its log tail, after both pytest legs ran."""
     proc = _run(["bash", str(CHECK_SH)], **_stub_env(tmp_path, STUB_RUFF_RC="1"))
     assert proc.returncode == 1, proc.stdout + proc.stderr
-    assert "    [4/4] ruff: FAIL (exit 1) " in proc.stdout
+    assert "    [4/5] ruff: FAIL (exit 1) " in proc.stdout
     assert "        stub ruff" in proc.stdout
-    assert "❌  check.sh failed: [4/4] ruff" in proc.stderr
+    assert "❌  check.sh failed: [4/5] ruff" in proc.stderr
+
+
+def test_check_sh_privacy_scan_passes(tmp_path):
+    """Leg 5 exit 0: a PASS with the scan's first line, and the final line names the scan."""
+    proc = _run(["bash", str(CHECK_SH)], **_stub_env(tmp_path))
+    out = proc.stdout
+    assert proc.returncode == 0, out + proc.stderr
+    assert "==> [5/5] privacy scan of the work tree" in out
+    assert "    [5/5] privacy scan: PASS (exit 0) scan worktree: 3 files, latest row 0.1.0" in out
+    assert out.rstrip().endswith("legs, ruff, privacy scan).")
+    assert "stub scan table" in (_run_dir(tmp_path) / "5-privacy-scan.log").read_text()
+
+
+def test_check_sh_privacy_scan_failure_fails_the_run(tmp_path):
+    """Leg 5 exit 1: a FAIL with its log tail, and check.sh exits 1 at the end."""
+    proc = _run(["bash", str(CHECK_SH)], **_stub_env(tmp_path, STUB_SCAN="fail"))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "    [5/5] privacy scan: FAIL (exit 1) " in proc.stdout
+    assert "        stub scan table" in proc.stdout
+    assert "❌  check.sh failed: [5/5] privacy scan" in proc.stderr
+    assert "✅" not in proc.stdout
+
+
+def test_check_sh_privacy_scan_unknown(tmp_path):
+    """Leg 5 exit 3: unknown (no digest file), named in the summary and the final line."""
+    proc = _run(["bash", str(CHECK_SH)], **_stub_env(tmp_path, STUB_SCAN="unknown"))
+    out = proc.stdout
+    assert proc.returncode == 0, out + proc.stderr
+    assert "    [5/5] privacy scan: unknown (no digest file)" in out
+    assert "[5/5] privacy scan: PASS" not in out and "[5/5] privacy scan: FAIL" not in out
+    assert out.rstrip().endswith("legs, ruff; privacy scan unknown).")
+    assert "failed" not in proc.stderr
 
 
 def test_check_sh_no_junit_falls_back_to_the_tail(tmp_path):

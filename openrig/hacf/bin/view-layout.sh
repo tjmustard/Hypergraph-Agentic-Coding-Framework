@@ -12,8 +12,10 @@
 # running and nothing is typed into them. A view already in the rows is left alone.
 #
 # The rig's seats come from `rig ps --nodes --rig <name> --json`. A rig without all seven standard
-# HACF seats is not touched. A Herdr workspace is arranged only when one of its tabs holds the seven
-# seat panes (labelled with the seats' logical ids).
+# HACF seats is not touched. Only the Herdr workspace(s) labelled exactly <name> are considered
+# (Herdr names a rig's workspace after the rig and exposes no session name, so the pane labels alone
+# cannot tell two HACF teams apart); one is arranged only when one of its tabs holds the seven seat
+# panes (labelled with the seats' logical ids). A workspace a person renamed is not found.
 #
 # Herdr refuses a move within one tab, so each pane goes to a temporary tab and comes back with
 # --split and --ratio. When a Herdr call fails, every pane still in a temporary tab is moved back
@@ -22,8 +24,8 @@
 # --provider tmux: OpenRig runs each seat in its own tmux session, so no tmux window holds the
 # team's panes and `tmux select-layout` has nothing to arrange; the view is Herdr-only.
 #
-# Exit 0: arranged, already arranged, not a standard HACF team, no view found, or the provider is
-# not installed (one line says which). Exit 1: `rig ps` or a Herdr call failed, or the result is
+# Exit 0: arranged, already arranged, not a standard HACF team, no workspace labelled <name>, no
+# view found, or the provider is not installed (one line says which). Exit 1: `rig ps` or a Herdr call failed, or the result is
 # not the layout. Exit 2: usage.
 set -u
 exec python3 -I - "$@" <<'PY'
@@ -141,8 +143,13 @@ def arrange(wid, name, pid, tab, dry):
 
 
 def main():
-    ap = argparse.ArgumentParser(prog="view-layout.sh")
-    ap.add_argument("--rig", required=True)
+    ap = argparse.ArgumentParser(
+        prog="view-layout.sh",
+        description="Arrange one HACF team's Herdr view into the recommended rows.",
+        epilog="Only the Herdr workspace(s) labelled exactly --rig are arranged; Herdr names a "
+        "rig's workspace after the rig. A workspace a person renamed is not found.",
+    )
+    ap.add_argument("--rig", required=True, help="the rig; also the Herdr workspace label")
     ap.add_argument("--provider", choices=["herdr", "tmux"], default="herdr")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
@@ -167,6 +174,10 @@ def main():
     except HerdrError as exc:
         print(f"{exc}; nothing moved", file=sys.stderr)
         return 1
+    workspaces = [w for w in workspaces if (w.get("label") or "").strip() == a.rig]
+    if not workspaces:
+        print(f"view-layout: no Herdr workspace labelled {a.rig}; nothing moved")
+        return 0
     found, failed = 0, []
     for w in workspaces:
         wid = w["workspace_id"]

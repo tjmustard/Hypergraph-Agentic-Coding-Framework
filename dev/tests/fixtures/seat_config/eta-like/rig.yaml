@@ -1,0 +1,21 @@
+version: "0.2"
+name: demo-hacf
+summary: A stand-in team.
+
+culture_file: CULTURE.md
+
+pods:
+  - id: orch
+    members:
+      - id: lead
+        agent_ref: "local:agents/hacf"
+        profile: lead
+        runtime: claude-code
+        cwd: /abs/stand-in/path
+  - id: build
+    members:
+      - id: execute
+        agent_ref: "local:agents/hacf"
+        profile: execute
+        runtime: claude-code
+        cwd: /abs/stand-in/path

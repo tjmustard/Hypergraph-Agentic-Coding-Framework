@@ -60,6 +60,34 @@ except BaseException as exc:  # a hook that cannot import must still block
 ASK_MODES = ("default", "acceptEdits", "auto")
 DENY_MODES = ("dontAsk", "bypassPermissions", "plan")
 SWITCH_MODE = "switch to default or acceptEdits (Shift+Tab) and retry"
+# hyper_lore.py's subcommands, exactly (14 MR 1; the tripwire test reads its parser). A hyper_lore
+# argv resolves only when argv[0] is one of these; `-h`/`--help` alone gets no decision.
+LORE_VERBS = (
+    "validate",
+    "show",
+    "list",
+    "graph",
+    "propose",
+    "note",
+    "stale",
+    "resolve-anchors",
+    "sync",
+    "approval-request",
+    "approval-cancel",
+    "approve",
+    "reject",
+    "retire",
+    "reopen",
+    "review",
+    "apply-outbox",
+    "index",
+    "init",
+    "import",
+    "merge-driver",
+    "merge-generated",
+    "renumber",
+    "install-drivers",
+)
 GATED = ("approve", "reject", "retire", "reopen", "review")
 LEADS = {
     "approve": "Approve {}",
@@ -93,6 +121,7 @@ WRAPPERS = {
     "ionice",
     "nice",
     "nohup",
+    "parallel",
     "setsid",
     "stdbuf",
     "sudo",
@@ -101,6 +130,108 @@ WRAPPERS = {
     "uv",
     "uvx",
     "xargs",
+}
+HEREDOC_SHELLS = ("bash", "sh", "zsh", "dash", "ksh")
+HEREDOC_ALLOWED = ("list", "show", "validate", "graph", "propose", "note")
+HEREDOC_DEPTH = 2
+PY_BODY_HINT = (
+    "run hyper_lore.py directly with --body-file <file>"
+    " (a Python or heredoc body cannot be checked)"
+)
+SED_PRINT_RE = re.compile(r"\d+(,\d+)?p", re.ASCII)
+GIT_READ = ("diff", "log", "show", "status", "commit", "add", "blame")
+GIT_EXEC = ("-c", "--config-env", "--exec-path", "--ext-diff")
+PYTHON_BODY = object()  # _script_argv's unresolved result for a Python body (MR 3)
+ARGV_FEEDERS = ("xargs", "parallel")  # wrappers that can take the argv from stdin (13 MR 1)
+UV_RUN_FLAGS = ("--locked", "--frozen", "--offline", "--no-sync", "-q", "--quiet")
+HARMLESS_PROGRAMS = ("true", "false", ":", "test", "[", "mkdir")
+# HACF's own dev commands (OPR.99.0.10.13 MR 2, R51): they read their arguments as data and never
+# run them. Closed like DATA_ONLY; adding an entry needs a replan, and a test pins both lists.
+DEV_COMMANDS = {
+    "pytest": (("pytest",), ("python", "-m", "pytest"), ("python3", "-m", "pytest")),
+    "scripts": (
+        "hyper_ledger.py",
+        "hyper_spec.py",
+        "hyper_scope.py",
+        "hypergraph_updater.py",
+        "archive_specs.py",
+    ),
+}
+
+
+def _any_args(tokens: list[str]) -> bool:
+    return True
+
+
+def _rg_rule(tokens: list[str]) -> bool:
+    """Allow rg without --pre or --pre-glob, which run a command."""
+    return not any(token.startswith("--pre") for token in tokens[1:])
+
+
+def _sed_rule(tokens: list[str]) -> bool:
+    """Allow sed -n whose every script is Np or N,Mp and whose other tokens are files."""
+    if len(tokens) < 2 or tokens[1] != "-n":
+        return False
+    rest = tokens[2:]
+    scripts: list[str] = []
+    files: list[str] = []
+    if "-e" in rest:
+        args = iter(rest)
+        for token in args:
+            if token == "-e":
+                script = next(args, None)
+                if script is None:
+                    return False
+                scripts.append(script)
+            else:
+                files.append(token)
+    elif rest:
+        scripts, files = [rest[0]], rest[1:]
+    return (
+        bool(scripts)
+        and all(SED_PRINT_RE.fullmatch(script) for script in scripts)
+        and not any(name.startswith("-") for name in files)
+    )
+
+
+def _git_rule(tokens: list[str]) -> bool:
+    """Allow git with a GIT_READ subcommand first and no option that runs a command."""
+    if len(tokens) < 2 or tokens[1] not in GIT_READ:
+        return False
+    return not any(
+        token in GIT_EXEC or token.startswith(("--config-env=", "--exec-path="))
+        for token in tokens[1:]
+    )
+
+
+def _ruff_rule(tokens: list[str]) -> bool:
+    """Allow ruff whose first non-option argument is check or format."""
+    return next((token for token in tokens[1:] if not token.startswith("-")), None) in (
+        "check",
+        "format",
+    )
+
+
+# The closed data-only list (OPR.99.0.10.5 MR 1, replan R48): a segment that mentions hyper_lore
+# and is not a hyper_lore call resolves with no decision only through this dict. Adding a program
+# needs a replan and its own tests; dev/tests/firewall/test_gate_hook.py pins the keys.
+DATA_ONLY = {
+    "echo": _any_args,
+    "printf": _any_args,
+    "cat": _any_args,
+    "head": _any_args,
+    "tail": _any_args,
+    "wc": _any_args,
+    "ls": _any_args,
+    "diff": _any_args,
+    "sha256sum": _any_args,
+    "grep": _any_args,
+    "egrep": _any_args,
+    "fgrep": _any_args,
+    "rg": _rg_rule,
+    "sed": _sed_rule,
+    "git": _git_rule,
+    "ruff": _ruff_rule,
 }
 
 
@@ -140,25 +271,54 @@ def _strip_heredocs(command: str) -> str:
     return "\n".join(kept)
 
 
+def _heredocs(command: str) -> list[tuple[str, str]]:
+    """Return (delimiter, body) for each heredoc _strip_heredocs drops, in order."""
+    found: list[tuple[str, str]] = []
+    until = None
+    body: list[str] = []
+    for line in command.split("\n"):
+        if until is not None:
+            if line.strip() == until:
+                found.append((until, "\n".join(body)))
+                until = None
+            else:
+                body.append(line)
+            continue
+        match = HEREDOC_RE.search(line)
+        if match:
+            until, body = match.group(2), []
+    return found
+
+
 def _segments(command: str) -> list[list[str]]:
     """Split a command on shell control operators; drop redirections. ValueError if unparseable."""
+    return [tokens for tokens, _ in _segments_with_heredocs(command)]
+
+
+def _segments_with_heredocs(command: str) -> list[tuple[list[str], list[str]]]:
+    """Return (tokens, heredoc delimiters) per segment, as _segments splits them."""
     lexer = shlex.shlex(command, posix=True, punctuation_chars=PUNCTUATION)
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     lexer.commenters = ""
-    segments: list[list[str]] = [[]]
+    segments: list[tuple[list[str], list[str]]] = [([], [])]
     in_redirect = False
+    heredoc_next = False
     for token in lexer:
         if token and set(token) <= set(PUNCTUATION):
+            heredoc_next = token == "<<"
             if set(token) & set("<>"):
-                if segments[-1] and segments[-1][-1].isdigit() and not in_redirect:
-                    segments[-1].pop()  # the 2 of 2>&1
+                if segments[-1][0] and segments[-1][0][-1].isdigit() and not in_redirect:
+                    segments[-1][0].pop()  # the 2 of 2>&1
                 in_redirect = True
             else:
-                segments.append([])
+                segments.append(([], []))
                 in_redirect = False
+        elif heredoc_next:
+            segments[-1][1].append(token[1:] if token.startswith("-") else token)  # <<-EOF
+            heredoc_next = False
         elif not in_redirect:
-            segments[-1].append(token)
+            segments[-1][0].append(token)
     return segments
 
 
@@ -185,8 +345,13 @@ def _python_target(args: list[str]) -> tuple[str, str, list[str]] | None:
     return None
 
 
-def _script_argv(tokens: list[str], mention: bool) -> list[str] | bool | None:
-    """Return the hyper_lore argv of one segment, True when unresolved, None when it is not one."""
+def _script_argv(
+    tokens: list[str], mention: bool, assigned: bool = False
+) -> list[str] | bool | object | None:
+    """Return the hyper_lore argv of one segment; True or PYTHON_BODY when unresolved.
+
+    None means the segment is not a hyper_lore call (_scan then applies DATA_ONLY to a mention).
+    """
     program = os.path.basename(tokens[0])
     if program in SHELLS:
         # A shell fed from stdin has no code in this segment, so a mention anywhere counts.
@@ -199,27 +364,60 @@ def _script_argv(tokens: list[str], mention: bool) -> list[str] | bool | None:
     for index, token in enumerate(tokens):
         name = os.path.basename(token).strip("`")
         if name == SCRIPT:
-            return tokens[index + 1 :]
+            return _fed(tokens[:index], tokens[index + 1 :], assigned)
         if not PYTHON_RE.match(name):
             continue
-        target = _python_target(tokens[index + 1 :])
-        if target is None:
-            return None
-        kind, value, rest = target
-        if kind == "code":
-            return True if _mentions(value) else None
-        if kind == "module":
-            if value == "runpy" and rest:
-                return rest[1:] if os.path.basename(rest[0]) in (MODULE, SCRIPT) else None
-            return rest if value.split(".")[-1] == MODULE else None
-        if value in ("-", "$"):  # stdin, or what an unquoted $(...) leaves in the script position
-            return True if mention else None
-        if os.path.basename(value) == SCRIPT:
-            return rest
-        if _expands(value) or set(value) & set("*?["):
-            return True if rest and rest[0] in GATED else None
-        return None
+        return _fed(tokens[:index], _python_argv(tokens[index + 1 :], mention), assigned)
     return None
+
+
+def _python_argv(args: list[str], mention: bool) -> list[str] | bool | object | None:
+    """Return the hyper_lore argv an interpreter's args run, as _script_argv does."""
+    target = _python_target(args)
+    if target is None:
+        return None
+    kind, value, rest = target
+    if kind == "code":
+        return PYTHON_BODY if _mentions(value) else None
+    if kind == "module":
+        if value == "runpy" and rest:
+            return rest[1:] if os.path.basename(rest[0]) in (MODULE, SCRIPT) else None
+        return rest if value.split(".")[-1] == MODULE else None
+    if value == "-":  # a body on stdin
+        return PYTHON_BODY if mention else None
+    if value == "$":  # what an unquoted $(...) leaves in the script position
+        return True if mention else None
+    if os.path.basename(value) == SCRIPT:
+        return rest
+    if _expands(value) or set(value) & set("*?["):
+        return True if rest and rest[0] in GATED else None
+    return None
+
+
+def _fed(before: list[str], argv: list[str] | bool | object | None, assigned: bool):
+    """Return argv, or True when an xargs/parallel before the script could supply the verb.
+
+    The closed form (13 MR 1, lead ruling P28, R54): no leading assignment (PARALLEL=… carries
+    options), the wrapper followed directly by the interpreter or script (no option of any kind),
+    a non-empty argv whose argv[0] is a literal (none of `{`, `}`, `:`, `$`, backtick) ungated verb,
+    and no later token with a `{`/`}` replacement string or a `:::` source. Anything else is
+    unresolved; input can then only append arguments after a literal ungated verb.
+    """
+    feeder = next(
+        (i for i, token in enumerate(before) if os.path.basename(token) in ARGV_FEEDERS), None
+    )
+    if feeder is None or not isinstance(argv, list):
+        return argv
+    literal = bool(argv) and argv[0] not in GATED and not set(argv[0]) & set("{}:$`")
+    later = before[feeder + 1 :] + argv
+    if (
+        assigned
+        or feeder != len(before) - 1
+        or not literal
+        or any("{" in token or "}" in token or token.startswith(":::") for token in later)
+    ):
+        return True
+    return argv
 
 
 def _parse_gated(args: list[str]) -> tuple[list[str], str | None, str | None]:
@@ -241,34 +439,123 @@ def _parse_gated(args: list[str]) -> tuple[list[str], str | None, str | None]:
     return ids, nonce, warrant
 
 
-def _scan(command: str, start: str | None) -> tuple[list[tuple], bool]:
-    """Return (gated invocations as (verb, ids, nonce, warrant path), unresolved mention)."""
+def _data_only(assignments: list[str], tokens: list[str]) -> bool:
+    """Say whether a segment only reads data (05 MR 1, R48; 13 MR 3-4, R52).
+
+    No leading assignment at all, nothing expands, and the program, named bare (no `/`, so PATH
+    resolves it), is in DATA_ONLY and passes its rule.
+    """
+    if assignments or any(_expands(token) for token in tokens) or "/" in tokens[0]:
+        return False
+    rule = DATA_ONLY.get(tokens[0])
+    return rule is not None and rule(tokens)
+
+
+def _dev_command(assignments: list[str], tokens: list[str]) -> bool:
+    """Say whether a segment is one of HACF's DEV_COMMANDS (13 MR 2-4).
+
+    A leading `uv run` may carry only UV_RUN_FLAGS. Then pytest, `python[3] -m pytest`, or
+    `python[3] [./].agents/scripts/<name>` for a DEV_COMMANDS script, named bare, no assignment,
+    nothing expanding, and no interpreter option.
+    """
+    if assignments or any(_expands(token) for token in tokens):
+        return False
+    command = tokens
+    if command[0] == "uv":
+        if command[1:2] != ["run"]:
+            return False
+        command = command[2:]
+        while command and command[0].startswith("-"):
+            if command[0] not in UV_RUN_FLAGS:
+                return False
+            command = command[1:]
+    if not command or "/" in command[0]:
+        return False
+    if any(tuple(command[: len(form)]) == form for form in DEV_COMMANDS["pytest"]):
+        return True
+    scripts = {
+        f"{prefix}{name}"
+        for prefix in (".agents/scripts/", "./.agents/scripts/")
+        for name in DEV_COMMANDS["scripts"]
+    }
+    return command[0] in ("python", "python3") and len(command) > 1 and command[1] in scripts
+
+
+def _scan(
+    command: str, start: str | None, depth: int = 0, harmless: bool = True
+) -> tuple[list[tuple], bool, bool]:
+    """Return (gated invocations as (verb, ids, nonce, warrant path), unresolved, Python body).
+
+    Depth 0 is the command itself; a shell heredoc body is re-scanned one level deeper, up to
+    HEREDOC_DEPTH (F6). In a body every hyper_lore call must be a HEREDOC_ALLOWED verb or a
+    complete gated call; anything else is unresolved (lead ruling P26 for incomplete gated calls).
+
+    `harmless` says every earlier segment had a closed harmless shape (13 MR 4, R52): cd, a
+    HARMLESS_PROGRAMS command, a DATA_ONLY or DEV_COMMANDS segment, or a resolved hyper_lore call,
+    each with no leading assignment. A data-only or dev read of hyper_lore resolves only then; a
+    heredoc body inherits it, because what the outer shell ran reaches the inner one.
+    """
     mention = _mentions(command)
+    bodies = _heredocs(command)
     try:
-        segments = _segments(_strip_heredocs(command))
+        segments = _segments_with_heredocs(_strip_heredocs(command))
     except ValueError:
-        return [], mention
+        return [], mention, False
     gated: list[tuple] = []
     unresolved = False
+    python_body = False
     cwd = start
-    for segment in segments:
+    for segment, delimiters in segments:
         tokens = list(segment)
+        assignments: list[str] = []
         while tokens and ASSIGNMENT_RE.match(tokens[0]):
-            tokens.pop(0)
+            assignments.append(tokens.pop(0))
         if not tokens:
+            harmless = harmless and not assignments  # a bare assignment primes what follows
             continue
+        seg_mention = _mentions(" ".join(assignments + tokens))
         if tokens[0] == "cd":
+            unresolved = unresolved or seg_mention
+            harmless = harmless and not assignments
             target = next((t for t in tokens[1:] if not t.startswith("-")), "~")
             if _expands(target) or "-" in tokens[1:] or (cwd is None and target[:1] not in "/~"):
                 cwd = None
             else:
                 cwd = os.path.join(cwd or "", os.path.expanduser(target))
             continue
-        argv = _script_argv(tokens, mention)
-        if argv is True:
+        if (
+            os.path.basename(tokens[0]) in HEREDOC_SHELLS
+            and delimiters
+            and all(arg.startswith("-") for arg in tokens[1:])
+        ):
+            matching = [body for name, body in bodies if name in delimiters]
+            if len(delimiters) != 1 or len(matching) != 1 or depth + 1 > HEREDOC_DEPTH:
+                unresolved = True
+                continue
+            inner = _scan(matching[0], cwd, depth + 1, harmless)
+            inner_gated, inner_unresolved, inner_python = inner
+            gated += inner_gated
+            unresolved = unresolved or inner_unresolved
+            python_body = python_body or inner_python
+            harmless = False  # not a closed harmless shape (13 MR 4)
+            continue
+        argv = _script_argv(tokens, mention, bool(assignments))
+        plain = argv is None and (
+            _data_only(assignments, tokens) or _dev_command(assignments, tokens)
+        )
+        if argv is None and seg_mention and not (plain and harmless):
+            argv = True  # fail closed (F5, R52): not a call, or a read something could redirect
+        harmless = harmless and (
+            plain
+            or isinstance(argv, list)
+            or (argv is None and not assignments and tokens[0] in HARMLESS_PROGRAMS)
+        )
+        if argv is PYTHON_BODY:
+            unresolved = python_body = True
+        elif argv is True:
             unresolved = True
-        elif argv:
-            verb, rest = argv[0], argv[1:]
+        elif isinstance(argv, list) and (argv or depth):
+            verb, rest = (argv[0], argv[1:]) if argv else ("", [])
             if _expands(verb):
                 unresolved = True
             elif verb in GATED:
@@ -277,10 +564,16 @@ def _scan(command: str, start: str | None) -> tuple[list[tuple], bool]:
                     unresolved = True
                 elif warrant and cwd is None and not warrant.startswith(("/", "~")):
                     unresolved = True
+                elif depth and (len(ids) != 1 or not nonce or not warrant):
+                    unresolved = True  # lead ruling P26: an incomplete gated call in a body
                 else:
                     path = os.path.join(cwd or "", os.path.expanduser(warrant)) if warrant else None
                     gated.append((verb, ids, nonce, path))
-    return gated, unresolved
+            elif depth and verb not in HEREDOC_ALLOWED:
+                unresolved = True
+            elif verb not in LORE_VERBS and argv not in (["-h"], ["--help"]):
+                unresolved = True  # 14 MR 2: `--`, an option or an unknown name is no verb
+    return gated, unresolved, python_body
 
 
 def _pending(project: str, node_id: str) -> dict:
@@ -366,12 +659,14 @@ def decide(raw: bytes, environ: dict) -> int:
     if not isinstance(command, str):
         raise TypeError("tool_input.command is not a string")
     project = environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd")
-    gated, unresolved = _scan(command, data.get("cwd") or project)
+    gated, unresolved, python_body = _scan(command, data.get("cwd") or project)
     if not gated and not unresolved:
         return 0
     if mode in DENY_MODES:
+        hint = f"; {PY_BODY_HINT}" if python_body and mode == "bypassPermissions" else ""
         return _deny(
             f"a gated hyper_lore command needs a prompt, which {mode} cannot show: {SWITCH_MODE}"
+            + hint
         )
     if not gated:
         return _ask(

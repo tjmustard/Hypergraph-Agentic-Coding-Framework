@@ -380,6 +380,7 @@ def test_manifest_records_installed_commit(project: Path, run_install, upstream)
     assert set(manifest) == {
         "version", "installed_commit", "installed_at", "files",
         "settings_rules", "hooks", "blocks", "mcp_entries", "source", "ides",
+        "installer_sha256",  # the saved installer copy (C2, OPR.99.0.10.3)
     }  # fmt: skip
     assert manifest["installed_commit"] == upstream.sha
     assert manifest["installed_at"].endswith("+00:00")

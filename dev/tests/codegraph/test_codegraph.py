@@ -11,6 +11,7 @@ and state file lives under tmp_path.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -41,6 +42,10 @@ here = Path(__file__).resolve().parent
 args = sys.argv[1:]
 with open(here / "argv.jsonl", "a", encoding="utf-8") as log:
     log.write(json.dumps(args) + "\\n")
+import os
+seen = {k: os.environ[k] for k in ("CBM_RUNTIME_DIR", "CBM_CACHE_DIR") if k in os.environ}
+with open(here / "env.jsonl", "a", encoding="utf-8") as log:
+    log.write(json.dumps(seen) + "\\n")
 key = args[1] if args[:1] == ["cli"] and len(args) > 1 else (args[0] if args else "")
 answers = json.loads((here / "answers.json").read_text(encoding="utf-8"))
 answer = answers.get(key, {"stderr": "stub: no answer for " + key + "\\n", "exit": 3})
@@ -182,6 +187,13 @@ class Stub:
             return []
         return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
 
+    def envs(self) -> list[dict]:
+        """Return the CBM_RUNTIME_DIR / CBM_CACHE_DIR each call saw, oldest first."""
+        log = self.dir / "env.jsonl"
+        if not log.exists():
+            return []
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
     def tools(self) -> list[str]:
         """Return the tool each call named (`--version` for a version call)."""
         return [args[1] if args[:1] == ["cli"] else args[0] for args in self.calls()]
@@ -241,6 +253,30 @@ def _git_only_path(tmp_path: Path) -> str:
     if not (bindir / "git").exists():
         (bindir / "git").symlink_to(git)
     return str(bindir)
+
+
+# conftest.py exports one short private CBM_RUNTIME_DIR for the whole run (lead ruling P32), so
+# every test here is a caller that sets it and the adapter creates nothing on the host; MR 2's
+# own tests clear it (_own_runtime).
+SESSION_RUNTIME = os.environ.get("CBM_RUNTIME_DIR", "")
+
+
+def _own_runtime(monkeypatch: pytest.MonkeyPatch, xdg: Path | None, **env: str) -> None:
+    """Let the adapter choose the runtime dir: no caller value, XDG_RUNTIME_DIR = xdg (or unset).
+
+    The socket budget is lifted because tmp_path is longer than any real runtime root; the
+    budget has its own tests.
+    """
+    monkeypatch.delenv("CBM_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("CBM_CACHE_DIR", raising=False)
+    if xdg is None:
+        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    else:
+        xdg.mkdir(mode=0o700, exist_ok=True)
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg))
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(hyper_codegraph, "SUN_PATH_MAX", 4096)
 
 
 @pytest.fixture
@@ -776,3 +812,328 @@ def test_from_diff_positional_form_untouched(tmp_git_repo: GitRepo, run_script) 
     assert proc.returncode == 0, proc.stderr
     assert "code graph" not in proc.stdout + proc.stderr
     assert "HYPERGRAPH UPDATER: SUCCESS" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# Per-project daemon runtime (MR 2, C5; lead ruling P31) and index --if-stale (MR 4)
+# ---------------------------------------------------------------------------
+
+
+def _private(path: Path) -> bool:
+    return path.is_dir() and not path.is_symlink() and path.stat().st_mode & 0o777 == 0o700
+
+
+def test_a_two_repos_two_private_runtime_dirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(a) Two repos: two distinct CBM_RUNTIME_DIRs under XDG_RUNTIME_DIR/hacf-cbm, each 0700.
+
+    hacf-cbm itself is 0700 too, although the umask is 002.
+    """
+    xdg = tmp_path / "xdg"
+    _own_runtime(monkeypatch, xdg)
+    stub = Stub(tmp_path / "stub")
+    repos = [tmp_path / "r1", tmp_path / "r2"]
+    old = os.umask(0o002)
+    try:
+        for root in repos:
+            root.mkdir()
+            assert hyper_codegraph.backend_version(stub.prefix, root, 30) == "0.12.1"
+    finally:
+        os.umask(old)
+    seen = [e["CBM_RUNTIME_DIR"] for e in stub.envs()]
+    want = [str(xdg / "hacf-cbm" / hyper_codegraph.repo_hash(r)) for r in repos]
+    assert seen == want and len(set(seen)) == 2
+    assert all(len(hyper_codegraph.repo_hash(r)) == 12 for r in repos)
+    assert all(_private(Path(p)) for p in seen) and _private(xdg / "hacf-cbm")
+
+
+def test_a_cache_form_without_xdg_runtime_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(a) Without XDG_RUNTIME_DIR: ${XDG_CACHE_HOME}/hacf-cbm/run/<12-hex>, every part 0700."""
+    cache = tmp_path / "cache"
+    cache.mkdir(mode=0o700)
+    _own_runtime(monkeypatch, None, XDG_CACHE_HOME=str(cache))
+    stub = Stub(tmp_path / "stub")
+    root = tmp_path / "r1"
+    root.mkdir()
+    old = os.umask(0o002)
+    try:
+        hyper_codegraph.backend_version(stub.prefix, root, 30)
+    finally:
+        os.umask(old)
+    (env,) = stub.envs()
+    path = cache / "hacf-cbm" / "run" / hyper_codegraph.repo_hash(root)
+    assert env == {"CBM_RUNTIME_DIR": str(path)}
+    assert all(_private(p) for p in (path, path.parent, path.parent.parent))
+
+
+def test_b_caller_runtime_dir_passes_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(b) A caller's CBM_RUNTIME_DIR reaches the child unchanged; the adapter creates nothing."""
+    xdg = tmp_path / "xdg"
+    _own_runtime(monkeypatch, xdg, CBM_RUNTIME_DIR=str(tmp_path / "mine"))
+    stub = Stub(tmp_path / "stub")
+    hyper_codegraph.backend_version(stub.prefix, tmp_path, 30)
+    assert stub.envs() == [{"CBM_RUNTIME_DIR": str(tmp_path / "mine")}]
+    assert not (tmp_path / "mine").exists() and list(xdg.iterdir()) == []
+
+
+def test_c_cbm_cache_dir_never_added(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """(c) CBM_CACHE_DIR is absent from the child unless the caller set it, then unchanged."""
+    _own_runtime(monkeypatch, tmp_path / "xdg")
+    stub = Stub(tmp_path / "stub")
+    hyper_codegraph.backend_version(stub.prefix, tmp_path, 30)
+    monkeypatch.setenv("CBM_CACHE_DIR", str(tmp_path / "store"))
+    hyper_codegraph.backend_version(stub.prefix, tmp_path, 30)
+    first, second = stub.envs()
+    assert "CBM_CACHE_DIR" not in first
+    assert second["CBM_CACHE_DIR"] == str(tmp_path / "store")
+
+
+def test_git_children_get_no_runtime_dir(tmp_git_repo: GitRepo, monkeypatch, tmp_path) -> None:
+    """Git calls go through the same helper but never create or receive a runtime dir."""
+    xdg = tmp_path / "xdg"
+    _own_runtime(monkeypatch, xdg)
+    root = _scaffold(tmp_git_repo, _hacf_yml())
+    assert hyper_codegraph.head_commit(root)
+    assert list(xdg.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"XDG_RUNTIME_DIR": "/run/user/4294967294"},
+        {"XDG_RUNTIME_DIR": "/run/user/1000"},
+        {"HOME": "/var/u/" + "u" * 32},
+        {"XDG_RUNTIME_DIR": "/run/user/" + "9" * 60},
+        {"HOME": "/var/u/" + "a-very-long-user-name-on-a-very-long-home-path" * 2},
+        {"XDG_CACHE_HOME": "/srv/" + "c" * 70},
+    ],
+)
+def test_p31_socket_path_always_fits(env: dict) -> None:
+    """P31: a planned runtime dir leaves room for CBM's worst-case socket path (<= 107 bytes).
+
+    One that would not fit is not planned at all, and the reason says so.
+    """
+    target, source, why = hyper_codegraph.runtime_dir_plan(Path("/abs/stand-in/repo"), env)
+    if target is not None:
+        worst = len(os.fsencode(str(target))) + hyper_codegraph.CBM_SOCKET_TAIL_MAX
+        assert worst <= 107 == hyper_codegraph.SUN_PATH_MAX
+        assert target.name == hyper_codegraph.repo_hash(Path("/abs/stand-in/repo"))
+    else:
+        assert why.startswith("code-graph runtime path too long (") and why.endswith(
+            " > 107 bytes): set XDG_RUNTIME_DIR or CBM_RUNTIME_DIR to a shorter dir"
+        )
+    real_worst = "/run/user/4294967294/hacf-cbm/0123456789ab/cbm-daemon-4294967294/" + (
+        "cbm-0123456789abcdef.sock"
+    )
+    assert len(real_worst) <= 107  # the XDG form fits for any 32-bit uid
+
+
+def _refused_run(root: Path, stub: Stub) -> dict:
+    """Index root with the stub recorded as the backend; the stub must never run."""
+    _state(root, exe_argv_prefix=stub.prefix)
+    result = hyper_codegraph.run_capability("index", repo_root=root)
+    assert stub.calls() == [] and stub.envs() == []  # no backend process started
+    return result
+
+
+def _too_long_message(path: str) -> str:
+    n = len(os.fsencode(path)) + hyper_codegraph.CBM_SOCKET_TAIL_MAX
+    return (
+        f"code-graph runtime path too long ({n} > 107 bytes): "
+        "set XDG_RUNTIME_DIR or CBM_RUNTIME_DIR to a shorter dir"
+    )
+
+
+def test_f_short_runtime_root_fits_and_runs(
+    tmp_git_repo: GitRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(f) P31, real budget: a short XDG_RUNTIME_DIR fits 107 bytes and the run proceeds.
+
+    The run's short dir stands in for /run/user/<uid>. It may be a caller's own CBM_RUNTIME_DIR
+    (R65), so (f) leaves nothing in it: `f` is removed in a `finally`, and a leftover `f` from a
+    crashed run is removed first, only when it is a dir the user owns.
+    """
+    root = _scaffold(tmp_git_repo, _hacf_yml())
+    assert SESSION_RUNTIME, "conftest.py exports CBM_RUNTIME_DIR (P32, R65)"
+    short = Path(SESSION_RUNTIME) / "f"
+    want = short / "hacf-cbm" / hyper_codegraph.repo_hash(root)
+    room = len(os.fsencode(str(want))) + hyper_codegraph.CBM_SOCKET_TAIL_MAX
+    if room > hyper_codegraph.SUN_PATH_MAX:
+        pytest.fail(
+            f"(f) has no room under the run's CBM_RUNTIME_DIR {SESSION_RUNTIME} "
+            f"({len(os.fsencode(SESSION_RUNTIME))} bytes): its runtime dir {want} needs "
+            f"{room} bytes with the socket tail, over {hyper_codegraph.SUN_PATH_MAX}"
+        )
+    if short.is_dir() and not short.is_symlink() and short.stat().st_uid == os.getuid():
+        shutil.rmtree(short)  # a crashed run's leftover, by its literal path
+    short.mkdir(mode=0o700)
+    try:
+        monkeypatch.delenv("CBM_RUNTIME_DIR")
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(short))
+        stub = Stub(tmp_path / "stub")
+        assert hyper_codegraph.backend_version(stub.prefix, root, 30) == "0.12.1"
+        (env,) = stub.envs()
+        target = env["CBM_RUNTIME_DIR"]
+        assert target == str(want)
+        assert len(os.fsencode(target)) + hyper_codegraph.CBM_SOCKET_TAIL_MAX <= 107
+        assert _private(Path(target))
+    finally:
+        shutil.rmtree(short, ignore_errors=True)
+
+
+def test_f_too_long_runtime_root_starts_nothing(
+    tmp_git_repo: GitRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(f) P31: a root over the budget starts no CBM process and fails with MR 2's message.
+
+    Nothing is created, and the shared default daemon is never used.
+    """
+    root = _scaffold(tmp_git_repo, _hacf_yml())
+    long_root = tmp_path / ("x" * 90)
+    long_root.mkdir(mode=0o700)
+    monkeypatch.delenv("CBM_RUNTIME_DIR")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(long_root))
+    stub = Stub(tmp_path / "stub")
+    result = _refused_run(root, stub)
+    want = _too_long_message(str(long_root / "hacf-cbm" / hyper_codegraph.repo_hash(root)))
+    assert (result["status"], result["error"]) == ("error", want)
+    assert hyper_codegraph.backend_version(stub.prefix, root, 30) is None
+    assert stub.calls() == [] and list(long_root.iterdir()) == []
+
+
+def test_f_too_long_caller_runtime_dir_is_refused(
+    tmp_git_repo: GitRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(f) P31: a caller-set CBM_RUNTIME_DIR over the budget is refused the same way."""
+    root = _scaffold(tmp_git_repo, _hacf_yml())
+    caller = str(tmp_path / ("y" * 90))
+    monkeypatch.setenv("CBM_RUNTIME_DIR", caller)
+    stub = Stub(tmp_path / "stub")
+    result = _refused_run(root, stub)
+    assert (result["status"], result["error"]) == ("error", _too_long_message(caller))
+    report = hyper_codegraph.doctor(root)
+    assert report["runtime_dir"] == {"path": None, "source": "caller"}
+    assert _too_long_message(caller) in report["warnings"]
+
+
+def test_unsafe_runtime_parent_starts_nothing(
+    tmp_git_repo: GitRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A group/world-writable parent, which CBM refuses, starts nothing and creates nothing.
+
+    There is no shared-daemon fallback.
+    """
+    root = _scaffold(tmp_git_repo, _hacf_yml())
+    open_dir = tmp_path / "shared"
+    open_dir.mkdir()
+    open_dir.chmod(0o775)
+    _own_runtime(monkeypatch, None, XDG_RUNTIME_DIR=str(open_dir))
+    stub = Stub(tmp_path / "stub")
+    result = _refused_run(root, stub)
+    assert result["status"] == "error"
+    assert result["error"].startswith(f"code-graph runtime dir unusable: {open_dir} is not owned")
+    assert list(open_dir.iterdir()) == []
+
+
+def test_only_the_runtime_dirs_immediate_parent_is_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spike run K: only the runtime dir's immediate parent is checked, as CBM does.
+
+    A group-writable grandparent is fine when the parent is created 0700; the dir a missing part
+    would be made in is held to the same rule.
+    """
+    grand = tmp_path / "grand"
+    grand.mkdir()
+    grand.chmod(0o775)
+    xdg = grand / "xdg"
+    _own_runtime(monkeypatch, xdg)
+    target, _, why = hyper_codegraph.runtime_dir_plan(tmp_path)
+    assert why is None and target == xdg / "hacf-cbm" / hyper_codegraph.repo_hash(tmp_path)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(grand / "missing"))
+    target, _, why = hyper_codegraph.runtime_dir_plan(tmp_path)
+    assert target is None and f"{grand} is not owned by you or root" in why
+
+
+def test_doctor_reports_the_runtime_dir(
+    tmp_git_repo: GitRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Doctor names the runtime dir in use and its source (and a caller's own)."""
+    root = _scaffold(tmp_git_repo, _hacf_yml())
+    stub = Stub(tmp_path / "stub")
+    _state(root, exe_argv_prefix=stub.prefix)
+    caller = hyper_codegraph.doctor(root)["runtime_dir"]
+    assert caller == {"path": SESSION_RUNTIME, "source": "caller"}
+    xdg = tmp_path / "xdg"
+    _own_runtime(monkeypatch, xdg)
+    own = hyper_codegraph.doctor(root)["runtime_dir"]
+    assert own == {"path": str(xdg / "hacf-cbm" / hyper_codegraph.repo_hash(root)), "source": "xdg"}
+
+
+def _if_stale(capsys: pytest.CaptureFixture, root: Path) -> tuple[int, str]:
+    capsys.readouterr()
+    code = hyper_codegraph.main(["index", "--if-stale", "--repo-root", str(root)])
+    return code, capsys.readouterr().out
+
+
+def test_d_if_stale_up_to_date_runs_nothing(
+    tmp_git_repo: GitRepo, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """(d) last_index equals HEAD: exit 0, `index: up to date (<sha12>)`, no backend exec."""
+    root = _scaffold(tmp_git_repo, _hacf_yml())
+    stub = Stub(tmp_path / "stub")
+    _indexed_state(root, stub)
+    code, out = _if_stale(capsys, root)
+    head = hyper_codegraph.head_commit(root)
+    assert (code, out) == (0, f"index: up to date ({head[:12]})\n")
+    assert stub.calls() == []
+
+
+def test_d_if_stale_moved_head_reindexes(
+    tmp_git_repo: GitRepo, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """(d) HEAD moved: index runs and prints `index: re-indexed (<old12> -> <new12>)`."""
+    root = _scaffold(tmp_git_repo, _hacf_yml())
+    stub = Stub(tmp_path / "stub")
+    stub.answer("index_repository", {"project": PROJECT, "status": "indexed"})
+    stub.answer("list_projects", _list_projects(root))
+    _indexed_state(root, stub)
+    old = hyper_codegraph.head_commit(root)
+    tmp_git_repo.write("pkg/core.py", "def helper(value):\n    return value\n")
+    tmp_git_repo.commit("move HEAD")
+    new = hyper_codegraph.head_commit(root)
+    code, out = _if_stale(capsys, root)
+    assert (code, out) == (0, f"index: re-indexed ({old[:12]} -> {new[:12]})\n")
+    assert "index_repository" in stub.tools()
+    assert hyper_codegraph.load_state(root)[0]["last_index"]["head"] == new
+
+
+def test_d_if_stale_backend_none_runs_nothing(
+    tmp_git_repo: GitRepo, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """(d) backend none: exit 0, `index: backend none; nothing to do`, no backend exec."""
+    root = _scaffold(tmp_git_repo, _hacf_yml(backend="none"))
+    stub = Stub(tmp_path / "stub")
+    _state(root, exe_argv_prefix=stub.prefix)
+    assert _if_stale(capsys, root) == (0, "index: backend none; nothing to do\n")
+    assert stub.calls() == []
+
+
+@pytest.mark.parametrize("argv", [["status", "--if-stale"], ["index", "--if-stale", "--json"]])
+def test_d_if_stale_is_index_only_text(argv: list[str], capsys: pytest.CaptureFixture) -> None:
+    """--if-stale goes with index only, and without --json: usage, exit 2."""
+    assert hyper_codegraph.main(argv) == 2
+    assert "--if-stale goes with index only" in capsys.readouterr().err
+
+
+def test_e_execute_skill_runs_if_stale_before_the_updater() -> None:
+    """(e) hyper-execute's SKILL.md runs `index --if-stale` just before the updater call."""
+    text = (REPO_ROOT / ".agents/skills/hyper-execute/SKILL.md").read_text(encoding="utf-8")
+    line = "python3 .agents/scripts/hyper_codegraph.py index --if-stale"
+    assert line in text
+    assert text.index(line) < text.index("hypergraph_updater.py", text.index(line))

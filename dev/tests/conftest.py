@@ -8,6 +8,12 @@ Tests never write the user's cache either: importing this file points XDG_CACHE_
 per-session temp dir (each xdist worker imports it too, and subprocesses inherit it), so the
 OpenRig range probe's cache (`${XDG_CACHE_HOME:-~/.cache}/hacf/rig-probe`, release-0.6.2 R8) is a
 throwaway. REAL_PROBE_CACHE and REAL_PROBE_CACHE_STATE record the user's cache as it was.
+
+Nor the code-graph runtime (lead ruling P32): the run's controller makes one short private dir,
+`$XDG_RUNTIME_DIR/hacf-test-<pid>` (else under the temp dir), mode 0700, and exports it as
+CBM_RUNTIME_DIR. xdist workers and subprocesses inherit it, and hyper_codegraph.py keeps a
+caller's value, so no test creates a per-project dir under `$XDG_RUNTIME_DIR/hacf-cbm/`.
+pytest_unconfigure removes the dir by its literal path.
 """
 
 from __future__ import annotations
@@ -68,10 +74,41 @@ def pytest_configure(config: pytest.Config) -> None:
     inherited (check.sh, the release gate). The token goes into os.environ, so subprocesses this run
     starts (a nested check.sh or pytest) run inside the same lease. HACF_HEAVY_LOCK=0 turns it off
     for one run. A wait that runs out ends the run with exit 75: the host was busy, retry later.
+
+    First, on the controller only, it picks the run's CBM_RUNTIME_DIR (lead rulings P32, R65): the
+    first that fits hyper_codegraph.py's socket budget (dir + 48 bytes <= 107) of (i) the caller's
+    CBM_RUNTIME_DIR, when it is absolute and an existing dir, kept as it is and never created,
+    chmod-ed or removed; (ii) `$XDG_RUNTIME_DIR/hacf-test-<pid>`, when XDG_RUNTIME_DIR is an
+    absolute existing dir; (iii) `<temp dir>/hacf-test-<pid>`. Only (ii) and (iii) are the run's
+    own: made 0700, exported, and removed in pytest_unconfigure. None fitting is exit 4. The code
+    stays inside the hook because test_host_gate.py copies these two hooks by source.
     """
+    controller = not (hasattr(config, "workerinput") or os.environ.get("PYTEST_XDIST_WORKER"))
+    if controller:
+        import tempfile
+
+        own = f"hacf-test-{os.getpid()}"
+        caller = os.environ.get("CBM_RUNTIME_DIR")
+        xdg = os.environ.get("XDG_RUNTIME_DIR")
+        candidates = []  # (dir, the run's own)
+        if caller and os.path.isabs(caller) and os.path.isdir(caller):
+            candidates.append((caller, False))
+        if xdg and os.path.isabs(xdg) and os.path.isdir(xdg):
+            candidates.append((os.path.join(xdg, own), True))
+        candidates.append((os.path.join(tempfile.gettempdir(), own), True))
+        fits = [c for c in candidates if len(os.fsencode(c[0])) + 48 <= 107]
+        if not fits:
+            named = "; ".join(f"{d} ({len(os.fsencode(d))} bytes)" for d, _ in candidates)
+            pytest.exit(f"no test CBM_RUNTIME_DIR is short enough for a socket path: {named}", 4)
+        runtime, made = fits[0]
+        if made:
+            os.mkdir(runtime, 0o700)
+            os.chmod(runtime, 0o700)
+            config.hacf_cbm_runtime = (runtime, caller)
+            os.environ["CBM_RUNTIME_DIR"] = runtime
     if os.environ.get("HACF_HEAVY_LOCK") == "0":
         return
-    if hasattr(config, "workerinput") or os.environ.get("PYTEST_XDIST_WORKER"):
+    if not controller:
         return
     if str(DEV_SCRIPTS_DIR) not in sys.path:
         sys.path.insert(0, str(DEV_SCRIPTS_DIR))
@@ -88,7 +125,18 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
-    """Release the lease pytest_configure took and restore the inherited token variable."""
+    """Release the lease pytest_configure took, restore the token variable, drop the runtime dir."""
+    runtime = getattr(config, "hacf_cbm_runtime", None)
+    if runtime is not None:  # P32: remove the run's own dir by its literal path (never a caller's)
+        import shutil
+
+        path, inherited = runtime
+        shutil.rmtree(path, ignore_errors=True)
+        if inherited is None:
+            os.environ.pop("CBM_RUNTIME_DIR", None)
+        else:
+            os.environ["CBM_RUNTIME_DIR"] = inherited
+        del config.hacf_cbm_runtime
     held = config.stash.get(_HEAVY_LEASE, None)
     if held is None:
         return
