@@ -60,7 +60,7 @@ This phase is conversational. It extracts constraints, maps the blast radius of 
 1. Open a **new context window**.
 2. Execute `/hyper-resolve`.
 3. The agent presents a forced trade-off (Option A vs. Option B) for every finding. Each decided trade-off becomes a PROPOSED lore node, which only a person approves (`/hyper-lore-approve`).
-4. **Compilation:** the agent creates the mission and its slices through the scope manager: `hyper_scope.py mission create` writes `missions/<mission>/SPEC.md` (the SuperPRD) and `hyper_scope.py slice create` writes one `missions/<mission>/slices/<NN-slug>/SPEC.md` per module (the MiniPRDs). `python3 .agents/scripts/hyper_spec.py lint --mission missions/<mission>` must pass. If a foreign root item blocks the scaffold, it writes flat legacy specs to `spec/compiled/` instead and says so.
+4. **Compilation:** the agent creates the mission and its slices through the scope manager: `hyper_scope.py mission create` writes `missions/<mission>/SPEC.md` (the SuperPRD) and `hyper_scope.py slice create` writes one `missions/<mission>/slices/<NN-slug>/SPEC.md` per module (the MiniPRDs). `python3 .agents/scripts/hyper_spec.py lint --mission missions/<mission> --min-confidence 9` must pass, so no slice is compiled below 9/10. If a foreign root item blocks the scaffold, it writes flat legacy specs to `spec/compiled/` instead and says so.
 5. **Memory flush:** archive the workbench, so the next feature starts clean:
    ```bash
    python3 .agents/scripts/archive_specs.py --paths spec/active/Draft_PRD.md spec/active/RedTeam_Report.md --label <Feature_Name>
@@ -85,6 +85,10 @@ Build each slice by hand with the two skills below, one slice at a time, or let 
 3. Execute `/hyper-audit <spec>`.
 4. The Auditor evaluates the code against the spec's constraints and runs its tests.
 5. **Reconciliation:** on a pass, the Auditor reconciles the `needs_review` nodes through `hyper_ledger.py review-template` and `apply-review` (never a hand edit), records the proof with `hyper_spec.py proof`, runs the lore gate, and archives a legacy MiniPRD with `archive_specs.py --miniprd <spec>`.
+
+### **Mission close: lore capture**
+
+When every slice of a mission is `audited`, the mission's `NOTES.md` records its lore capture under `## Lore capture`: `- replans:` (the replan commits counted) and `- stories:` (one proposed STORY per replan, or `none`). `python3 .agents/scripts/hyper_spec.py lint --mission missions/<mission> --mission-close` must then pass; it fails while the section is missing or the stories number fewer than the replans. Seats only propose the stories; a person approves lore.
 
 ## The Workflow Engine
 

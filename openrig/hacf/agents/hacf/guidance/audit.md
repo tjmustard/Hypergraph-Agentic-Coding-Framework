@@ -138,8 +138,17 @@ MiniPRD (exit 1, nothing moved), so never point it at a slice.
 **Commit your close-out** when the Operating Notes give no commit procedure of their own: the files
 Phases 3-4 wrote in the slice directory and the mission's `PROGRESS.md`, plus the ledger if it is
 tracked. Stage them by name, check `git diff --cached --name-only` lists only them, and end the
-message with the `Agentic-Assistant:` footer (`execute.md` has the identity check). When the
-Operating Notes hand you the slice commit itself, follow their steps exactly.
+message with the two footer lines (`execute.md` has the identity check):
+
+```
+Agentic-Assistant: OpenRig (Claude Code harness) · model <model-id>
+Agentic-Framework: HACF v<version> (<mode>)
+```
+
+`<version>` is the `version` field of `.agents/hacf-manifest.json` (in the HACF repository itself,
+the installed manifest if present, else `HACF_VERSION` in `HACF-install.sh`), read at commit time.
+`<mode>` is `OpenRig` for a seat of an OpenRig HACF team, `manual` for HACF skills used by hand. If either is unknown, leave that line off. When the Operating Notes hand you the slice commit
+itself, follow their steps exactly.
 
 ## The loop record
 
@@ -147,7 +156,8 @@ Operating Notes hand you the slice commit itself, follow their steps exactly.
 (`protocol.md` has the shape). It lives outside the repository.
 
 **On a failure,** write it **first**: `Latest verdict: FAIL`, `Range judged: <start>..<sha>`, and
-increment `Iteration`. Then hand the row to the **lead** (`--to orch-lead@<rig>`, `--body-file`
+increment `Iteration`. Record the FAIL in the slice's progress, where the escape counter reads it:
+`python3 .agents/scripts/hyper_spec.py progress --slice <slice dir> --event audit_failed`. Then hand the row to the **lead** (`--to orch-lead@<rig>`, `--body-file`
 required; by `protocol.md`'s defaults the lead clears the builder before every fix round) with:
 
 - each unmet item, **quoting the slice sentence it fails**;

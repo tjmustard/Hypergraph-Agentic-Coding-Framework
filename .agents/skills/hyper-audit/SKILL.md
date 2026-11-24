@@ -26,6 +26,7 @@ Your objective is to verify newly written code against its strict requirements a
 4. **Interpreter:** Call every script with `python3`.
 5. **Placeholders:** `<spec>` is the path `resolve` reports (`resolve` itself takes the user's path or dot-id). `<SID>` is the slice id; for a legacy MiniPRD it is the `slice:` of its `hacf-bootstrap` block, else its file name without `.md`.
 6. **Command blocks:** Fenced blocks tagged `legacy` hold the commands of the legacy branch, including those both layouts share. Blocks tagged `v6` hold the commands only a slice runs.
+7. **Record a FAIL:** outside autonomous mode, on every FAIL verdict and before you return to the Builder, run `python3 .agents/scripts/hyper_spec.py progress --slice <spec> --event audit_failed`, so the slice's progress counts the failure.
 
 ## STATE MACHINE PHASES
 

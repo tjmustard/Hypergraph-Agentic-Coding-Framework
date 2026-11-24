@@ -1,10 +1,87 @@
 #!/usr/bin/env bash
 # HACF commit-msg hook — sanitize agent tracking trailers (installed by HACF-install.sh)
-COMMIT_MSG_FILE=$1
+#
+# - An agent commit (its message has an `Agentic-Assistant:` footer line) keeps exactly its two
+#   footer lines: every `Claude-Session:` line is deleted, never replaced by a third line.
+# - An agent commit with an `Agentic-Assistant: ` line and no `Agentic-Framework: ` line gets
+#   `Agentic-Framework: HACF v<version> (<mode>)` right after its last `Agentic-Assistant: ` line.
+#   <mode> is `OpenRig` when OPENRIG_SESSION_NAME is set and non-empty, else `manual`. <version> is
+#   the `version` string of <repo root>/.agents/hacf-manifest.json, else the first
+#   `HACF_VERSION="x.y.z"` line of <repo root>/HACF-install.sh; when neither gives one, nothing is
+#   added (never a guess). A commit without the `Agentic-Assistant: ` line never gains a line.
+# - Any other commit: a `Claude-Session: ...` line becomes `Agentic Coding Assisted: Claude Code`.
+# - An unchanged message is not rewritten; a changed one is written through a temp file in the
+#   same directory, then `mv`. Portable: POSIX sed and awk without -i, no GNU-only flag. Always
+#   exit 0.
+COMMIT_MSG_FILE=${1:-}
+[ -n "$COMMIT_MSG_FILE" ] && [ -f "$COMMIT_MSG_FILE" ] || exit 0
 
-# Replace Claude-Session tracking links with standardized label
-if grep -q "^Claude-Session: " "$COMMIT_MSG_FILE"; then
-    sed -i -e 's|^Claude-Session: .*|Agentic Coding Assisted: Claude Code|' "$COMMIT_MSG_FILE"
+# Print the HACF version of this repository, or fail when it is unknown.
+hacf_version() {
+    local root ver
+    root=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+    [ -n "$root" ] || return 1
+    if [ -f "$root/.agents/hacf-manifest.json" ]; then
+        ver=$(python3 -I -c '
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as fh:
+    v = json.load(fh).get("version")
+if not isinstance(v, str) or not v.strip() or "\n" in v or "\r" in v:
+    sys.exit(1)
+print(v)
+' "$root/.agents/hacf-manifest.json" 2>/dev/null) && [ -n "$ver" ] && { printf '%s\n' "$ver"; return 0; }
+    fi
+    [ -f "$root/HACF-install.sh" ] || return 1
+    ver=$(sed -n 's/^HACF_VERSION="\([0-9][0-9.]*\)"$/\1/p' "$root/HACF-install.sh" 2>/dev/null | head -n 1)
+    [ -n "$ver" ] || return 1
+    printf '%s\n' "$ver"
+}
+
+add=""
+if grep -q '^Agentic-Assistant: ' "$COMMIT_MSG_FILE" && ! grep -q '^Agentic-Framework: ' "$COMMIT_MSG_FILE"; then
+    if ver=$(hacf_version); then
+        mode=manual
+        [ -n "${OPENRIG_SESSION_NAME:-}" ] && mode=OpenRig
+        add="Agentic-Framework: HACF v$ver ($mode)"
+    fi
+fi
+grep -q '^Claude-Session:' "$COMMIT_MSG_FILE" || [ -n "$add" ] || exit 0
+
+# Slice 01's Claude-Session handling (a no-op when the message has no such line).
+sanitize() {
+    if grep -q '^Agentic-Assistant:' "$COMMIT_MSG_FILE"; then
+        sed -e '/^Claude-Session:/d' "$COMMIT_MSG_FILE"
+    else
+        sed -e 's|^Claude-Session: .*|Agentic Coding Assisted: Claude Code|' "$COMMIT_MSG_FILE"
+    fi
+}
+
+# Insert $HACF_ADD after the last `Agentic-Assistant: ` line; ENVIRON avoids awk -v escapes.
+insert_framework() {
+    HACF_ADD="$add" awk '
+        { line[NR] = $0; if ($0 ~ /^Agentic-Assistant: /) last = NR }
+        END {
+            for (i = 1; i <= NR; i++) {
+                print line[i]
+                if (i == last) print ENVIRON["HACF_ADD"]
+            }
+        }'
+}
+
+dir=$(dirname -- "$COMMIT_MSG_FILE")
+tmp=$(mktemp "$dir/.commit-msg.XXXXXX") || exit 0
+if [ -n "$add" ]; then
+    sanitize | insert_framework >"$tmp"
+    status=("${PIPESTATUS[@]}")
+    ok=$(( status[0] == 0 && status[1] == 0 ))
+else
+    sanitize >"$tmp"
+    ok=$(( $? == 0 ))
+fi
+if [ "$ok" -eq 1 ] && ! cmp -s "$tmp" "$COMMIT_MSG_FILE"; then
+    mv -- "$tmp" "$COMMIT_MSG_FILE"
+else
+    rm -f -- "$tmp"
 fi
 
 # Add additional agent signatures here as needed (e.g., Cursor, Antigravity)

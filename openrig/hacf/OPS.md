@@ -2,8 +2,9 @@
 
 The operator's recipe for giving each seat of a running hacf rig its role's tool denies from
 `roles.yml`, checking that they took, and rolling them back. `rig.yaml` never carries these rules
-(it stays key-free, so it launches on every OpenRig this rig is tested against); they are applied
-**per seat**, one seat at a time, by a person or the operator acting for them. Nothing in this
+(it carries one rig-level `env:` key (v0.6.4); per-seat tool rules are still applied per seat, so it
+launches on every OpenRig this rig is tested against); they are applied **per seat**, one seat at a
+time, by a person or the operator acting for them. Nothing in this
 spec applies them on its own.
 
 The rules are native Claude Code tool rules, not a sandbox. The generator emits only denies:
@@ -47,7 +48,7 @@ python3 openrig/hacf/bin/seat-rules.py --role <role> --json > <dir>/<seat>.json
 ## Apply, one seat at a time
 
 ```sh
-rig seat set-permissions <seat> --rules <dir>/<seat>.json --reason "hacf roles v1"
+rig seat set-permissions <seat> --rules <dir>/<seat>.json --reason "hacf roles v2"
 rig seat status <seat> --json      # the rules show in the next-launch plan
 ```
 
@@ -57,19 +58,22 @@ projects hold no uncommitted work of its own. Then:
 
 ```sh
 rig seat launch <seat> --fresh --plan --json
-rig seat launch <seat> --fresh --stop --reason "hacf roles v1"
+rig seat launch <seat> --fresh --stop --reason "hacf roles v2"
 ```
 
 One seat at a time; probe it (below) before the next. **orch-lead goes last**, by planned handover,
 so the lead is never down while another seat is relaunching. Never `rig up` and never `rig down`
 for this: both act on the whole rig.
 
-## MCP: not changed
+## MCP: denied per server, never codebase-memory-mcp
 
 Every role records `mcp: off`: no guidance file or HACF skill calls an MCP tool, and the code graph
 is the `hyper_codegraph.py` CLI. On OpenRig 0.7.21 no `rig seat` verb sets MCP loading on an
-existing seat, so this recipe changes nothing about MCP, and the MCP saving is reported
-**`unknown`**. `seat-rules.py --role` says the same on stderr.
+existing seat, so MCP loading itself is not changed (`seat-rules.py --role` says so on stderr).
+Roles v2 (v0.6.4) instead denies, by bare `mcp__<server>` rules, the MCP servers the start-up probe
+listed on HACF's host (`dev/telemetry/startup-baseline-v064.md`). `codebase-memory-mcp` is never
+denied, and `seat-rules.py --check` refuses a deny of it. A server on another host that is not in
+the list keeps its tools, so the probe below still records any `mcp__` tool it sees.
 
 ## Turn-1 probe, per role
 
@@ -85,15 +89,64 @@ rules did not take: roll that seat back (below) and stop. Then record the seat's
 `contextUsage.totalInputTokens` from `rig ps --nodes --rig <rig> --full --json`, in the
 scorecard notes. Without the probe, the saving is reported **`unknown`**, not assumed.
 
+**The live turn-1 reading** is the first `rig ps` `contextUsage.totalInputTokens` sample after the
+start-up delivery and before the seat's first tool call. Record it beside the start-up probe's
+number (`dev/telemetry/startup_probe.py`, a `claude -p` reproduction); never compare the two, since
+they measure different things.
+
+## Compaction probe, per role
+
+Right after the turn-1 probe, check that the rules survive a compaction:
+
+```sh
+rig send <seat> "/compact"
+rig ps --nodes --rig <rig> --json     # wait until the seat is idle again
+rig send <seat> "Probe, answer without calling any tool: restate each of these rules of yours in one line: footer-line-1, footer-line-2, no-co-author, push-only-with-the-person, no-secrets, no-no-verify, no-ask-user-question, no-git-add-all, lore-propose-only."
+```
+
+The names are the `REQUIRED` rows of `dev/tests/rig_spec/test_startup_rules.py`. Expected: each
+rule restated, except `footer-line-2` while that row is still marked xfail (the two-line footer
+lands in v064-process .1). A rule it cannot restate means the trim lost it: roll that seat back (below) and
+stop.
+
 ## Rollback, per seat
 
 ```sh
-rig seat set-permissions <seat> --rules <dir>/<seat>.rollback.json --reason "hacf roles v1 rollback"
+rig seat set-permissions <seat> --rules <dir>/<seat>.rollback.json --reason "hacf roles v2 rollback"
 ```
 
 `<seat>.rollback.json` holds the `allow` and `deny` rules the seat's `<seat>.before.json` record
 listed under `permissions`, or `{"allow": [], "deny": []}` when it had none (empty lists clear the
 seat's rules). Then a fresh launch at a durable point, as above:
 `rig seat launch <seat> --fresh --plan --json`, then
-`rig seat launch <seat> --fresh --stop --reason "hacf roles v1 rollback"`.
+`rig seat launch <seat> --fresh --stop --reason "hacf roles v2 rollback"`.
 Never `rig up` and never `rig down` to roll back.
+
+## OPS-A: rig hacf's live spec only
+
+The shipped `rig.yaml` sets `ENABLE_CLAUDEAI_MCP_SERVERS: "false"` for every seat (v0.6.4), which
+turns off the account's claude.ai connectors and keeps project MCP servers. It never ships
+`claude_mcp: none`, because that also removes project servers such as `codebase-memory-mcp`.
+
+For a project that uses no MCP server at all, the operator may add `claude_mcp: none` to each
+member of that rig's **live** spec. The only such rig is `hacf` working in HACF's own repository,
+whose roles record `mcp: off`. **Never on eta or cleanroom**, or any rig whose project keeps
+`codebase-memory-mcp`.
+
+```sh
+cp -p <live spec dir>/rig.yaml <dir>/rig.yaml.before      # a byte backup
+# edit <live spec dir>/rig.yaml: add `claude_mcp: none` to each member, nothing else
+rig spec validate --json <live spec dir>/rig.yaml          # valid: true, or restore and stop
+```
+
+Then a fresh launch per seat at a durable point, one seat at a time and orch-lead last, as in
+"Apply, one seat at a time" above; after each launch, the turn-1 probe and the compaction probe.
+
+Rollback: restore the backup byte for byte, then a fresh launch per seat at a durable point.
+
+```sh
+cp -p <dir>/rig.yaml.before <live spec dir>/rig.yaml
+cmp <dir>/rig.yaml.before <live spec dir>/rig.yaml          # no output: identical
+rig seat launch <seat> --fresh --plan --json
+rig seat launch <seat> --fresh --stop --reason "hacf claude_mcp rollback"
+```

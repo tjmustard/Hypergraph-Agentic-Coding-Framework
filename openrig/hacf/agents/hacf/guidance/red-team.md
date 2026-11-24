@@ -36,8 +36,6 @@ your own past opinions. Make it a procedure you carry out:
   reports `unsupported`, `unavailable` or backend `none`, say so and read the nodes' `files:` globs.
 - `.agents/rules/`, `AGENTS.md`, and `.agents/memory/` if it exists (its absence is normal).
 
-You must not read `spec/archive/` or `tests/candidate_outputs/`.
-
 ## The blast radius: ask the ledger, do not run the updater
 
 `python3 .agents/scripts/hyper_ledger.py impact --nodes <ids>` (or `--files <paths>`) prints the

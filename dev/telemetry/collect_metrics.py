@@ -11,7 +11,18 @@ What it reads, and nothing else:
 - from the seats' Claude Code JSONL transcripts: per assistant record only the timestamp, request
   id, message id, model id and the four `usage` token counts. Never message text.
 - `git log` of the repository (commit times, subjects, trailers) and the slices' PROGRESS.md
-  `audit_failed` Outcomes lines.
+  `audit_failed` and `blocked` Outcomes lines.
+- only when `--loops-dir <dir>` is given (it has no default): the audit's loop records
+  `hacf-loop-<slice id>.md` in that dir, as a backfill for slices whose PROGRESS.md has no
+  `audit_failed` line (FAILs = Iteration - 1 after a PASS, else Iteration).
+A slice's `blocked` part is unknown (null) when its PROGRESS.md has neither an `audit_failed` nor a
+`blocked` line, unless an `executing` line's detail carries `escape_tracking: v1`, which the
+builder writes once halts are recorded.
+
+A slice's escapes are its audit FAILs, its builder halts (`blocked`) and the later commits that
+repin, block-change or replan it (an `HACF-Repin`, `HACF-Block-Changed` or `HACF-Replan-Of`
+trailer, or a `resolve: replan` subject naming it), one per commit; `escape_parts` gives each part
+(null when its source is missing) and `escapes` their known sum.
 
 A missing table, column or file becomes a reason in `unknowns`, never a crash or a wrong number.
 
@@ -20,6 +31,11 @@ Usage:
   collect_metrics.py --b0 --window <name>=<since>..<until> [--window ...]      scorecards + B0.json
   collect_metrics.py --b1 --window <name>=<since>..<until> [--window ...]      scorecards + B1.json
   collect_metrics.py --compare <B0.json> <B1.json>                              the §8 verdict
+
+Every scorecard also carries `context` (v0.6.4, OPR.99.0.8.3): per seat, per occupant (session
+id), the turns and the peak resident context of the seat's MAIN transcript, where one assistant
+record's context is input_tokens + cache_read_input_tokens + cache_creation_input_tokens.
+`--context-series` also writes `<label>.context.json`, each turn's [ts, context], to --out-dir.
 """
 
 from __future__ import annotations
@@ -53,6 +69,7 @@ REQUIRED_COLUMNS = {
     "context_usage": ("session_name", "session_id", "transcript_path"),
     "queue_items": ("qitem_id", "ts_created", "source_session", "destination_session"),
 }
+CONTEXT_KEYS = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 USAGE_KEYS = (
     "input_tokens",
     "cache_read_input_tokens",
@@ -64,6 +81,12 @@ SUBJECT_SLICE_RE = re.compile(r"^\S+ (OPR\.\d+(?:\.\d+)+):")
 SUBJECT_RESOLVE_RE = re.compile(r"^(\S+) resolve:")
 FRONTMATTER_ID_RE = re.compile(r"^id:\s*['\"]?([^'\"\s]+)['\"]?\s*$", re.MULTILINE)
 AUDIT_FAILED_RE = re.compile(r"^- \S+ audit_failed\b", re.MULTILINE)
+BLOCKED_RE = re.compile(r"^- \S+ blocked\b", re.MULTILINE)
+LOOP_ITERATION_RE = re.compile(r"^- Iteration:\s*(\d+)\b", re.MULTILINE)
+LOOP_VERDICT_RE = re.compile(r"^- Latest verdict:\s*(\S+)", re.MULTILINE)
+NO_HALT_RECORDS = "no halt records before v0.6.4"
+# ruling P22: a builder that records halts writes this into its `executing` Outcomes detail
+TRACKING_MARKER_RE = re.compile(r"^- \S+ executing - .*\bescape_tracking: v1\b", re.MULTILINE)
 GUARD_LINE_RE = re.compile(r"^(\S+) .*\baction=restart\b")
 
 
@@ -392,6 +415,11 @@ def read_usage(path: Path, since: datetime, until: datetime, unknowns: list[str]
                     "ts": when,
                     "key": (message.get("id"), entry.get("requestId")),
                     "model": model if isinstance(model, str) else None,
+                    "context_missing": [
+                        key
+                        for key in CONTEXT_KEYS
+                        if not (isinstance(usage.get(key), int) and usage.get(key) >= 0)
+                    ],
                     **counts,
                 }
             )
@@ -412,6 +440,37 @@ def dedupe(records: list[dict]) -> list[dict]:
             seen.add(key)
         kept.append(record)
     return kept
+
+
+def turn_context(record: dict) -> int:
+    """Return one assistant record's resident context: fresh input + cache read + cache write."""
+    return sum(record[key] for key in CONTEXT_KEYS)
+
+
+def occupant_context(
+    seat: str, session_id: str, main_records: list[dict], unknowns: list[str]
+) -> tuple[dict | None, list[list]]:
+    """Return one occupant's context summary (None without a turn) and its [ts, context] series.
+
+    main_records are the session's MAIN transcript records only; they are de-duplicated here.
+    """
+    records = dedupe(main_records)
+    if not records:
+        return None, []
+    missing = sum(1 for r in records if r.get("context_missing"))
+    if missing:
+        unknowns.append(
+            f"{seat}: {missing} turns of session {session_id} lack a context count (taken as 0)"
+        )
+    series = [[iso(r["ts"]), turn_context(r)] for r in records]
+    summary_ = {
+        "session_id": session_id,
+        "turns": len(records),
+        "peak": max(c for _ts, c in series),
+        "first_ts": series[0][0],
+        "last_ts": series[-1][0],
+    }
+    return summary_, series
 
 
 # --------------------------------------------------------------------------- git
@@ -484,7 +543,8 @@ def git_escapes(repo: Path, boundary_sha: str, slice_id: str) -> int:
     """Count commits after the boundary up to HEAD that repin, block-change or replan the slice."""
     fmt = (
         "%s%x1f%(trailers:key=HACF-Repin,valueonly,separator=%x1d)"
-        "%x1f%(trailers:key=HACF-Block-Changed,valueonly,separator=%x1d)%x1e"
+        "%x1f%(trailers:key=HACF-Block-Changed,valueonly,separator=%x1d)"
+        "%x1f%(trailers:key=HACF-Replan-Of,valueonly,separator=%x1d)%x1e"
     )
     out = git(repo, "log", f"{boundary_sha}..HEAD", f"--format={fmt}")
     count = 0
@@ -492,16 +552,20 @@ def git_escapes(repo: Path, boundary_sha: str, slice_id: str) -> int:
         chunk = chunk.strip("\n")
         if not chunk:
             continue
-        subject, repin, block = (chunk.split("\x1f") + ["", ""])[:3]
-        trailers = f"{repin}\x1d{block}"
+        subject, repin, block, replan_of = (chunk.split("\x1f") + ["", "", ""])[:4]
+        trailers = f"{repin}\x1d{block}\x1d{replan_of}"
         replan = "resolve: replan" in subject and names_slice(subject, slice_id)
         if names_slice(trailers, slice_id) or replan:
             count += 1
     return count
 
 
-def progress_escapes(repo: Path, slice_id: str) -> int | None:
-    """Count `audit_failed` Outcomes lines of the slice's PROGRESS.md; None when there is none."""
+def progress_events(repo: Path, slice_id: str) -> tuple[int, int, bool] | None:
+    """Count the `audit_failed` and `blocked` Outcomes lines of the slice's PROGRESS.md.
+
+    The third value tells whether an `executing` line carries the `escape_tracking: v1` marker.
+    None when the slice or its PROGRESS.md is not found.
+    """
     for spec in sorted((repo / "missions").glob("*/slices/*/SPEC.md")):
         try:
             text = spec.read_text(encoding="utf-8")
@@ -516,8 +580,35 @@ def progress_escapes(repo: Path, slice_id: str) -> int | None:
         progress = spec.parent / "PROGRESS.md"
         if not progress.is_file():
             return None
-        return len(AUDIT_FAILED_RE.findall(progress.read_text(encoding="utf-8")))
+        text = progress.read_text(encoding="utf-8")
+        tracked = TRACKING_MARKER_RE.search(text) is not None
+        return len(AUDIT_FAILED_RE.findall(text)), len(BLOCKED_RE.findall(text)), tracked
     return None
+
+
+def progress_escapes(repo: Path, slice_id: str) -> int | None:
+    """Count `audit_failed` Outcomes lines of the slice's PROGRESS.md; None when there is none."""
+    events = progress_events(repo, slice_id)
+    return None if events is None else events[0]
+
+
+def loop_fails(loops_dir: Path, slice_id: str, unknowns: list[str]) -> int | None:
+    """Return the audit FAILs a loop record shows (Iteration - 1 after a PASS); None without one."""
+    path = loops_dir / f"hacf-loop-{slice_id}.md"
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        unknowns.append(f"{slice_id}: loop record unreadable: {exc.strerror or exc}")
+        return None
+    iteration = LOOP_ITERATION_RE.search(text)
+    verdict_ = LOOP_VERDICT_RE.search(text)
+    if not iteration or not verdict_:
+        unknowns.append(f"{slice_id}: loop record without Iteration or Latest verdict")
+        return None
+    count = int(iteration.group(1))
+    return max(count - 1, 0) if verdict_.group(1).upper() == "PASS" else count
 
 
 # --------------------------------------------------------------------------- scorecard
@@ -576,6 +667,7 @@ def build_scorecard(
     repo: Path,
     advisor: str,
     out_dir: Path,
+    loops_dir: Path | None = None,
 ) -> tuple[dict, dict]:
     """Build one hacf.telemetry/v1 scorecard and the side facts the B0/B1 aggregate needs.
 
@@ -605,16 +697,34 @@ def build_scorecard(
     per_seat: dict[str, list[dict]] = {}
     sessions_used: dict[str, set[str]] = {}
     models: dict[str, set[str]] = {}
+    context_out: dict[str, dict] = {}
+    context_series: dict[str, dict[str, list[list]]] = {}
     for seat in view.seats:
         records: list[dict] = []
+        occupants = []
         for session_id in view.sessions.get(seat, []):
             found = []
-            for path in find_transcripts(seat, session_id, view, projects, unknowns):
+            main_records: list[dict] = []
+            paths = find_transcripts(seat, session_id, view, projects, unknowns)
+            for index, path in enumerate(paths):
                 files_read += 1
-                found.extend(read_usage(path, since, until, unknowns))
+                read = read_usage(path, since, until, unknowns)
+                if index == 0:  # find_transcripts lists the main transcript first
+                    main_records = read
+                found.extend(read)
             if found:
                 sessions_used.setdefault(seat, set()).add(session_id)
             records.extend(found)
+            occupant, series = occupant_context(seat, session_id, main_records, unknowns)
+            if occupant is not None:
+                occupants.append(occupant)
+                context_series.setdefault(seat, {})[session_id] = series
+        occupants.sort(key=lambda o: (o["first_ts"], o["session_id"]))
+        context_out[seat] = {
+            "occupants": occupants,
+            "peak_max": max((o["peak"] for o in occupants), default=None),
+            "turns": sum(o["turns"] for o in occupants),
+        }
         records = dedupe(records)
         per_seat[seat] = records
         models[seat] = {r["model"] for r in records if r["model"]}
@@ -666,8 +776,13 @@ def build_scorecard(
                     total += entry["total"]
                     weighted += entry["cost_weighted"]
         escapes = 0
+        parts: dict = {"audit_failed": 0, "blocked": 0, "git": 0}
+        sources: dict = {"audit_failed": None, "blocked": None, "git": None}
         if slice_id != UNATTRIBUTED and not slice_id.endswith("/resolve"):
-            escapes = slice_escapes(repo, slice_id, first_boundary[slice_id].sha, unknowns)
+            parts, sources = slice_escape_parts(
+                repo, slice_id, first_boundary[slice_id].sha, unknowns, loops_dir
+            )
+            escapes = known_sum(parts)
         if view.queue_ok:
             advisor_rows: int | str = advisor_counts.get(slice_id, 0)
         else:
@@ -679,6 +794,8 @@ def build_scorecard(
                 "cost_weighted": round_num(weighted) if tokens_known else UNKNOWN,
                 "escapes": escapes,
                 "advisor_rows": advisor_rows,
+                "escape_parts": parts,
+                "escape_sources": sources,
             }
         )
     if not tokens_known:
@@ -698,10 +815,12 @@ def build_scorecard(
     }
     if label:
         scorecard["label"] = label
+    scorecard["context"] = context_out  # v0.6.4, additive: after every v0.6.3 key
     side = {
         "subject_token": {b.slice_id: b.token for b in boundaries},
         "models": models,
         "sessions": sessions_used,
+        "context_series": context_series,
     }
     return scorecard, side
 
@@ -712,18 +831,62 @@ def round_num(value: float) -> float | int:
     return int(value) if value == int(value) else value
 
 
-def slice_escapes(repo: Path, slice_id: str, boundary_sha: str, unknowns: list[str]) -> int:
-    """Return a slice's escapes: PROGRESS.md audit failures plus later repin/replan commits."""
+def slice_escape_parts(
+    repo: Path,
+    slice_id: str,
+    boundary_sha: str,
+    unknowns: list[str],
+    loops_dir: Path | None = None,
+) -> tuple[dict, dict]:
+    """Return a slice's escape parts (audit_failed, blocked, git; None when unknown) and sources.
+
+    audit_failed comes from PROGRESS.md, or from the loop record under loops_dir when PROGRESS.md
+    has no audit_failed line; blocked is unknown when PROGRESS.md has neither line and no
+    `escape_tracking: v1` marker on an `executing` line (ruling P22).
+    """
+    parts: dict = {"audit_failed": None, "blocked": None, "git": None}
+    sources: dict = {"audit_failed": None, "blocked": None, "git": None}
     try:
-        from_git = git_escapes(repo, boundary_sha, slice_id)
+        parts["git"] = git_escapes(repo, boundary_sha, slice_id)
+        sources["git"] = "git"
     except (OSError, subprocess.CalledProcessError):
         unknowns.append(f"{slice_id}: escapes from git unavailable")
-        from_git = 0
-    from_progress = progress_escapes(repo, slice_id)
-    if from_progress is None:
+    events = progress_events(repo, slice_id)
+    if events is None:
         unknowns.append(f"{slice_id}: no PROGRESS.md; escapes count git only")
-        from_progress = 0
-    return from_git + from_progress
+        return parts, sources
+    failed, blocked, tracked = events
+    parts["audit_failed"], sources["audit_failed"] = failed, "progress"
+    if failed == 0 and loops_dir is not None:
+        from_loops = loop_fails(loops_dir, slice_id, unknowns)
+        if from_loops is not None:
+            parts["audit_failed"], sources["audit_failed"] = from_loops, "loops"
+    if failed == 0 and blocked == 0 and not tracked:
+        unknowns.append(f"{slice_id}: blocked unknown ({NO_HALT_RECORDS})")
+    else:
+        parts["blocked"], sources["blocked"] = blocked, "progress"
+    return parts, sources
+
+
+def known_sum(parts: dict) -> int:
+    """Return the sum of an escape_parts dict's known (non-null) parts."""
+    return sum(v for v in parts.values() if v is not None)
+
+
+def slice_escapes(
+    repo: Path,
+    slice_id: str,
+    boundary_sha: str,
+    unknowns: list[str],
+    loops_dir: Path | None = None,
+) -> int:
+    """Return a slice's escapes: audit_failed lines + blocked lines + git escapes (MR 4).
+
+    The known-part sum of slice_escape_parts, the same number the scorecard's `escapes` holds;
+    a null part (P22: no marker and no lines) adds nothing and is a reason in unknowns.
+    """
+    parts, _sources = slice_escape_parts(repo, slice_id, boundary_sha, unknowns, loops_dir)
+    return known_sum(parts)
 
 
 # --------------------------------------------------------------------------- §8 aggregate (F16)
@@ -771,6 +934,7 @@ def aggregate(
     tokens_of: dict[str, str] = {}
     resolves: list[tuple[str, dict]] = []
     unattributed = {"total": 0, "cost_weighted": 0.0}
+    escapes_unknown = False
     for card, side, _name in cards:
         tokens_of.update(side["subject_token"])
         for entry in card["slices"]:
@@ -788,6 +952,9 @@ def aggregate(
                 slot["total"] += entry["total"]
                 slot["cost_weighted"] += entry["cost_weighted"]
                 slot["escapes"] = max(slot["escapes"], entry["escapes"])
+                parts = entry.get("escape_parts")
+                if isinstance(parts, dict) and any(v is None for v in parts.values()):
+                    escapes_unknown = True
     for sid, entry in resolves:
         token = sid[: -len("/resolve")]
         targets = [s for s in slices if tokens_of.get(s) == token]
@@ -823,6 +990,7 @@ def aggregate(
         "total": summary(totals),
         "cost_weighted": summary(weighted),
         "escapes_per_slice": round_num(statistics.mean(escapes)) if escapes else None,
+        "escapes_unknown": escapes_unknown,
         "slices": [
             {
                 "slice_id": sid,
@@ -870,8 +1038,16 @@ def verdict(b0: dict, b1: dict) -> dict:
             for m in ("total", "cost_weighted")
         )
         e0, e1 = b0["escapes_per_slice"], b1["escapes_per_slice"]
-        escapes_ok = e0 is not None and e1 is not None and e1 <= e0
-        result = "met" if reduced and escapes_ok else "not met"
+        if e0 is None or e1 is None or b0.get("escapes_unknown") or b1.get("escapes_unknown"):
+            escapes_ok = "unknown"
+        else:
+            escapes_ok = "ok" if e1 <= e0 else "rise"
+        if reduced and escapes_ok == "ok":
+            result = "met"
+        elif reduced and escapes_ok == "unknown":
+            result = "met (escapes unknown)"
+        else:
+            result = "not met"
     return {
         "schema": VERDICT_SCHEMA,
         "verdict": result,
@@ -948,6 +1124,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo")
     parser.add_argument("--advisor-session", default=DEFAULT_ADVISOR)
     parser.add_argument("--out-dir")
+    parser.add_argument("--context-series", action="store_true")
+    parser.add_argument("--loops-dir")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--b0", action="store_true")
     mode.add_argument("--b1", action="store_true")
@@ -1019,15 +1197,20 @@ def run(argv: list[str]) -> int:
         Path(args.claude_projects) if args.claude_projects else Path.home() / ".claude" / "projects"
     )
     repo = Path(args.repo) if args.repo else Path.cwd()
+    loops_dir = Path(args.loops_dir) if args.loops_dir else None
+    if loops_dir is not None and not loops_dir.is_dir():
+        raise UsageError(f"--loops-dir {args.loops_dir} is not a directory")
 
     cards = []
     for name, since, until in windows:
         label = name if (args.b0 or args.b1) else args.label
         card, side = build_scorecard(
-            rig, since, until, label, db, projects, repo, args.advisor_session, out_dir
+            rig, since, until, label, db, projects, repo, args.advisor_session, out_dir, loops_dir
         )
         path = write_json(out_dir, unique_name(out_dir, label or "window"), card)
         print(path)
+        if args.context_series:
+            print(write_json(out_dir, f"{label or 'window'}.context.json", side["context_series"]))
         cards.append((card, side, path.name))
     if args.b0 or args.b1:
         kind = "B0" if args.b0 else "B1"

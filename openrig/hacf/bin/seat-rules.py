@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -28,6 +29,10 @@ import yaml
 
 SCHEMA = "hacf.roles/v1"
 REQUIRED_DENY = "AskUserQuestion"
+# A bare MCP server deny (roles v2): `mcp__<server>`, one server segment with no `__` in it.
+MCP_SERVER_DENY = re.compile(r"mcp__[A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*")
+# TJ: keep codebase-memory-mcp wherever MCP is on, so no role may deny it.
+KEPT_MCP = "codebase-memory-mcp"
 # rig.yaml stays key-free: OpenRig daemons up to 0.7.18 refuse unknown member keys.
 FORBIDDEN_RIG_KEYS = (
     "claude_permissions",
@@ -162,8 +167,12 @@ def check(roles_path: Path) -> list[str]:
         if REQUIRED_DENY not in deny:
             problems.append(f"role {name!r}: tools_deny lacks {REQUIRED_DENY}")
         for tool in [*allow, *deny, *rules["allow"], *rules["deny"]]:
-            if tool.startswith("mcp__") or "(" in tool:
+            bare_server = tool in deny and MCP_SERVER_DENY.fullmatch(tool) is not None
+            if "(" in tool or (tool.startswith("mcp__") and not bare_server):
                 problems.append(f"role {name!r}: rule {tool!r} is an MCP or parenthesized rule")
+        for tool in deny:
+            if KEPT_MCP in tool.lower().replace("_", "-"):
+                problems.append(f"role {name!r}: {tool!r} denies {KEPT_MCP}, which stays allowed")
 
     # The key-free check: rig.yaml carries no per-member Claude keys.
     for path in forbidden_keys(rig):

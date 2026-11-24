@@ -2,6 +2,16 @@
 
 This file shows real commit messages from the Hypergraph Agentic Coding Framework repo, demonstrating the style conventions Claude adapts for auto-suggesting commit messages.
 
+```
+Agentic-Assistant: OpenRig (Claude Code harness) · model <model-id>
+Agentic-Framework: HACF v<version> (<mode>)
+```
+
+An agent-made commit ends with exactly these two footer lines, and never a Claude co-author trailer or
+session-link line; any other trailer (`Fixes #123`, `HACF-Slice:`) comes before the two lines.
+`<version>` is the `version` field of `.agents/hacf-manifest.json`, and `<mode>` is `OpenRig` for a seat
+of an OpenRig HACF team or `manual` for HACF skills used by hand; leave a line off when its value is unknown.
+
 ---
 
 ## Pattern 1: Release (Version Bump)
@@ -38,7 +48,8 @@ Sensitive files subject to smart merge: CLAUDE.md, AGENTS.md, GEMINI.md,
 IDE command bridges, and all rules files across .claude/, .clinerules/,
 .roo/, .windsurf/, .cursor/ directories.
 
-Co-Authored-By: Claude Haiku 4.5 <noreply@anthropic.com>
+Agentic-Assistant: OpenRig (Claude Code harness) · model <model-id>
+Agentic-Framework: HACF v<version> (<mode>)
 ```
 
 **When to use:** When adding a new skill or significant feature.  
@@ -48,7 +59,7 @@ Co-Authored-By: Claude Haiku 4.5 <noreply@anthropic.com>
 - Subject ≤50 chars
 - Blank line between subject and body
 - Body explains WHY, not what
-- Co-Authored-By footer optional
+- Agent-made: the two footer lines last, no co-author trailer
 
 ---
 

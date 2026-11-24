@@ -1,0 +1,35 @@
+# The hacf team's per-role context caps: the input-token count above which bin/context-guard.sh
+# may act on an idle seat of that role, and how. One entry per role of roles.yml beside this file;
+# the guard refuses to run (exit 2) when a role is missing or unknown, and it carries no cap in
+# code: every number comes from here.
+#
+# The values are TJ's decision of 2026-11-23 23:57Z (v0.6.4 mission v064-context, slice 1), given
+# as good starting values that "may need to be re-evaluated later and modified". Re-evaluate them
+# when the baseline a seat starts from changes (the prompt, tools, MCP servers, skills, CLAUDE
+# files, the Claude Code or OpenRig version, the model, the graph briefs), and at least once per
+# release or month; `reevaluate` at the end lists the triggers.
+#
+# behaviour:
+#   planned_handover          never restarted by the guard; the seat hands over by plan
+#   restart_at_durable_point  the guard may restart it, idle and at a durable point
+#   checkpoint_message        the seat checkpoints mid-slice; between slices it restarts like
+#                             restart_at_durable_point
+# reset_scope: the boundary the seat's context resets at (mission or slice).
+schema: hacf.caps/v1
+seats:
+  lead:      {cap_tokens: 350000, behaviour: planned_handover,         reset_scope: mission}
+  architect: {cap_tokens: 300000, behaviour: restart_at_durable_point, reset_scope: mission}
+  red-team:  {cap_tokens: 250000, behaviour: restart_at_durable_point, reset_scope: mission}
+  resolve:   {cap_tokens: 300000, behaviour: restart_at_durable_point, reset_scope: mission}
+  execute:   {cap_tokens: 300000, behaviour: checkpoint_message,       reset_scope: slice}
+  audit:     {cap_tokens: 250000, behaviour: restart_at_durable_point, reset_scope: slice}
+  scribe:    {cap_tokens: 150000, behaviour: restart_at_durable_point, reset_scope: mission}
+# reevaluate: the triggers for re-running dev/telemetry/recompute_caps.py (openrig/hacf/README.md,
+# "Re-evaluating the caps"); the result goes to TJ as a decision row.
+reevaluate:
+  - claude-code minor version change
+  - openrig minor version change
+  - start-up trim change (roles, rig keys, CULTURE/protocol/role files)
+  - a seat's model change
+  - each B-metric verdict
+  - each HACF release

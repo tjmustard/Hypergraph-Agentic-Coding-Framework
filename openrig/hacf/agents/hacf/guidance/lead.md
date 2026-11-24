@@ -162,6 +162,12 @@ dispatched **by slice**, in the order of the mission's execution checklist
 `missions/<mission>/slices/<NN-slug>/SPEC.md`. Check `hyper_spec.py status --json` shows every
 `depends_on` slice `audited` before you dispatch the next.
 
+### Dispatching a slice
+
+Before each execute handoff, run `python3 .agents/scripts/hyper_spec.py lint --mission missions/<mission> --min-confidence 9`. It must exit 0: a
+compiled slice that records no score, or less than 9/10, goes back to resolve, never to the
+builder.
+
 **The brief.** `bin/brief.sh` in this rig spec writes the execute and audit brief from your run
 record. Copy it once to `~/.hacf/<rig>/bin/` and run it from there:
 
@@ -227,6 +233,34 @@ when:
   is right here, say it is your judgment.
 - **the same finding returns twice** — that usually means the builder cannot see the contract.
   Send it back with the slice sentence that governs it, or escalate.
+
+## Closing a mission
+
+When every slice of a mission is `audited`, capture its lore before you call it closed. Seats
+only PROPOSE lore (`hyper_lore.py propose`); none of them approves it, you included. You
+count-check replans against stories:
+
+1. **Count the replans:** the mission's commits with an `HACF-Replan-Of:` trailer or a
+   `resolve: replan` subject
+   (`git log --oneline -E --grep='^HACF-Replan-Of:' --grep='resolve: replan' <range>`).
+2. **Fill `- replans: <count>`** in the `## Lore capture` section of `missions/<mission>/NOTES.md`.
+3. **Dispatch the scribe's mission close** (`guidance/scribe.md`): one PROPOSED story per replan,
+   listed in `- stories:`. Check its ids exist (`hyper_lore.py list --json`) and number at least
+   the replans.
+4. **Run `python3 .agents/scripts/hyper_spec.py lint --mission missions/<mission> --mission-close`.** It must exit 0;
+   bring the proposed stories to the person with the other lore decisions.
+
+## Checkpoint and handover prompts
+
+The context guard (`--arm-checkpoints`) arms one watchdog per checkpoint seat; each fires once per
+occupant.
+
+- **The builder's "ready for a fresh launch" line.** Wait until build-execute is idle (`rig ps
+  --nodes --rig <rig>`), then run
+  `rig seat launch build-execute@<rig> --fresh --stop --reason "context checkpoint"`. Leave its row
+  in-progress: the successor reads the row and the mission `NOTES.md` checkpoint note.
+- **Your own `context-guard handover` prompt.** At your next durable point, plan your handover
+  (openrig-core `retiring-and-inheriting-a-seat`). The guard never restarts you.
 
 ## Lore
 

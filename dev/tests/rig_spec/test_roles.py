@@ -93,7 +93,8 @@ def test_role_json_is_exactly_the_tables_denies() -> None:
     assert result.returncode == 0, result.stderr
     rules = json.loads(result.stdout)
     assert rules == {"allow": [], "deny": table()["roles"]["execute"]["tools_deny"]}
-    assert rules["deny"] == DENY
+    # roles v2 (OPR.99.0.8.6 MR 1) grows the list: the v1 six come first, in order
+    assert rules["deny"][: len(DENY)] == DENY
 
 
 def test_every_role_denies_ask_user_question_and_keeps_the_work_tools() -> None:
@@ -125,7 +126,9 @@ def test_all_json_has_seven_roles() -> None:
     assert result.returncode == 0, result.stderr
     rules = json.loads(result.stdout)
     assert len(rules) == 7
-    assert all(r == {"allow": [], "deny": DENY} for r in rules.values())
+    roles = table()["roles"]
+    assert all(r == {"allow": [], "deny": roles[n]["tools_deny"]} for n, r in rules.items())
+    assert all(r["deny"][: len(DENY)] == DENY for r in rules.values())
 
 
 def test_mcp_off_prints_the_stderr_line() -> None:
@@ -189,9 +192,9 @@ def test_role_without_ask_user_question_fails(copy: Path) -> None:
     assert "role 'lead': tools_deny lacks AskUserQuestion" in result.stdout
 
 
-@pytest.mark.parametrize("rule", ["mcp__x", "Bash(git push:*)"])
+@pytest.mark.parametrize("rule", ["mcp__x__tool", "Bash(git push:*)", "mcp__x(y)"])
 def test_mcp_or_parenthesized_deny_fails(copy: Path, rule: str) -> None:
-    """An mcp__ or parenthesized deny is named."""
+    """An mcp__<server>__<tool> or parenthesized deny is named (ruling P24: was mcp__x)."""
     edit_yaml(copy, lambda d: d["roles"]["resolve"]["tools_deny"].append(rule))
     result = check(copy)
     assert result.returncode == 1
@@ -221,12 +224,12 @@ def test_check_names_every_problem_at_once(copy: Path) -> None:
     def change(d):
         """Break two roles at once."""
         d["roles"]["lead"]["tools_deny"].remove("AskUserQuestion")
-        d["roles"]["audit"]["tools_deny"].append("mcp__x")
+        d["roles"]["audit"]["tools_deny"].append("mcp__x__tool")  # P24: a bare mcp__x passes
 
     edit_yaml(copy, change)
     lines = check(copy).stdout.splitlines()
     assert any("'lead'" in line for line in lines)
-    assert any("'audit'" in line and "mcp__x" in line for line in lines)
+    assert any("'audit'" in line and "mcp__x__tool" in line for line in lines)
 
 
 # --- the key-free check ------------------------------------------------------------------------
@@ -346,3 +349,103 @@ def test_shipped_files_name_no_home_path() -> None:
     """The new shipped files name no home directory path."""
     for path in (ROLES, SCRIPT, OPS):
         assert "/" + "home/" not in path.read_text(), path
+
+
+# --- roles v2 (v064-context OPR.99.0.8.6; lead ruling P24) ------------------------------------
+
+STAGE_SKILLS = {
+    "lead": ["hyper-sop"],
+    "architect": ["hyper-architect"],
+    "red-team": ["hyper-redteam"],
+    "resolve": ["hyper-resolve"],
+    "execute": ["hyper-execute"],
+    "audit": ["hyper-audit"],
+    "scribe": ["hyper-document", "hyper-publish"],
+}
+NEVER_DENIED = {"Skill", "Bash", "Read", "Edit", "Write", "Grep", "Glob"}
+
+
+def role_texts(role: str) -> str:
+    """The role file and the role's stage skill(s)."""
+    text = (RIG / "agents" / "hacf" / "guidance" / f"{role}.md").read_text()
+    for skill in STAGE_SKILLS[role]:
+        text += (REPO_ROOT / ".agents" / "skills" / skill / "SKILL.md").read_text()
+    return text
+
+
+def named(tool: str, text: str) -> bool:
+    """Whether text names the tool as a whole word."""
+    return re.search(rf"(?<![\w-]){re.escape(tool)}(?![\w-])", text) is not None
+
+
+def test_v2_denies_no_tool_the_role_names() -> None:
+    """No v2 deny is a tool the role file or its stage skill names.
+
+    The six v1 denies are the exception: the role files and skills name AskUserQuestion (and the
+    plan and worktree tools) precisely to forbid them, and startup/protocol.md:106-111 overrides
+    any skill that instructs them.
+    """
+    for role, entry in table()["roles"].items():
+        text = role_texts(role)
+        extra = [t for t in entry["tools_deny"] if t not in DENY]
+        assert extra, role
+        assert not [t for t in extra if named(t, text)], role
+
+
+def test_v2_core_tools_and_agent_stay() -> None:
+    """The core tools are never denied, and Agent stays for execute and audit.
+
+    Skill, Bash, Read, Edit, Write, Grep and Glob are never denied; no deny names
+    codebase-memory-mcp; Task and ToolSearch stay.
+    """
+    for role, entry in table()["roles"].items():
+        deny = set(entry["tools_deny"])
+        assert not NEVER_DENIED & deny, role
+        assert not [t for t in deny if "codebase" in t.lower()], role
+        assert {"Task", "ToolSearch"}.isdisjoint(deny), role
+        if role in ("execute", "audit"):
+            assert "Agent" not in deny and "Agent" in entry["tools_allow"], role
+
+
+def test_v2_mcp_denies_are_bare_servers() -> None:
+    """Every MCP deny is a bare mcp__<server> and every role denies the same servers."""
+    servers = None
+    for role, entry in table()["roles"].items():
+        mcp = [t for t in entry["tools_deny"] if t.startswith("mcp__")]
+        assert mcp and all("__" not in t[len("mcp__") :] and "(" not in t for t in mcp), role
+        servers = servers or mcp
+        assert mcp == servers, role
+
+
+def test_v2_header() -> None:
+    """The table says roles v2 (v0.6.4) and keeps its v1 schema."""
+    text = ROLES.read_text()
+    assert "roles v2 (v0.6.4)" in text.split("schema:", 1)[0]
+    assert table()["schema"] == "hacf.roles/v1"
+    assert text.count("# v2 denies:") == 7
+
+
+def test_bare_mcp_server_deny_passes(copy: Path) -> None:
+    """A bare mcp__<server> deny passes --check (ruling P24)."""
+    edit_yaml(copy, lambda d: d["roles"]["resolve"]["tools_deny"].append("mcp__some-server_x"))
+    result = check(copy)
+    assert result.returncode == 0, result.stdout
+
+
+def test_mcp_in_allow_fails(copy: Path) -> None:
+    """An mcp__ rule in tools_allow is still named."""
+    edit_yaml(copy, lambda d: d["roles"]["resolve"]["tools_allow"].append("mcp__srv"))
+    result = check(copy)
+    assert result.returncode == 1
+    assert "role 'resolve': rule 'mcp__srv' is an MCP or parenthesized rule" in result.stdout
+
+
+@pytest.mark.parametrize("rule", ["mcp__codebase-memory-mcp", "mcp__codebase_memory_mcp"])
+def test_codebase_memory_mcp_deny_fails(copy: Path, rule: str) -> None:
+    """--check refuses any deny of codebase-memory-mcp (ruling P24)."""
+    edit_yaml(copy, lambda d: d["roles"]["execute"]["tools_deny"].append(rule))
+    result = check(copy)
+    assert result.returncode == 1
+    assert f"role 'execute': '{rule}' denies codebase-memory-mcp, which stays allowed" in (
+        result.stdout
+    )

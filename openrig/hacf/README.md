@@ -170,40 +170,122 @@ never names another rig's seats. The lead copies it to `~/.hacf/<rig>/bin/` and 
 
 ## Context guard
 
-`bin/context-guard.sh --rig <rig> --project-root <dir> [--project-root <dir> …] [--apply] [--log <file>]`
+`bin/context-guard.sh --rig <rig> --project-root <dir> [--project-root <dir> …] --caps <file> [--apply] [--arm-checkpoints] [--log <file>]`
 keeps seats from dragging a huge context from one slice into the next. One run is one tick: it
-restarts at most **one** idle, non-lead seat whose context is over `HACF_CTX_MAX` input tokens
-(default `150000`) with `rig seat launch <seat> --fresh --stop --reason …`, then tells `orch-lead`
-with `rig send`. It is **dry-run by default**: without `--apply` it only reads (`rig ps`,
-`rig queue list`, `rig seat launch … --fresh --stop --plan`) and logs `action=would-restart`.
+restarts at most **one** idle, non-lead seat whose context is over its role's cap in `--caps`
+with `rig seat launch <seat> --fresh --stop --reason …`, then tells `orch-lead` with `rig send`.
+It is **dry-run by default**: without `--apply` it only reads (`rig ps`, `rig queue list`,
+`rig seat launch … --fresh --stop --plan`) and logs `action=would-restart`.
+
+### The caps: `caps.yml`
+
+`--caps` is required; without it the guard exits 2 with its usage line. `caps.yml` holds one entry
+per role of `roles.yml` (TJ's starting values of 2026-11-23, to be re-evaluated when a seat's
+baseline changes, and per release or month):
+
+| role | `cap_tokens` | `behaviour` | `reset_scope` |
+|---|---|---|---|
+| lead | 350000 | `planned_handover` | mission |
+| architect | 300000 | `restart_at_durable_point` | mission |
+| red-team | 250000 | `restart_at_durable_point` | mission |
+| resolve | 300000 | `restart_at_durable_point` | mission |
+| execute | 300000 | `checkpoint_message` | slice |
+| audit | 250000 | `restart_at_durable_point` | slice |
+| scribe | 150000 | `restart_at_durable_point` | mission |
+
+A seat's role is its `profile` in `rig ps`. The guard checks the file with PyYAML against the
+`roles.yml` beside it and refuses to run (exit 2, one line on stderr) on a wrong `schema`, a
+missing or unknown role, a `cap_tokens` that is not a positive integer, an unknown `behaviour` or
+`reset_scope`, or a `reevaluate` that is not a list of strings. There is no cap in the code.
+`HACF_CTX_MAX` is no longer read: when it is set, each tick logs
+`note=HACF_CTX_MAX ignored; caps come from --caps` and carries on.
+
+### Re-evaluating the caps
+
+The caps are starting values. Re-evaluate them on any trigger listed in `caps.yml`
+`reevaluate`: a Claude Code or OpenRig minor version change, a start-up trim change (roles, rig
+keys, CULTURE/protocol/role files), a seat's model change, each B-metric verdict and each HACF
+release. Two read-only commands do it, from this repository (dev tooling, not installed):
+
+```bash
+python3 dev/telemetry/collect_metrics.py --rig hacf --since <ISO> --until <ISO> --out-dir "$TMPDIR/ctx"
+python3 dev/telemetry/recompute_caps.py --scorecard "$TMPDIR/ctx/<scorecard>.json" \
+  --caps openrig/hacf/caps.yml --rig-spec openrig/hacf/rig.yaml
+```
+
+Every scorecard carries `context`: per seat, per occupant, the turns and the peak resident context
+of its main transcript (`--context-series` also writes each turn). `recompute_caps.py` prints, per
+role, n and the low, median, mean, p90 and high of the occupants' peaks, the current cap and a
+proposal (p90 rounded up to 10000, at least 100000; none under 5 occupants). It never writes
+`caps.yml`. The result goes to TJ as a decision row, and a cap changes only by hand after TJ's OK.
+
+### When it restarts
 
 It restarts a seat only at a durable point, and fails closed: any doubt means no restart.
 
-- The seat is running, `idle`, not stale, with a fresh, known context count over the cap.
+- The seat's profile has a cap, its `behaviour` is not `planned_handover`, and it is running,
+  `idle`, not stale, with a known context count over that cap (`totalInputTokens > cap_tokens`).
+- **The stale-sample rule.** Idle seats stop refreshing their usage sample. A sample that is not
+  `fresh` still counts only when the seat's transcript provably has not grown since it:
+  `contextUsage.transcriptPath` is named `<sessionId>.jsonl`, and its mtime is no later than
+  `sampledAt` plus 2 seconds. A later mtime skips with `transcript grew since sample`; a missing
+  field, a bad timestamp or a failed stat skips with `transcript unknown`. A restart on such a
+  sample says `stale sample, transcript unchanged since <sampledAt>` in its reason.
 - It holds no pending, in-progress or blocked queue row (its counts in `rig ps` and
   `rig queue list` both agree).
-- Every `--project-root`, and every worktree git lists for it, has a clean `git status`
-  (untracked files included) and no untracked or ignored file under `spec/active/`. One dirty
-  root blocks every seat, because the rig's seats work in all of them.
-- It never restarts `orch-lead` (its handover is planned), a busy, stale or `unknown` seat, or more
-  than one seat per run. A failed or unreadable `rig` answer, or a root git cannot read, means no
-  restart. Right before the launch it reads the seat and the roots again and asks
-  `rig seat launch … --fresh --stop --plan`, a preview of the real launch; anything changed, or a
-  plan without `launchable: true`, means no restart.
+- **The roots.** For every `--project-root`, and every worktree git lists for it:
+  - git-visible dirt (`git status`, untracked files included) blocks **every** seat, because the
+    rig's seats work in all of them; so does a root git cannot read;
+  - an untracked or ignored file under `spec/active/` blocks only the spec seats (`logicalId`
+    `spec.*`): it is Phase-1 work, and a build seat between slices is still at a durable point.
+    The top-level `spec/active/FAILED_WORKFLOWS.md` is permanent and blocks nobody; a file of that
+    name anywhere deeper counts like any other.
+- It never restarts `orch-lead` or a `planned_handover` seat (their handover is planned), a busy,
+  stale or `unknown` seat, or more than one seat per run. A failed or unreadable `rig` answer
+  means no restart. Right before the launch it reads the seat and the roots again, with the same
+  per-seat rules, and asks `rig seat launch … --fresh --stop --plan`, a preview of the real launch;
+  anything changed, or a plan without `launchable: true`, means no restart.
 
 Every decision is one line, on stdout and in the log (`--log`, default
 `~/.hacf/<rig>/context-guard.log`, its directory `0700`):
-`<UTC ts> rig=<r> mode=<dry-run|apply> seat=<session|-> tokens=<n|-> action=<restart|would-restart|skip|failed> reason=<text>`.
+`<UTC ts> rig=<r> mode=<dry-run|apply> seat=<session|-> tokens=<n|-> max=<cap|-> action=<restart|would-restart|skip|failed> reason=<text>`,
+where `max` is the seat's role cap.
 A lock beside the log keeps two runs from overlapping. Exit 0 when it ran, restart or not; 1 when
-the launch or the note to the lead failed; 2 on a usage error or a bad `HACF_CTX_MAX`.
+the launch or the note to the lead failed; 2 on a usage error or a caps file it refuses.
+
+### Checkpoint watchdogs: `--arm-checkpoints`
+
+The `checkpoint_message` (execute) and `planned_handover` (lead) roles are never restarted
+mid-work; they get a message instead. With `--arm-checkpoints`, each tick first reads
+`rig watchdog list --json` and makes sure every **running** seat of those roles has exactly one
+active `context-usage-threshold` job targeting it, at its role's `cap_tokens`:
+
+- none → with `--apply`, `rig watchdog register --policy context-usage-threshold
+  --target-session <seat> --threshold-tokens <cap> --interval-seconds 300 --registered-by <orch-lead>
+  --message <text> --json` (`action=arm`; a failed register is `action=failed` and exit 1);
+  without `--apply`, `action=would-arm`;
+- one → `checkpoint armed <jobId>`; more than one → `duplicate checkpoint jobs <ids>`, and nothing
+  is added: the operator stops the extras;
+- an unreadable list arms nothing this tick; the restart logic runs either way.
+
+The job fires **once per occupant**, so one long-lived job re-arms itself for every fresh launch.
+The builder's message tells it to write a checkpoint note, never to commit, and to ask the lead
+for a fresh launch; the lead's tells it to plan its handover (`guidance/execute.md`,
+`guidance/lead.md`). The guard never calls `rig watchdog stop` or `update`. **To change a cap**,
+edit `caps.yml`, then find the old job with `rig watchdog list --json` and stop it with
+`rig watchdog stop <jobId>`; the next tick registers the new one.
+
+### The host line
 
 The script changes nothing on the host by itself. The operator runs it from the host's existing
-digest timer — no new unit — for rig `hacf` only (OPS-2), with one `--project-root` per git
-checkout the rig works in (the guard finds their worktrees itself):
+digest timer — no new unit — for rig `hacf` only, with one `--project-root` per git checkout the
+rig works in (the guard finds their worktrees itself). From v0.6.4 the line needs `--caps` and
+adds `--arm-checkpoints`; until the operator applies this line (OPS-A), the v0.6.3 line exits 2 at
+usage every tick:
 
 ```bash
-# HACF context guard: rig hacf only, one tick per digest run (OPS-2)
-"<hacf checkout>/openrig/hacf/bin/context-guard.sh" --rig hacf --project-root "<project root>" --apply || true
+# HACF context guard: rig hacf only, one tick per digest run (OPS-A, v0.6.4)
+"<hacf checkout>/openrig/hacf/bin/context-guard.sh" --rig hacf --project-root "<project root>" --caps "<hacf checkout>/openrig/hacf/caps.yml" --arm-checkpoints --apply || true
 ```
 
 ## Permissions
@@ -220,13 +302,18 @@ To go back to prompting, change `permission_policy` in `rig.yaml` and relaunch f
 (`rig up <spec> --name <name>`, after `--plan`); `rig up <name> --existing` keeps the stored
 posture.
 
-**Per-role tool denies.** `roles.yml` (`hacf.roles/v1`) names, for each of the seven roles, the
-native Claude Code tools it uses, the tools it denies (every role denies `AskUserQuestion`,
-`NotebookEdit`, the plan-mode and worktree tools), whether it needs MCP servers, and its skills.
+**Per-role tool denies.** `roles.yml` (roles v2 of v0.6.4, schema `hacf.roles/v1`) names, for each
+of the seven roles, the native Claude Code tools it uses, the tools it denies (every role denies
+`AskUserQuestion`, `NotebookEdit`, the plan-mode and worktree tools; roles v2 adds every built-in
+tool and MCP server the start-up probe listed that the role file and its stage skill never name,
+never `codebase-memory-mcp`), whether it needs MCP servers, and its skills.
 `bin/seat-rules.py --role <role> --json` turns one role into the JSON that
 `rig seat set-permissions <seat> --rules <file>` takes, and `--check` keeps the table, `agent.yaml`
-and `rig.yaml` consistent. `rig.yaml` itself stays free of per-member permission keys, so it
-launches on every OpenRig this rig is tested against. The rules are native tool rules, not a
+and `rig.yaml` consistent. `rig.yaml` itself carries one rig-level `env:` key (v0.6.4); per-seat
+tool rules are still applied per seat, so it launches on every OpenRig this rig is tested against.
+The key, `ENABLE_CLAUDEAI_MCP_SERVERS: "false"`, turns off the account's claude.ai MCP connectors for
+every seat; project MCP servers such as `codebase-memory-mcp` stay. Every OpenRig version the compat
+check runs proves it with `rig spec validate`. The rules are native tool rules, not a
 sandbox: the denies hold under `builtin:yolo`, where allows would not constrain anything, so the
 generator emits none. `OPS.md` is the operator's recipe for applying them per seat, the turn-1
 probe and the rollback; nothing applies them on its own.
@@ -251,10 +338,12 @@ startup/context.md              start steps shared by every seat, and the mode r
 startup/protocol.md             seat addresses, the handoff recipe, how to ask the person, the
                                 two record files, the defaults and the per-run-grant pattern
 startup/lead-first-move.md      what the lead does before it dispatches anything
-roles.yml                       the role table: each role's tools, denies, MCP need and skills
+roles.yml                       the role table (roles v2): each role's tools, denies, MCP need and skills
+caps.yml                        the per-role context caps bin/context-guard.sh reads (--caps)
 OPS.md                          applying roles.yml to a running rig per seat: probe, rollback
 bin/brief.sh                    the execute/audit brief, from the running rig's own run record
 bin/context-guard.sh            restarts one idle seat over the context cap at a durable point
+bin/view-layout.sh              arranges the team's Herdr view: the lead on top, build row, spec row
 bin/seat-rules.py               one role of roles.yml as `rig seat set-permissions --rules` JSON
 agents/hacf/agent.yaml          seven profiles, one per stage
 agents/hacf/guidance/*.md       one role file per seat

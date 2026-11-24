@@ -38,9 +38,10 @@ in the project's `AGENTS.md`, and it names what it is for.
 `architecture.yml` is ground truth, and it is written by scripts, not by hand: `hyper_ledger.py` is the
 single ledger writer, `hypergraph_updater.py` flags the blast radius after a change, `archive_specs.py
 --miniprd|--paths` does the memory flush, `hyper_spec.py` reads, lints and records each slice's progress, and
-`/hyper-audit` does the reconciliation. Lore goes through `hyper_lore.py`: seats propose it and never approve
-it. Never edit the compiled graph directly, never guess a dependency, never read `spec/archive/` or
-`tests/candidate_outputs/` during stage work. When a script fails, that failure is the finding.
+`/hyper-audit` does the reconciliation. Never edit the compiled graph directly, never guess a dependency,
+never read `spec/archive/` or `tests/candidate_outputs/` during stage work. When a script fails, that
+failure is the finding.
+Seats propose lore and never approve or reject it; the person approves it with `/hyper-lore-approve`.
 
 ## Say what you verified
 
@@ -60,19 +61,26 @@ Push a branch, open a pull request or post a comment only when the person said s
 the framework is explicitly human-in-the-loop: a novel output lands in `tests/candidate_outputs/` and waits
 for a person to look at it, and only that person promotes it to `tests/fixtures/`. Never promote your own
 novel output. Never answer another seat's prompt on the person's behalf.
+Never print, log or commit a secret (a token, a key, a password or an .env value).
 
 ## Commit as the person, and say what made it
 
 Commits go out under the git identity configured on this machine — never one taken from repository history.
 Never add a Claude or Anthropic co-author trailer; this assistant is not a contributor to the person's
-repositories. An agent-authored commit ends with exactly one footer naming the assistant, the harness and
-the model actually used:
+repositories. An agent-authored commit ends with exactly two footer lines: the assistant, the harness and
+the model actually used, then the framework version and mode:
 
 ```
 Agentic-Assistant: OpenRig (Claude Code harness) · model <model-id>
+Agentic-Framework: HACF v<version> (<mode>)
 ```
 
-If the model is genuinely unknown, leave the footer off rather than guess.
+`<version>` is the `version` field of `.agents/hacf-manifest.json` (in the HACF repository itself,
+the installed manifest if present, else `HACF_VERSION` in `HACF-install.sh`), read at commit time.
+`<mode>` is `OpenRig` for a seat of an OpenRig HACF team, `manual` for HACF skills used by hand.
+If the model or the version is genuinely unknown, leave that line off rather than guess.
+The commit-msg hook adds the `Agentic-Framework` line when it is missing on a commit that has the
+`Agentic-Assistant` line.
 
 ## Say it once
 

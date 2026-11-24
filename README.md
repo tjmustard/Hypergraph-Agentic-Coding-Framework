@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-    <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/releases/latest"><img src="https://img.shields.io/badge/release-v0.6.3-blue" alt="Latest Release"/></a>
+    <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/releases/latest"><img src="https://img.shields.io/badge/release-v0.6.4-blue" alt="Latest Release"/></a>
     <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/stargazers"><img src="https://img.shields.io/github/stars/tjmustard/Hypergraph-Agentic-Coding-Framework?style=social" alt="GitHub stars"/></a>
     <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/blob/main/LICENSE"><img src="https://img.shields.io/github/license/tjmustard/Hypergraph-Agentic-Coding-Framework" alt="License"/></a>
 </p>
@@ -106,7 +106,7 @@ The installer checks git, bash >= 4, `python3` >= 3.10 and PyYAML >= 5.4 before 
 3. runs the project scaffold, `python3 .agents/scripts/hyper_scaffold.py apply` (see below);
 4. writes the HACF managed block into `AGENTS.md`, `CLAUDE.md` and `GEMINI.md`, keeping every byte outside it;
 5. merges its Claude Code settings and renders the agent firewall from `.agentignore`;
-6. installs the git hooks: `pre-commit` (staged files only), `commit-msg` and `pre-push` (blocks pushing `research/*` and `swimlane/*` branches);
+6. installs the git hooks: `pre-commit` (staged files only), `commit-msg` (drops an agent commit's `Claude-Session:` line and adds its missing `Agentic-Framework` line, else rewrites `Claude-Session:` to `Agentic Coding Assisted: Claude Code`) and `pre-push` (blocks pushing `research/*` and `swimlane/*` branches);
 7. writes `.agents/hacf-manifest.json`, which the uninstaller and `/hyper-update` use.
 
 **What the scaffold creates.** `hyper_scaffold.py apply` creates only what is missing and reports each item as `created`, `kept`, `adopted` or `skipped`; a second run writes nothing. It creates the root `SPEC.md`, `project.yaml`, `workspace.yaml` and `missions/` (OpenRig manifests are adopted unchanged); the lore tree `lore/ADRs/`, `lore/STORIES/`, `lore/proposed/` and `lore/canon/`; and, when no lore graph exists, an empty `lore_hypergraph.yml` with `lore/MAP.md` and `lore/CANON.md`, written by `python3 .agents/scripts/hyper_lore.py init`. An existing lore graph is kept unchanged. It also writes `.agents/local/hacf.yml`, `.agents/state/.gitignore`, `.agents/memory/activeContext.md`, the `spec/` and `tests/` directories, a managed block in `.gitignore`, and the lore merge drivers (repo-local git config plus `<git-common-dir>/info/attributes`, never a tracked `.gitattributes`). A root item that already exists and is not HACF's or OpenRig's stops the scaffold before it writes anything.
@@ -166,7 +166,7 @@ bash /path/to/hacf/HACF-install.sh --source=/path/to/hacf [--ref=<commit|branch|
 | Target | Installs |
 |---|---|
 | `pre-commit` | `.agents/scripts/pre-commit` → `.git/hooks/pre-commit` |
-| `commit-msg` | `.agents/scripts/commit-msg` → `.git/hooks/commit-msg` |
+| `commit-msg` | `.agents/scripts/commit-msg` → `.git/hooks/commit-msg` (deletes `Claude-Session:` on a commit with the `Agentic-Assistant:` footer; otherwise rewrites it; adds the `Agentic-Framework` line when it is missing on a commit that has the `Agentic-Assistant` line, never guessing the version; portable) |
 | `pre-push` | `.agents/scripts/pre-push` → `.git/hooks/pre-push` |
 | `pyproject-template` | ruff config template → `.agents/schemas/project-templates/pyproject.toml` |
 | `python-rules` | `.agents/rules/python.md` |
@@ -336,6 +336,7 @@ The diagram is checked against [`openrig/hacf/rig.yaml`](openrig/hacf/rig.yaml) 
 The **HACF state** box is the same whether a seat or you run a stage. Seats never edit specs, the ledger or the lore by hand: they call these scripts, which validate every write. `hyper_engine.py` is the separate, OpenRig-free way to build every slice in parallel; it reads the same scopes and writes the same ledger.
 
 - **Get the team spec.** `bash HACF-install.sh --rig` copies it to `openrig/hacf/` in your project (or `--rig=<dir>` elsewhere) and names the rig `<slug>-hacf`. The copy is yours: upgrades never refresh it. Planning, launching and recovering a team are in [docs/OpenRig-Team.md](docs/OpenRig-Team.md); the seats and how work moves are in [openrig/hacf/README.md](openrig/hacf/README.md).
+- **Recommended team view.** `openrig/hacf/bin/view-layout.sh --rig <rig>` arranges a team's Herdr view with the lead on top, the build row, then the spec row; see [Recommended team view](docs/OpenRig-Team.md#recommended-team-view).
 - **Which OpenRig versions HACF calls.** HACF calls `rig` for two things, `rig proof add` and `rig scope audit`. `.agents/config/openrig_contract.yml` lists the accepted versions, 0.6.13, 0.7.16 and 0.7.21, and one probed range, 0.7.x with x at least 16: an unlisted version in that range is called only after an isolated probe passes. With any other version, HACF writes the OpenRig manifests and proof artifacts itself and prints a warning; with no `rig` on `PATH` it writes them silently.
 - **Launching is manual and not covered by HACF's tests.** You start a team yourself with `rig up` (run `--plan` first). HACF recorded one throwaway launch, on OpenRig 0.7.16, with the shipped `permission_policy: builtin:yolo` and `non_interruptive: true`: the seats run with permission prompts off. Other permission modes are untested, and `rig down --delete` leaves `.claude/plugins/openrig-core/` and `.claude/settings.local.json` behind (see the [0.6.1 known issues](CHANGELOG.md#known-issues)).
 - **Maintainer tooling, not installed into projects.** `dev/openrig_compat.sh <version>` checks a new OpenRig release against HACF in isolation, and an optional daily watcher (`dev/openrig_watch.sh`, a systemd user timer) runs it on each new release. The watcher's notifications are settings, `HACF_WATCH_NOTIFY_CMD` and `HACF_WATCH_ROW_DESTINATION`, both unset by default, and its evidence root defaults to `${XDG_STATE_HOME:-~/.local/state}/hacf/evidence`. See [DEVELOPMENT.md](DEVELOPMENT.md#openrig-compatibility).
@@ -474,10 +475,12 @@ The engine caps spending per phase (`autonomy.max_budget_usd_per_phase`) and per
 - **Some tests are left out of the public v0.6.0-v0.6.2 trees**: test files that read HACF's private history, and 3 sets of recorded live-session captures that carry account metadata, with the tests that read them. Left out: v0.6.0, 9 test files with 100 test functions; v0.6.1, 13 files with 126; v0.6.2, 13 files with 127. From v0.6.3, 110 of those 127 are back in the public suite and the recorded captures ship as keep-list-cleaned copies; the 17 that read HACF's private records stay in `dev/tests/private_records/`, the one test directory still left out.
 - **The repository moved** to <https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework>. An existing install keeps its pinned old URL and works through GitHub's redirect; to move it, run `/hyper-update --upstream-url https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git`.
 - **The optional code graph** shares one codebase-memory-mcp daemon per user unless `CBM_RUNTIME_DIR` differs, and caps a project name (derived from the checkout path) at 128 characters: use a shorter checkout path.
-- **A pinned re-run (D1)** protects only re-runs of a v0.6.3 or later installer; a checkout moved to an older commit runs that commit's older installer.
+- **A pinned re-run (D1)** protects only re-runs of a v0.6.3 or later installer; a checkout moved to an older commit runs that commit's older installer. The saved installer copy that cures it is scheduled for v0.6.5.
 - **A record correction:** the v0.6.0 export commit message says the S04, S08 and S11 recorded fixtures ship unedited; they were left out of v0.6.0-v0.6.2 and ship cleaned from v0.6.3 (see [CHANGELOG.md](CHANGELOG.md)).
 - **Releases are unsigned** in v0.6.x (see [Updating with `/hyper-update`](#updating-with-hyper-update)).
 - **The code graph's index goes stale** after every commit until it is re-indexed (see [The Optional Code Graph](#the-optional-code-graph)).
+- **Scheduled for v0.6.5** (mission `v064-upgrade-path`): a seat-config upgrade path for an existing OpenRig team (until then the operator applies seat changes per seat, `openrig/hacf/OPS.md`); the saved installer copy; a plain re-run no longer rewriting `source.json`'s pinned ref; an install without `--source` recording the fetched version; a per-project code-graph runtime and shared uv caches; the six v0.6.0 known issues; K9, K10, K11 and D2; and four code-graph items. See the 0.6.4 Known issues in [CHANGELOG.md](CHANGELOG.md).
+- **The OpenRig team's context guard and checkpoint watchdogs** are enforced on the rig named `hacf` only; per-rig lines for other teams come with v0.6.5.
 
 ## 🗺️ Roadmap
 
@@ -496,6 +499,8 @@ The engine caps spending per phase (`autonomy.max_budget_usd_per_phase`) and per
 - [x] v0.6.1: the OpenRig team spec (`--rig`); OpenRig 0.6.13 and 0.7.16 accepted
 - [x] v0.6.2: the OpenRig contract file and range probe; OpenRig 0.7.21 accepted
 - [x] v0.6.3: the left-out tests and normalised recorded fixtures return to the public repository
+- [x] v0.6.4: the OpenRig team's per-role context caps, guard and checkpoints, startup trim, context telemetry, the two-line commit footer, the team view layout, and the confidence and lore-capture lint gates
+- [ ] v0.6.5: the upgrade path for an existing team, and the known issues scheduled in the 0.6.4 CHANGELOG (mission `v064-upgrade-path`)
 - [ ] v0.7.0: legacy flat MiniPRDs are no longer read (no earlier than 2027-01-31)
 
 ## 🤝 Support

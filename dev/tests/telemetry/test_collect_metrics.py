@@ -679,7 +679,8 @@ def test_output_modes_and_key_order(world: World) -> None:
     build_db(world)
     code, card = run_window(world, "--label", "lbl")
     assert code == 0
-    assert list(card) == [*KEY_ORDER, "label"]
+    # OPR.99.0.8.3 MR 2: `context` is added after every v0.6.3 key
+    assert list(card) == [*KEY_ORDER, "label", "context"]
     assert stat.S_IMODE(world.out.stat().st_mode) == 0o700
     for path in world.outputs():
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
@@ -753,3 +754,445 @@ def test_bad_arguments_exit_2(world: World, capsys, extra: list[str]) -> None:
     assert cm.main(world.args(*extra)) == 2
     assert "collect_metrics:" in capsys.readouterr().err
     assert not world.out.exists()
+
+
+# --------------------------------------------------------------------------- context (OPR.99.0.8.3)
+
+GOLDEN = Path(__file__).resolve().parent / "fixtures" / "scorecard_v063_lbl.json"
+
+
+def ctx_line(ts: str, msg_id: str, context: int) -> str:
+    """One assistant line whose resident context is `context` (fresh 1000, rest split)."""
+    return usage_line(ts, msg_id, f"req-{msg_id}", fresh=1000, cw=0, cr=context - 1000, out=7)
+
+
+def write_b(world: World, lines: list[str], sub: list[str] | None = None, sid: str = "sb") -> None:
+    """Replace seat b's transcript (session sid) and, optionally, its subagent transcript."""
+    path = world.projects / "proj-b" / f"{sid}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if sub is not None:
+        sub_path = world.projects / "proj-b" / sid / "subagents" / "agent-1.jsonl"
+        sub_path.parent.mkdir(parents=True, exist_ok=True)
+        sub_path.write_text("\n".join(sub) + "\n", encoding="utf-8")
+
+
+def test_context_per_occupant(world: World) -> None:
+    """10k, 25k, 18k + a duplicate id + a 90k subagent turn: turns 3, peak 25000."""
+    build_db(world)
+    dup = ctx_line("2026-11-01T11:00:00.000Z", "msg-c2", 25000)
+    write_b(
+        world,
+        [
+            ctx_line("2026-11-01T10:30:00.000Z", "msg-c1", 10000),
+            dup,
+            dup,
+            ctx_line("2026-11-01T11:30:00.000Z", "msg-c3", 18000),
+        ],
+        sub=[ctx_line("2026-11-01T11:10:00.000Z", "msg-sub", 90000)],
+    )
+    _code, card = run_window(world)
+    b = card["context"]["b@hacf"]
+    assert b == {
+        "occupants": [
+            {
+                "session_id": "sb",
+                "turns": 3,
+                "peak": 25000,
+                "first_ts": "2026-11-01T10:30:00Z",
+                "last_ts": "2026-11-01T11:30:00Z",
+            }
+        ],
+        "peak_max": 25000,
+        "turns": 3,
+    }
+    # the subagent's turn still counts in the token numbers, never in the context
+    assert seat_slices(card, "b@hacf")["OPR.9.1.2"]["turns"] == 4
+
+
+def test_context_two_sessions(world: World) -> None:
+    """Two sessions for one seat: two occupants; peak_max is the higher peak."""
+    build_db(world)
+    world.writer.execute(
+        "INSERT INTO usage_samples (lane, seat_session, captured_at, native_session_id) "
+        "VALUES ('context', 'b@hacf', '2026-11-01T15:00:00.000Z', 'sb2')"
+    )
+    world.writer.commit()
+    write_b(world, [ctx_line("2026-11-01T12:00:00.000Z", "msg-x1", 40000)])
+    write_b(
+        world,
+        [
+            ctx_line("2026-11-01T15:00:00.000Z", "msg-y1", 70000),
+            ctx_line("2026-11-01T15:05:00.000Z", "msg-y2", 65000),
+        ],
+        sid="sb2",
+    )
+    _code, card = run_window(world)
+    b = card["context"]["b@hacf"]
+    assert [(o["session_id"], o["turns"], o["peak"]) for o in b["occupants"]] == [
+        ("sb", 1, 40000),
+        ("sb2", 2, 70000),
+    ]
+    assert b["peak_max"] == 70000 and b["turns"] == 3
+
+
+def test_context_every_seat_listed(world: World) -> None:
+    """Every scorecard seat has a context entry; a seat without a turn has peak_max null."""
+    build_db(world)
+    (world.projects / "proj-a" / "sa.jsonl").unlink()
+    _code, card = run_window(world)
+    assert set(card["context"]) == {"a@hacf", "b@hacf"}
+    assert card["context"]["a@hacf"] == {"occupants": [], "peak_max": None, "turns": 0}
+
+
+def test_context_missing_count_is_a_reason(world: World) -> None:
+    """A turn without cache_read_input_tokens counts it as 0 and adds an unknowns reason."""
+    build_db(world)
+    line = json.loads(ctx_line("2026-11-01T11:00:00.000Z", "msg-m", 5000))
+    del line["message"]["usage"]["cache_read_input_tokens"]
+    write_b(world, [json.dumps(line)])
+    _code, card = run_window(world)
+    assert card["context"]["b@hacf"]["peak_max"] == 1000
+    assert "b@hacf: 1 turns of session sb lack a context count (taken as 0)" in card["unknowns"]
+
+
+def test_context_backward_compatible(world: World) -> None:
+    """Every v0.6.3 key of the fixture's scorecard is byte-identical to v0.6.3's output."""
+    build_db(world)
+    _code, card = run_window(world, "--label", "lbl")
+    golden = GOLDEN.read_text(encoding="utf-8")
+    old = {k: v for k, v in card.items() if k not in ("generated_at", "context")}
+    # OPR.99.0.8.4 MR 4 adds escape_parts (and its sources) to each slice entry: additive keys,
+    # left out here so every v0.6.3 value is still compared byte for byte
+    for entry in old["slices"]:
+        assert set(entry) >= {"escape_parts", "escape_sources"}
+        del entry["escape_parts"], entry["escape_sources"]
+    assert json.dumps(old, indent=2) + "\n" == golden
+
+
+def test_context_series(world: World) -> None:
+    """--context-series writes <label>.context.json under --out-dir only."""
+    build_db(world)
+    write_b(
+        world,
+        [
+            ctx_line("2026-11-01T10:30:00.000Z", "msg-c1", 10000),
+            ctx_line("2026-11-01T11:00:00.000Z", "msg-c2", 25000),
+        ],
+    )
+    out = world.tmp / "series-out"
+    before = sorted(p for p in world.tmp.rglob("*") if p.is_file())
+    code = cm.main(
+        world.args(
+            "--since",
+            SINCE,
+            "--until",
+            UNTIL,
+            "--label",
+            "lbl",
+            "--out-dir",
+            str(out),
+            "--context-series",
+        )
+    )
+    assert code == 0
+    series = json.loads((out / "lbl.context.json").read_text(encoding="utf-8"))
+    assert series["b@hacf"] == {
+        "sb": [["2026-11-01T10:30:00Z", 10000], ["2026-11-01T11:00:00Z", 25000]]
+    }
+    assert stat.S_IMODE((out / "lbl.context.json").stat().st_mode) == 0o600
+    after = sorted(p for p in world.tmp.rglob("*") if p.is_file())
+    new = [p for p in after if p not in before]
+    assert new and all(out in p.parents for p in new), new
+    assert SENTINEL not in (out / "lbl.context.json").read_text(encoding="utf-8")
+
+
+def test_no_series_without_flag(world: World) -> None:
+    """Without --context-series no .context.json is written."""
+    build_db(world)
+    run_window(world)
+    assert not list(world.out.glob("*.context.json"))
+
+
+# --------------------------------------------------------------------------- escapes (OPR.99.0.8.4)
+
+R063 = [f"OPR.0.6.3.{i}" for i in range(1, 7)]
+REAL_ITERATIONS = [1, 1, 2, 2, 1, 1]  # the shape of the real release-0.6.3 loop records
+MARKER = "escape_tracking: v1"
+
+
+def release_repo(
+    tmp: Path, events: dict[str, list[str]], replan: bool = True, marker: set[str] = frozenset()
+) -> Path:
+    """A repo shaped like release-0.6.3: six slice commits; PROGRESS.md events per slice.
+
+    events maps a slice id to its Outcomes event names; a slice in `marker` gets an executing
+    line carrying the P22 tracking marker. With replan, a resolve commit after the slices carries
+    HACF-Replan-Of: OPR.0.6.3.5.
+    """
+    repo = tmp / "repo063"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], env=git_env(SINCE), check=True)
+    commit(repo, "2026-10-01T00:00:00Z", "base")
+    commit(repo, "2026-11-01T01:00:00Z", "release-0.6.3 resolve: compile")
+    for i, sid in enumerate(R063, start=1):
+        commit(repo, f"2026-11-01T0{i + 1}:00:00Z", f"release-0.6.3 {sid}: slice {i}")
+        slice_dir = repo / "missions" / "release-0.6.3" / "slices" / f"0{i}-s{i}"
+        slice_dir.mkdir(parents=True)
+        (slice_dir / "SPEC.md").write_text(f"---\nid: {sid}\n---\n# x\n", encoding="utf-8")
+        lines = ["- 2026-11-01T00:00:00+00:00 compiled - created"]
+        if sid in marker:
+            lines.append(f"- 2026-11-01T00:01:00+00:00 executing - <base> abc; {MARKER}")
+        for n, event in enumerate(events.get(sid, [])):
+            lines.append(f"- 2026-11-01T00:0{n + 2}:00+00:00 {event} - x")
+        (slice_dir / "PROGRESS.md").write_text(
+            "# Progress\n\n## Outcomes\n\n" + "\n".join(lines) + "\n", encoding="utf-8"
+        )
+    if replan:
+        commit(
+            repo,
+            "2026-11-01T09:00:00Z",
+            "release-0.6.3 resolve: replan slice 6\n\nHACF-Replan-Of: OPR.0.6.3.5",
+        )
+    return repo
+
+
+def loops_dir(tmp: Path, iterations=REAL_ITERATIONS) -> Path:
+    """Six loop records in the shape of the real ones, all PASS."""
+    d = tmp / "loops"
+    d.mkdir()
+    for sid, it in zip(R063, iterations):
+        (d / f"hacf-loop-{sid}.md").write_text(
+            f"# Loop: {sid}\n- MiniPRD: missions/x/SPEC.md\n- Iteration: {it} of 5\n"
+            f"- Latest verdict: PASS\n- Range judged: a..b\n- Unmet: none\n",
+            encoding="utf-8",
+        )
+    return d
+
+
+def run_repo(world: World, repo: Path, *extra: str) -> dict:
+    """One scorecard over the default window against repo."""
+    world.repo = repo
+    code, card = run_window(world, *extra)
+    assert code == 0
+    return card
+
+
+ALL_RECORDS = {
+    "OPR.0.6.3.2": ["executing", "blocked", "executing", "blocked"],
+    "OPR.0.6.3.3": ["executed", "audit_failed"],
+    "OPR.0.6.3.4": ["executed", "audit_failed"],
+}
+
+
+def test_escapes_all_records_release_063(world: World, tmp_path: Path) -> None:
+    """audit_failed x2, blocked x2 and one HACF-Replan-Of: exactly 5, part by part."""
+    build_db(world)
+    card = run_repo(world, release_repo(tmp_path, ALL_RECORDS))
+    rows = slices_of(card)
+    assert sum(rows[s]["escapes"] for s in R063) == 5
+    assert rows["OPR.0.6.3.2"]["escape_parts"]["blocked"] == 2
+    assert rows["OPR.0.6.3.3"]["escape_parts"]["audit_failed"] == 1
+    assert rows["OPR.0.6.3.4"]["escape_parts"]["audit_failed"] == 1
+    assert rows["OPR.0.6.3.5"]["escape_parts"]["git"] == 1
+    for sid in ("OPR.0.6.3.1", "OPR.0.6.3.6"):
+        assert rows[sid]["escapes"] == 0
+        assert rows[sid]["escape_parts"]["blocked"] is None
+    assert rows["OPR.0.6.3.2"]["escape_sources"]["blocked"] == "progress"
+    assert "OPR.0.6.3.1: blocked unknown (no halt records before v0.6.4)" in card["unknowns"]
+
+
+def test_escapes_all_records_with_markers_still_5(world: World, tmp_path: Path) -> None:
+    """P22: with the marker on every slice the total is still exactly 5 and no part is null."""
+    build_db(world)
+    card = run_repo(world, release_repo(tmp_path, ALL_RECORDS, marker=set(R063)))
+    rows = slices_of(card)
+    assert sum(rows[s]["escapes"] for s in R063) == 5
+    assert all(v is not None for s in R063 for v in rows[s]["escape_parts"].values())
+
+
+def test_escapes_loops_only(world: World, tmp_path: Path) -> None:
+    """No event lines + --loops-dir: audit_failed 2 from loops, blocked null."""
+    build_db(world)
+    repo = release_repo(tmp_path, {}, replan=False)
+    card = run_repo(world, repo, "--loops-dir", str(loops_dir(tmp_path)))
+    rows = slices_of(card)
+    assert sum(rows[s]["escape_parts"]["audit_failed"] for s in R063) == 2
+    assert {rows[s]["escape_sources"]["audit_failed"] for s in R063} == {"loops"}
+    assert rows["OPR.0.6.3.3"]["escape_parts"]["audit_failed"] == 1
+    assert all(rows[s]["escape_parts"]["blocked"] is None for s in R063)
+
+
+def test_escapes_loops_only_compares_unknown(world: World, tmp_path: Path, capsys) -> None:
+    """The loops-only aggregate marks escapes unknown, so compare cannot say met or not met."""
+    build_db(world)
+    world.repo = release_repo(tmp_path, {}, replan=False)
+    loops = loops_dir(tmp_path)
+    assert (
+        cm.main(world.args("--b0", "--window", f"w={SINCE}..{UNTIL}", "--loops-dir", str(loops)))
+        == 0
+    )
+    b0 = json.loads((world.out / "B0.json").read_text(encoding="utf-8"))
+    assert b0["escapes_unknown"] is True
+    verdict = cm.verdict(
+        b0 | {"total": {"n": 5, "median": 1000}, "cost_weighted": {"n": 5, "median": 500}},
+        b0 | {"total": {"n": 5, "median": 600}, "cost_weighted": {"n": 5, "median": 300}},
+    )
+    assert verdict["verdict"] == "met (escapes unknown)"
+
+
+def test_escapes_no_double_count(world: World, tmp_path: Path) -> None:
+    """A PROGRESS.md audit_failed line and a loop record for the same slice count once."""
+    build_db(world)
+    repo = release_repo(tmp_path, {"OPR.0.6.3.3": ["executed", "audit_failed"]}, replan=False)
+    card = run_repo(world, repo, "--loops-dir", str(loops_dir(tmp_path, [1, 1, 3, 2, 1, 1])))
+    row = slices_of(card)["OPR.0.6.3.3"]
+    assert row["escape_parts"]["audit_failed"] == 1
+    assert row["escape_sources"]["audit_failed"] == "progress"
+    assert slices_of(card)["OPR.0.6.3.4"]["escape_sources"]["audit_failed"] == "loops"
+
+
+def test_escapes_without_loops_dir(world: World, tmp_path: Path) -> None:
+    """Without --loops-dir and no lines: audit_failed 0 from PROGRESS.md, blocked null."""
+    build_db(world)
+    card = run_repo(world, release_repo(tmp_path, {}, replan=False))
+    row = slices_of(card)["OPR.0.6.3.3"]
+    assert row["escape_parts"] == {"audit_failed": 0, "blocked": None, "git": 0}
+    assert row["escape_sources"]["audit_failed"] == "progress"
+
+
+@pytest.mark.parametrize(
+    ("events", "marked", "parts"),
+    [
+        ([], True, {"audit_failed": 0, "blocked": 0}),
+        (["executed", "audit_failed"], True, {"audit_failed": 1, "blocked": 0}),
+        ([], False, {"audit_failed": 0, "blocked": None}),
+    ],
+    ids=["marker-no-lines", "marker-one-fail", "no-marker"],
+)
+def test_tracking_marker(world: World, tmp_path: Path, events, marked: bool, parts) -> None:
+    """P22 (lead ruling): an executing line with escape_tracking: v1 makes no-halt mean 0."""
+    build_db(world)
+    sid = "OPR.0.6.3.1"
+    repo = release_repo(tmp_path, {sid: events}, replan=False, marker={sid} if marked else set())
+    row = slices_of(run_repo(world, repo))[sid]
+    assert {k: row["escape_parts"][k] for k in parts} == parts
+
+
+def test_marker_must_be_on_an_executing_line(world: World, tmp_path: Path) -> None:
+    """The marker counts only in an executing line's detail."""
+    build_db(world)
+    repo = release_repo(tmp_path, {}, replan=False)
+    progress = repo / "missions" / "release-0.6.3" / "slices" / "01-s1" / "PROGRESS.md"
+    progress.write_text(
+        progress.read_text(encoding="utf-8") + f"- 2026-11-01T00:09:00+00:00 executed - {MARKER}\n",
+        encoding="utf-8",
+    )
+    row = slices_of(run_repo(world, repo))["OPR.0.6.3.1"]
+    assert row["escape_parts"]["blocked"] is None
+
+
+def test_replan_of_counted_once(world: World, tmp_path: Path) -> None:
+    """A commit with both HACF-Replan-Of and a `resolve: replan` subject naming it is one escape."""
+    build_db(world)
+    repo = release_repo(tmp_path, {}, replan=False)
+    commit(
+        repo,
+        "2026-11-01T09:00:00Z",
+        "release-0.6.3 resolve: replan OPR.0.6.3.5\n\nHACF-Replan-Of: OPR.0.6.3.5",
+    )
+    row = slices_of(run_repo(world, repo))["OPR.0.6.3.5"]
+    assert row["escape_parts"]["git"] == 1
+
+
+def test_loops_dir_must_exist(world: World, tmp_path: Path, capsys) -> None:
+    """A --loops-dir that is not a directory is a usage error (exit 2)."""
+    build_db(world)
+    code = cm.main(
+        world.args("--since", SINCE, "--until", UNTIL, "--loops-dir", str(tmp_path / "nope"))
+    )
+    assert code == 2
+    assert "--loops-dir" in capsys.readouterr().err
+
+
+def test_loops_dir_has_no_default() -> None:
+    """--loops-dir defaults to None, never to a path under $HOME."""
+    args = cm.build_parser().parse_args(["--since", SINCE, "--until", UNTIL])
+    assert args.loops_dir is None
+    assert "/home" not in TOOL.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("b0_escapes", "b1_escapes", "expected"),
+    [(None, 0.2, "met (escapes unknown)"), (0.4, 0.2, "met"), (0.4, 0.6, "not met")],
+    ids=["b0-unknown", "fewer", "more"],
+)
+def test_compare_escapes_b2(b0_escapes, b1_escapes, expected: str) -> None:
+    """Tokens down 35%: unknown B0 escapes -> met (escapes unknown); fewer -> met; more -> not."""
+
+    def agg(medians, escapes) -> dict:
+        return {
+            "total": {"n": 5, "median": medians[0]},
+            "cost_weighted": {"n": 5, "median": medians[1]},
+            "escapes_per_slice": escapes,
+        }
+
+    result = cm.verdict(agg((1000, 1000), b0_escapes), agg((650, 650), b1_escapes))
+    assert result["verdict"] == expected
+    assert set(result["details"]) == {"total", "cost_weighted", "escapes_per_slice"}
+
+
+SKILLS = REPO_ROOT / ".agents" / "skills"
+
+
+@pytest.mark.parametrize(
+    ("skill", "needle"),
+    [
+        ("hyper-audit", "--event audit_failed"),
+        ("hyper-execute", "--event blocked"),
+        ("hyper-execute", "escape_tracking: v1"),
+        ("hyper-resolve", "HACF-Replan-Of: <failed slice id>"),
+    ],
+)
+def test_skill_sentences_host_neutral(skill: str, needle: str) -> None:
+    """Each shipped skill carries its new sentence, with no /home path, rig or seat name."""
+    text = (SKILLS / skill / "SKILL.md").read_text(encoding="utf-8")
+    lines = [ln for ln in text.splitlines() if needle in ln]
+    assert lines, needle
+    for line in lines:
+        assert "/home" not in line
+        for word in ("rig", "seat", "orch-lead", "build-audit", "build-execute", "@hacf"):
+            assert word not in line.lower().replace("trigger", ""), (word, line)
+
+
+@pytest.mark.parametrize(
+    ("events", "marked", "escapes", "blocked"),
+    [
+        (["executing", "blocked", "executing", "blocked"], False, 2, 2),
+        ([], True, 0, 0),
+        ([], False, 0, None),
+    ],
+    ids=["two-blocked", "clean-marker", "no-marker"],
+)
+def test_slice_escapes_equals_scorecard(
+    world: World, tmp_path: Path, events, marked: bool, escapes: int, blocked
+) -> None:
+    """MR 4 (fix round 1): slice_escapes sums audit_failed + blocked + git, like the scorecard."""
+    build_db(world)
+    sid = "OPR.0.6.3.2"
+    repo = release_repo(tmp_path, {sid: events}, replan=False, marker={sid} if marked else set())
+    card = run_repo(world, repo)
+    row = slices_of(card)[sid]
+    sha = subprocess.run(
+        ["git", "-C", str(repo), "log", "--format=%H", "-1", "--grep", f"{sid}:"],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=git_env(SINCE),
+    ).stdout.strip()
+    unknowns: list[str] = []
+    direct = cm.slice_escapes(repo, sid, sha, unknowns)
+    assert direct == row["escapes"] == escapes
+    assert isinstance(direct, int)
+    parts, _sources = cm.slice_escape_parts(repo, sid, sha, [])
+    assert parts["blocked"] == row["escape_parts"]["blocked"] == blocked

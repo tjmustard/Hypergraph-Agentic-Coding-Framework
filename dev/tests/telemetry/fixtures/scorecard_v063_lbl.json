@@ -1,0 +1,108 @@
+{
+  "schema": "hacf.telemetry/v1",
+  "rig": "hacf",
+  "window": {
+    "since": "2026-11-01T00:00:00Z",
+    "until": "2026-11-02T00:00:00Z"
+  },
+  "sources": {
+    "snapshot": "ok",
+    "jsonl": 3,
+    "git": "2026-11-01T00:00:00Z..2026-11-02T00:00:00Z HEAD=4db3e719ff70fa7821ac54d9ed4c74b12ea2ebaa"
+  },
+  "seats": [
+    {
+      "seat": "a@hacf",
+      "slices": [
+        {
+          "slice_id": "m1/resolve",
+          "fresh_in": 1,
+          "cache_read": 0,
+          "cache_write": 0,
+          "output": 1,
+          "total": 2,
+          "cost_weighted": 6,
+          "turns": 1,
+          "max_context": 1,
+          "wall_s": 0.0
+        },
+        {
+          "slice_id": "OPR.9.1.1",
+          "fresh_in": 100,
+          "cache_read": 1000,
+          "cache_write": 40,
+          "output": 10,
+          "total": 1150,
+          "cost_weighted": 300,
+          "turns": 1,
+          "max_context": 1140,
+          "wall_s": 0.0
+        },
+        {
+          "slice_id": "unattributed",
+          "fresh_in": 5,
+          "cache_read": 0,
+          "cache_write": 0,
+          "output": 1,
+          "total": 6,
+          "cost_weighted": 10,
+          "turns": 1,
+          "max_context": 5,
+          "wall_s": 0.0
+        }
+      ]
+    },
+    {
+      "seat": "b@hacf",
+      "slices": [
+        {
+          "slice_id": "OPR.9.1.2",
+          "fresh_in": 30,
+          "cache_read": 0,
+          "cache_write": 0,
+          "output": 6,
+          "total": 36,
+          "cost_weighted": 60,
+          "turns": 2,
+          "max_context": 20,
+          "wall_s": 3600.0
+        }
+      ]
+    }
+  ],
+  "slices": [
+    {
+      "slice_id": "m1/resolve",
+      "total": 2,
+      "cost_weighted": 6,
+      "escapes": 0,
+      "advisor_rows": 0
+    },
+    {
+      "slice_id": "OPR.9.1.1",
+      "total": 1150,
+      "cost_weighted": 300,
+      "escapes": 3,
+      "advisor_rows": 2
+    },
+    {
+      "slice_id": "OPR.9.1.2",
+      "total": 36,
+      "cost_weighted": 60,
+      "escapes": 0,
+      "advisor_rows": 1
+    },
+    {
+      "slice_id": "unattributed",
+      "total": 6,
+      "cost_weighted": 10,
+      "escapes": 0,
+      "advisor_rows": 0
+    }
+  ],
+  "unknowns": [
+    "transcript sa.jsonl: 1 unparsable lines skipped",
+    "OPR.9.1.2: no PROGRESS.md; escapes count git only"
+  ],
+  "label": "lbl"
+}

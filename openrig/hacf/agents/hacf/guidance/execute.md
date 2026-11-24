@@ -38,6 +38,12 @@ ledger flagged.
   could decide — **stop and hand back to the lead** with the exact sentence that fails. Building
   a guess is worse than a blocked builder: the guess becomes a committed review target.
 
+**Record every halt.** Whenever you stop and hand back without a finished slice, first run
+`python3 .agents/scripts/hyper_spec.py progress --slice <slice dir> --event blocked --detail-file <file>`,
+the file holding one line of reason; the escape counter reads it. If you halt before execute
+began, record `--event executing` first (its detail records `<base>` and `escape_tracking: v1`),
+then `blocked`.
+
 **The skill's prompts cannot fire here.** If the slice is already `executed` or `audited`, or if
 its Confidence Mandate scores below 9, the skill says `AskUserQuestion`. Do not call it — this
 seat is unattended and the call blocks the terminal. Instead: **stop, and hand the row to the
@@ -79,7 +85,8 @@ skill's step 1 prints both).
    handback to the lead, not something to work around.
 2. **Mark it executing — first, before any edit.**
    `python3 .agents/scripts/hyper_spec.py progress --slice <slice dir> --event executing`
-   (the Operating Notes may add a `--detail-file` recording `Start`). Progress refuses
+   with a `--detail-file` whose text includes `escape_tracking: v1` (it tells the escape counter
+   that your halts are recorded; the Operating Notes may add `Start` to it). Progress refuses
    `compiled -> executed`, so a slice without this event cannot be marked built later. Run it
    again at the start of every fix round; it is allowed from `executed` and `audit_failed`.
 3. **Implement**, ticking each task's box.
@@ -146,8 +153,6 @@ git ls-files --error-unmatch spec/compiled/architecture.yml >/dev/null 2>&1 \
 - **Untracked** — do not add it and never `git add -f`; say in your handoff that the ledger change
   is working-tree only.
 
-Stage every path by name; never `git add -A` or `git add .` (`protocol.md`, "Host facts").
-
 ## Verify by effect, then commit
 
 Run the tests the slice names, by the test-run rule in `protocol.md`'s defaults: targeted tests
@@ -169,8 +174,7 @@ rewriting would break is the trail the audit depends on.
 then lints the staged `*.py` files with `.venv/bin/ruff` or `ruff` on `PATH` (`ruff check`, then
 `ruff format --check`) and skips the lint when neither exists. When a hook rejects your commit:
 
-- read its output and fix the cause (format the file, unstage the forbidden path);
-- **never `--no-verify`**, and never `-n`.
+- read its output and fix the cause (format the file, unstage the forbidden path).
 
 ```
 <imperative summary, ≤ 72 chars>
@@ -179,9 +183,13 @@ Why this change exists, what the slice asked for, and anything the
 auditor should check first.
 
 Agentic-Assistant: OpenRig (Claude Code harness) · model <model-id>
+Agentic-Framework: HACF v<version> (<mode>)
 ```
 
-The footer is the only attribution: no co-author trailer. The commit goes out under the git
+`<version>` is the `version` field of `.agents/hacf-manifest.json` (in the HACF repository itself,
+the installed manifest if present, else `HACF_VERSION` in `HACF-install.sh`), read at commit time.
+`<mode>` is `OpenRig` for a seat of an OpenRig HACF team, `manual` for HACF skills used by hand. If either is unknown, leave that line off.
+The two footer lines are the only attribution: no co-author trailer. The commit goes out under the git
 identity configured on this machine — check **both** fields, because `git commit` fails on a
 missing email even when the name is set:
 
@@ -205,6 +213,20 @@ A halt is still a handoff, to the lead (`protocol.md` for the command; `--body-f
 with `--evidence-ref tests/candidate_outputs/<SID>/`. The body says what the person must judge and
 what happens under each answer. The lead raises the decision and holds the feature until they
 answer — the audit is suspended, not skipped.
+
+## Context checkpoint
+
+A `context-guard checkpoint` message means your context passed your role's cap in
+`openrig/hacf/caps.yml`. Then:
+
+1. Finish the step you are on. **Do not commit, stash or `git add`**: the audit judges
+   `Start..<commit>`, so a partial commit would put half a slice under audit.
+2. Write the checkpoint note: `python3 .agents/scripts/hyper_lore.py note --mission <your mission dir>`
+   with the tasks done, the next task, the files touched and `<base>`.
+3. Tell `orch-lead` in one line that you are ready for a fresh launch, then end your turn. Keep
+   your row in-progress; your successor resumes from it and the mission `NOTES.md` note.
+
+If you already wrote the note for this slice, ignore the message.
 
 ## Hand off
 

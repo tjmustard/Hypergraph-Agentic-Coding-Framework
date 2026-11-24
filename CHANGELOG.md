@@ -7,10 +7,118 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-11-24
+
+### Changed
+- `hyper_spec.py lint` gains `--min-confidence N` (a compiled slice whose Confidence Mandate
+  records no score or one below N fails) and `--mission-close` (a finished mission's `NOTES.md`
+  needs a `## Lore capture` section with at least as many stories as replans); the NOTES template
+  carries the section, resolve, the lead and the scribe run the checks, and default `lint` is
+  unchanged.
+- The hacf OpenRig team: new `bin/view-layout.sh --rig <rig> [--dry-run]` arranges a team's Herdr
+  view into the recommended rows (the lead on top, the build row, the spec row), idempotently and
+  from the rig's own seats; `docs/OpenRig-Team.md` gains "Recommended team view" (Herdr-only).
+- The `commit-msg` hook adds the `Agentic-Framework: HACF v<version> (<mode>)` line when it is
+  missing on a commit that has the `Agentic-Assistant` line (mode `OpenRig` under
+  `OPENRIG_SESSION_NAME`, else `manual`; version from the manifest, else `HACF_VERSION`; nothing
+  when the version is unknown); a commit without that line is never touched.
+- The hacf OpenRig team: `bin/context-guard.sh` now requires `--caps openrig/hacf/caps.yml`, a
+  per-role cap table checked against `roles.yml` (`HACF_CTX_MAX` is no longer read), never restarts
+  a `planned_handover` role, accepts a stale usage sample only when the seat's transcript has not
+  grown since it, and lets untracked `spec/active/` work block only the spec seats (the top-level
+  `FAILED_WORKFLOWS.md` blocks nobody); the host line gains `--caps`.
+- The hacf OpenRig team: `context-guard.sh --arm-checkpoints` keeps exactly one
+  `context-usage-threshold` watchdog per running build-execute (at its cap) and orch-lead (at its
+  handover cap), registering a missing one and never stopping one; `guidance/execute.md` and
+  `guidance/lead.md` say what to do when it fires (a checkpoint note, never a commit; the lead
+  relaunches the builder).
+- Dev tooling only: every `dev/telemetry/collect_metrics.py` scorecard gains `context`, per seat and
+  occupant the turns and peak resident context of its main transcript (`--context-series` writes
+  each turn), and the new read-only `dev/telemetry/recompute_caps.py` proposes per-role caps from
+  them for TJ's OK; `openrig/hacf/caps.yml` lists its re-evaluation triggers.
+- Dev tooling only: the telemetry escape counter adds builder halts (`blocked` progress events) and
+  `HACF-Replan-Of` replan commits to the audit FAILs, reports `escape_parts` per slice, backfills
+  FAILs from loop records given with `--loops-dir`, and compares as `met (escapes unknown)` when a
+  side's escapes are unknown; the audit, execute and resolve skills and guidance now record
+  `audit_failed`, `blocked` (with the `escape_tracking: v1` marker) and the replan trailer.
+- The hacf OpenRig team: `CULTURE.md` now carries the secrets ban itself (it reached seats only through
+  OpenRig's default culture). Dev tooling only: `dev/telemetry/startup_probe.py`, a pinned `claude -p`
+  probe of one role's turn-1 context and tool, MCP and skill inventory under each trim lever, its
+  before table `dev/telemetry/startup-baseline-v064.md`, and a test that every role's delivered
+  start-up set carries the required rules.
+- The hacf OpenRig team: roles v2 (`roles.yml`) denies, per role, the built-in tools and MCP servers
+  the start-up probe listed that the role file and its stage skill never name (never
+  `codebase-memory-mcp`; `seat-rules.py --check` now accepts a bare `mcp__<server>` deny and refuses
+  one of codebase-memory-mcp); duplicated start-up passages are removed; `OPS.md` applies roles v2
+  and adds a compaction probe and the live turn-1 reading; `dev/telemetry/startup-after-v064.md`
+  measures the result.
+- The hacf OpenRig team: `rig.yaml` gains one rig-level key, `env: {ENABLE_CLAUDEAI_MCP_SERVERS:
+  "false"}`, which turns off the account's claude.ai MCP connectors for every seat (project MCP
+  servers such as `codebase-memory-mcp` stay), proven by `rig spec validate` on OpenRig 0.7.16 and
+  0.7.21; `CULTURE.md` again carries the lore rule. Dev tooling only: the OpenRig compat check
+  validates the shipped `rig.yaml` (a FAIL `spec-invalid` when it is refused) and runs its oracle
+  from the moved `test_contract_pin_upgrade.py`.
+- The two-line agent commit footer (`Agentic-Assistant: ...` then `Agentic-Framework: HACF v<version>
+  (<mode>)`) is in the hacf team's `CULTURE.md`, the execute, audit and scribe guidance and the
+  hyper-publish examples; the `commit-msg` hook now deletes `Claude-Session:` from an agent commit
+  instead of adding a third footer line, and no longer uses GNU-only `sed -i`.
+
 ### Fixed
 - Dev tooling only: the tests that need HACF's private records, the raw recorded captures or the
   private release history moved to `dev/tests/private_records/`, so a public clone's test run has no
   failure and no unexpected skip.
+
+### Known issues
+- Record correction: the v0.6.0 export commit message says the S04, S08 and S11 recorded live-test
+  fixtures ship unedited. They were left out of v0.6.0-v0.6.2; from v0.6.3 they ship as
+  keep-list-cleaned copies (`dev/tests/fixtures/recorded/`). A pushed commit message cannot change.
+  (still open in 0.6.4)
+- The optional code graph (codebase-memory-mcp) shares one daemon per user unless
+  `CBM_RUNTIME_DIR` differs between runs. (still open in 0.6.4)
+- codebase-memory-mcp caps a project name at 128 characters, and the name is derived from the
+  checkout path; the workaround is a shorter checkout path. (still open in 0.6.4)
+- The pinned re-run of a local-checkout install (D1) protects only re-runs of a v0.6.3 or later
+  installer. A checkout moved to an older commit runs that commit's older installer; the saved
+  installer copy planned for v0.6.4 is the cure. (still open in 0.6.4; the saved copy is now
+  scheduled for v0.6.5, below)
+- The repository moved to `https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework` (the
+  old URL is in the 0.6.3 Known issues). An existing install keeps its pinned old URL and works
+  through GitHub's redirect; to move it, run
+  `/hyper-update --upstream-url https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git`.
+  (still open in 0.6.4)
+- Of the 127 test functions left out of the public v0.6.2 tree, 110 are back in the public suite.
+  The 17 that read HACF's private development records stay in `dev/tests/private_records/`, the one
+  test directory still left out of every export; on a public clone that directory skips with one
+  stated reason. (still open in 0.6.4)
+- A seat-config upgrade path for an existing team: scheduled for v0.6.5 (mission
+  `v064-upgrade-path`). Until then the operator applies seat changes per seat
+  (`openrig/hacf/OPS.md`).
+- The saved installer copy, the cure for "D1 protects only re-runs of a v0.6.3 or later
+  installer": scheduled for v0.6.5 (mission `v064-upgrade-path`).
+- F2, a plain installer re-run rewrites `source.json`'s pinned ref: scheduled for v0.6.5 (mission
+  `v064-upgrade-path`).
+- An install without `--source` records the script's own version, not the version it fetched:
+  scheduled for v0.6.5 (mission `v064-upgrade-path`).
+- A per-project code-graph runtime and shared uv caches: scheduled for v0.6.5 (mission
+  `v064-upgrade-path`).
+- The six v0.6.0 known issues (lock files left in `.git/hacf/locks`, `/hyper-update` refusing after
+  a local-source install, `source.json` surviving uninstall, narrowing `--ides` leaving files,
+  `/hyper-update` without `--source`, the double write of `.claude/settings.json`): scheduled for
+  v0.6.5 (mission `v064-upgrade-path`).
+- K9 (the `hyper-tutorial` pointers, the empty `.claude/commands/hyper-tutorial.md` and the
+  `AGENTS.hacf-v0.6.0.md` sidecar left after uninstall), K10 (`--rig` uses the GNU-only `mv -T`),
+  K11 (exact ruff parity for a nested config in a root-excluded tree) and D2 (a
+  `hyper_migrate.py detect` false positive on an edited `.agents/memory/activeContext.md`):
+  scheduled for v0.6.5 (mission `v064-upgrade-path`).
+- The four code-graph items (the install report names uvx while the uv-tool method writes a bare
+  command; no stage re-indexes the code graph; no flag skips the `.mcp.json` entry;
+  `symbol_impact --include-tests`): scheduled for v0.6.5 (mission `v064-upgrade-path`).
+- The hacf OpenRig team's context guard (`bin/context-guard.sh`) and its checkpoint watchdogs are
+  enforced on the rig named `hacf` only; per-rig guard and checkpoint lines for other teams are
+  scheduled for v0.6.5 (mission `v064-upgrade-path`).
+- B2, interim and not a verdict: n = 4 slices since the roles-v2 rollout (OPR.99.0.9.1-.4; .9.1
+  only partly in the window), median 7.96M tokens per slice (cost-weighted 1.24M). The B2 verdict
+  waits for n >= 8.
 
 ## [0.6.3] - 2026-11-24
 

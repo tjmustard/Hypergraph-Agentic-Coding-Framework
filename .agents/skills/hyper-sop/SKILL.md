@@ -57,6 +57,7 @@ Wait for the user's response, then provide the exact steps:
 2. The Builder flags the blast radius after writing code: `python3 .agents/scripts/hypergraph_updater.py --from-diff <base> --apply --slice <SID> --json` for a slice, or `python3 .agents/scripts/hypergraph_updater.py spec/compiled/architecture.yml <node_ids>` for a legacy MiniPRD.
 3. **Start a new conversation** and run `/hyper-audit <the same spec>` to verify code against the contract.
 4. When an audit or resolve proposes lore canon, run `/hyper-lore-approve` to accept or reject it. Canon is reached only through this gate.
+5. **Mission close:** when every slice is `audited`, record the lore capture in the mission's `NOTES.md` (`## Lore capture`: the replans counted, and one proposed STORY per replan, or `none`), then `python3 .agents/scripts/hyper_spec.py lint --mission missions/<mission> --mission-close` must pass.
 
 ## Step 4: Remind About Testing and Iteration
 

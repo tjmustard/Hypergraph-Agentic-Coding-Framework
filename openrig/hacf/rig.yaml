@@ -43,6 +43,12 @@ managed_blocks:
 permission_policy: builtin:yolo
 non_interruptive: true
 
+# v0.6.4 (superseding the key-free rule for this one key, as only keys the compat check proves on
+# OpenRig 0.7.16 and 0.7.21 may be added): claude.ai account MCP connectors are off for every seat.
+# Project MCP servers (.mcp.json, e.g. codebase-memory-mcp) stay.
+env:
+  ENABLE_CLAUDEAI_MCP_SERVERS: "false"
+
 # Where the seats work. Every seat declares `cwd: ../..`: relative to this file's folder,
 # which is the project root when this spec sits at <project>/openrig/hacf/. Launch it in
 # one of three ways:

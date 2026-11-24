@@ -122,6 +122,36 @@ there instead.
 After `rig down --delete`, delete `.claude/plugins/openrig-core/` and `.claude/settings.local.json`
 yourself if you no longer want them.
 
+## Recommended team view
+
+```
+orch.lead                                  (full width)
+build.execute  | build.audit   | desk.scribe
+spec.architect | spec.red-team | spec.resolve
+```
+
+Three equal rows: the lead wide on top, where you read and answer it; the build row, where a slice
+is built, audited and recorded; the spec row, where the next feature is drafted, attacked and
+resolved. Open the team's Herdr view, then arrange it:
+
+```bash
+rig terminal open <rig> --provider herdr
+openrig/hacf/bin/view-layout.sh --rig <rig>          # --dry-run prints the plan, moves nothing
+```
+
+The script reads the rig's seats with `rig ps`, leaves a view already in the rows alone, and only
+moves panes: the agents keep running and nothing is typed into them. OpenRig has no layout option
+for a view yet, so re-run it after you re-open a view. To keep views arranged, a systemd user timer
+can call it per rig, with `rig`, `herdr` and `python3` on the unit's `PATH`:
+
+```
+ExecStart=/bin/bash "<project>/openrig/hacf/bin/view-layout.sh" --rig <rig>   # hacf-view.service, [Service]
+OnUnitActiveSec=2min                                                          # hacf-view.timer, [Timer]
+```
+
+The view is Herdr-only: OpenRig runs each seat in its own tmux session, so no tmux window holds the
+team's panes, and `--provider tmux` says so and exits 0.
+
 ## Recover a team
 
 After a reboot or a stopped session, bring the same team back by its name:

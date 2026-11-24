@@ -12,8 +12,15 @@ Use this as a reference when editing a commit message manually in `/hyper-publis
 <Optional body — 1-3 sentences explaining WHY, not what>
 <Reference any related issues, PRs, or decisions>
 
-<Optional footer: Co-Authored-By: Name <email>>
+<Optional trailers: Fixes #123, Related: #456>
+Agentic-Assistant: OpenRig (Claude Code harness) · model <model-id>
+Agentic-Framework: HACF v<version> (<mode>)
 ```
+
+An agent-made commit ends with exactly these two footer lines, and never a Claude co-author trailer or
+session-link line; any other trailer (`Fixes #123`, `HACF-Slice:`) comes before the two lines.
+`<version>` is the `version` field of `.agents/hacf-manifest.json`, and `<mode>` is `OpenRig` for a seat
+of an OpenRig HACF team or `manual` for HACF skills used by hand; leave a line off when its value is unknown.
 
 ---
 
@@ -31,9 +38,9 @@ Use this as a reference when editing a commit message manually in `/hyper-publis
 - Wrap at 72 chars
 - Blank line between subject and body
 
-### Footer (optional)
-- Co-authored credit: `Co-Authored-By: Claude Haiku 4.5 <noreply@anthropic.com>`
-- Issue reference: `Fixes #123` or `Related: #456`
+### Footer
+- Issue reference (optional): `Fixes #123` or `Related: #456`, before the two lines
+- Agent-made commit (required): the two footer lines above, last; never a Claude co-author trailer
 
 ---
 
@@ -51,6 +58,9 @@ Add hyper-publish skill for timestamp-safe git publishing
 Implements post-session IP protection by updating file mtimes
 before commit, ensuring the repository history reflects when
 you published, not when the model wrote.
+
+Agentic-Assistant: OpenRig (Claude Code harness) · model <model-id>
+Agentic-Framework: HACF v<version> (<mode>)
 ```
 
 ### Simple fix
@@ -64,6 +74,9 @@ Update CHANGELOG to reflect recent bug fixes
 
 These fixes were discovered during integration testing and
 must be documented before the next release.
+
+Agentic-Assistant: OpenRig (Claude Code harness) · model <model-id>
+Agentic-Framework: HACF v<version> (<mode>)
 ```
 
 ---

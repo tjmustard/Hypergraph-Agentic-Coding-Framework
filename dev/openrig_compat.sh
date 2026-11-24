@@ -4,8 +4,10 @@
 # Decides in minutes whether an @openrig/cli version works with HACF (release-0.6.2 R12-R14):
 # installs it into a throwaway npm prefix, copies the tree under test (this repo) into the same
 # temp dir, and runs the live contract suite, the capture, help and watched-file comparisons
-# against the committed baselines (dev/tests/fixtures/openrig-compat/<v>/), the shipped probe, and
-# HACF's verify and proof in delegate mode plus the openrig oracle. It prints one final line,
+# against the committed baselines (dev/tests/fixtures/openrig-compat/<v>/), `rig spec validate` of
+# the shipped openrig/hacf/rig.yaml (v0.6.4; a FAIL `spec-invalid` when it refuses), the shipped
+# probe, and HACF's verify and proof in delegate mode plus the openrig oracle. It prints one final
+# line,
 #
 #     openrig-compat <V>: <VERDICT> (<evidence dir>)
 #
@@ -372,7 +374,7 @@ delegate_proof() {
 
 delegate_oracle() {
     (cd -- "$T/hacf" && timeout --kill-after=10 900 uv run --locked pytest -q -p no:cacheprovider \
-        dev/tests/openrig dev/tests/installer/test_contract_pin_upgrade.py)
+        dev/tests/openrig dev/tests/private_records/installer_records/test_contract_pin_upgrade.py)
 }
 
 stop_listener() {
@@ -419,6 +421,8 @@ if step install install_candidate && step tree copy_tree; then
         step help python3 "$compat" help --root "$T/hacf" --rig "$T/npm/node_modules/.bin/rig" \
             --out-dir "$T/state/help" --baselines "$baselines" --out "$T/state/help.json" \
             "${seed_flag[@]}"
+        step spec-validate python3 "$compat" spec-validate --rig "$T/npm/node_modules/.bin/rig" \
+            --spec "$T/hacf/openrig/hacf/rig.yaml" --out "$T/state/spec_validate.json"
         if [[ $seed -eq 0 ]]; then
             step watched python3 "$compat" watched --root "$T/hacf" --package "$package" \
                 --baselines "$baselines" --out "$T/state/watched.json" --diff-dir "$evidence/diffs"
@@ -433,7 +437,7 @@ if step install install_candidate && step tree copy_tree; then
 fi
 step daemon-contact stop_listener
 step host-touched host_unchanged
-for f in captures.json help.json watched.json baselines.json; do
+for f in captures.json help.json watched.json baselines.json spec_validate.json; do
     [[ -f $T/state/$f ]] && cp -- "$T/state/$f" "$evidence/$f"
 done
 cp -- "$steps" "$evidence/steps.tsv"
@@ -452,7 +456,7 @@ expect=()
 [[ -n $start_head ]] && expect=(--expect-head "$start_head")
 "${accept_env[@]}" python3 "$compat" accept --root "$root" --version "$version" \
     --evidence "$evidence" "${expect[@]}" --started-clean "$start_clean" -- \
-    uv run --locked pytest -q dev/tests/openrig dev/tests/installer/test_contract_pin_upgrade.py
+    uv run --locked pytest -q dev/tests/openrig dev/tests/private_records/installer_records/test_contract_pin_upgrade.py
 if [[ $rc -eq 0 ]] && grep -q '"result": "review-streak"' -- "$evidence/verdict.json"; then
     exit 3
 fi

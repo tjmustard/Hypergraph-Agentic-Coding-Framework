@@ -210,12 +210,10 @@ These hold on every run unless the person says otherwise.
 - **Nudge a just-cleared seat.** After a handoff to a seat that was just cleared, the wake can
   fail ("Recipient binding changed"). `rig send` the seat a one-line nudge naming the row, and
   check the row is claimed.
-- **Loop files live in `~/.hacf/<rig>/loops/`**, never in the repository.
 - **The test-run rule.** While iterating, run the project's targeted tests for the code you are
   changing, plus its last-failed rerun where the runner supports one (pytest `--lf` does nothing
   when the cache provider is off). Run the project's full check once per slice, at the end. The
   auditor keeps its own full run. Never stop or restart a test run in progress.
-- **Escalation** goes to the advisor when one exists, else to a human row ("Asking the person").
 
 ## Per-run grants
 
@@ -238,4 +236,3 @@ words and the row id. A seat follows a grant only when the run record carries it
 - Never run `hypergraph_updater.py` except where your role file says you may; it writes.
 - Never answer another seat's prompt, and never push or publish without the person's own
   word for that specific work.
-- Never read `spec/archive/` or `tests/candidate_outputs/` during stage work.

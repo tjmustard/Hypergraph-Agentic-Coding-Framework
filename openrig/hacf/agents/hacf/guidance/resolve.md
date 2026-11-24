@@ -79,8 +79,10 @@ outside the repository (`mktemp -d`), then:
    --from-draft spec/active/Draft_PRD.md --body-file <file>`.
 3. **The slices,** in order, one `python3 .agents/scripts/hyper_scope.py slice create` per slice,
    with the flags the skill lists (`--intent` is required).
-4. **Validation.** `python3 .agents/scripts/hyper_spec.py lint --mission missions/<mission>` must
-   pass before anything is archived. Fix the bodies and rerun until it does.
+4. **Validation.** `python3 .agents/scripts/hyper_spec.py lint --mission missions/<mission> --min-confidence 9` must pass before anything is archived. Fix the bodies and rerun
+   until it does. Every slice records `**Score: N/10.**` under its Confidence Mandate, and the
+   flag fails one that records none or less than 9. Never hand a slice below 9: settle its open
+   questions with the person, or split it, first.
 5. **Lore.** One `python3 .agents/scripts/hyper_lore.py propose --type decision …` per trade-off,
    anchored from the blast radius, as the skill gives it.
 6. **Collision fallback — only on a foreign root item.** Print the skill's warning naming each
@@ -139,7 +141,8 @@ clear before the build loop starts, or the next stages read stale, conflicting c
 
 When the lead sends a stopped slice back, follow the skill's **Replan mode**: a new R-row in the
 mission's trade-off log, recompile only unfinished slices, run Step 4 again, never change a slice
-whose `hacf_status` is `audited`, and do not archive.
+whose `hacf_status` is `audited`, and do not archive. Each replan commit carries the trailer
+`HACF-Replan-Of: <failed slice id>`; the escape counter reads it.
 
 ## Hand off
 
@@ -147,7 +150,7 @@ Hand back to the lead (`protocol.md`; `--body-file` is required) with:
 
 - the mission path and the **ordered list of slice paths** (`python3 .agents/scripts/hyper_scope.py dag --mission <mission>`
   prints them in dependency order);
-- the `lint --mission` command and its exit code;
+- the `lint --mission … --min-confidence 9` command and its exit code;
 - the confidence score, and anything still below it;
 - every decision the person made, quoted, with its row id;
 - the PROPOSED lore ids you registered, and the binding ids the mission cites;

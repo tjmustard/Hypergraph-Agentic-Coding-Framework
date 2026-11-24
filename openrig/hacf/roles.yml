@@ -1,9 +1,10 @@
-# The hacf team's role table: which native Claude Code tools each seat's role uses, which it
-# denies, whether it needs MCP servers, and its skills. One entry per profile of
+# The hacf team's role table, roles v2 (v0.6.4): which native Claude Code tools each seat's role
+# uses, which it denies, whether it needs MCP servers, and its skills. One entry per profile of
 # agents/hacf/agent.yaml.
 #
-# rig.yaml stays free of per-member permission keys, so it keeps launching on every OpenRig this
-# rig is tested against. This table is applied per seat instead: bin/seat-rules.py turns one role
+# rig.yaml carries one rig-level `env:` key (v0.6.4); per-seat tool rules are still applied per
+# seat, so it keeps launching on every OpenRig this rig is tested against. This table is applied
+# per seat: bin/seat-rules.py turns one role
 # into the JSON that `rig seat set-permissions <seat> --rules <file>` takes, and OPS.md is the
 # operator's apply, probe and rollback recipe. Nothing applies it on its own.
 #
@@ -18,6 +19,16 @@
 #   ExitPlanMode
 #   EnterWorktree,   the seats never create worktrees; the pipeline notes forbid
 #   ExitWorktree     `git worktree add`.
+# roles v2 (v0.6.4) adds, per role, from the start-up probe's init inventory
+# (dev/telemetry/startup-baseline-v064.md):
+#   - every built-in tool in neither the role's tools_allow nor its role file or stage skill(s):
+#     CronCreate, CronDelete, CronList, DesignSync, ListAgents, ListMcpResourcesTool, Monitor,
+#     PushNotification, ReadMcpResourceDirTool, ReadMcpResourceTool, RemoteTrigger,
+#     ReportFindings, ScheduleWakeup, SendMessage, TaskStop, Workflow. Task stays (it may be the
+#     init name of the Agent tool), and ToolSearch stays (deferred tools such as WebSearch need it);
+#   - a bare `mcp__<server>` deny for each MCP server the inventory listed. codebase-memory-mcp is
+#     never denied (TJ: keep it where MCP is on), and seat-rules.py --check refuses a deny of it.
+#     A server on another host that is not in this list is not denied.
 # mcp: off is recorded intent. No guidance file or HACF skill calls an MCP tool (the code graph is
 #   the hyper_codegraph.py CLI). No `rig seat` verb sets MCP loading on an existing seat
 #   (OpenRig 0.7.21), so OPS.md does not change it and the saving is reported unknown.
@@ -27,57 +38,176 @@ schema: hacf.roles/v1
 roles:
   # guidance/lead.md dispatches by queue row and asks the person through a durable row
   # (startup/protocol.md:106-111: never AskUserQuestion). Agent stays: the lead may fan out reads.
+  # v2 denies: the built-ins guidance/lead.md and hyper-sop never name, and the 23
+  # listed MCP servers.
   lead:
     tools_allow: [Read, Grep, Glob, Bash, Edit, Write, Skill, Agent, WebFetch, WebSearch, TodoWrite]
-    tools_deny: [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree]
+    tools_deny:
+      [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree,
+       CronCreate, CronDelete, CronList, DesignSync, ListAgents, ListMcpResourcesTool, Monitor,
+       PushNotification, ReadMcpResourceDirTool, ReadMcpResourceTool, RemoteTrigger, ReportFindings,
+       ScheduleWakeup, SendMessage, TaskStop, Workflow, mcp__plugin_productivity_slack,
+       mcp__plugin_productivity_notion, mcp__plugin_productivity_linear,
+       mcp__plugin_productivity_atlassian, mcp__plugin_productivity_monday,
+       mcp__plugin_productivity_clickup, mcp__plugin_productivity_google_calendar,
+       mcp__plugin_productivity_gmail, mcp__plugin_product-management_figma,
+       mcp__plugin_product-management_amplitude, mcp__plugin_product-management_amplitude-eu,
+       mcp__plugin_product-management_pendo, mcp__plugin_product-management_intercom,
+       mcp__plugin_product-management_fireflies, mcp__plugin_product-management_google_calendar,
+       mcp__plugin_product-management_gmail, mcp__plugin_product-management_similarweb,
+       mcp__plugin_human-resources_google_calendar, mcp__plugin_human-resources_gmail,
+       mcp__claude_ai_Claude_Docs, mcp__claude_ai_Google_Drive, mcp__claude_ai_Gmail,
+       mcp__claude_ai_Google_Calendar]
     mcp: off
     skills: [adversarial-agent-hardening]
 
   # guidance/architect.md:15: "Never use `AskUserQuestion`, and never wait at a prompt in this
   # seat." The interview goes through the durable row instead.
+  # v2 denies: the built-ins guidance/architect.md and hyper-architect never name, and the 23
+  # listed MCP servers.
   architect:
     tools_allow: [Read, Grep, Glob, Bash, Edit, Write, Skill, Agent, WebFetch, WebSearch, TodoWrite]
-    tools_deny: [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree]
+    tools_deny:
+      [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree,
+       CronCreate, CronDelete, CronList, DesignSync, ListAgents, ListMcpResourcesTool, Monitor,
+       PushNotification, ReadMcpResourceDirTool, ReadMcpResourceTool, RemoteTrigger, ReportFindings,
+       ScheduleWakeup, SendMessage, TaskStop, Workflow, mcp__plugin_productivity_slack,
+       mcp__plugin_productivity_notion, mcp__plugin_productivity_linear,
+       mcp__plugin_productivity_atlassian, mcp__plugin_productivity_monday,
+       mcp__plugin_productivity_clickup, mcp__plugin_productivity_google_calendar,
+       mcp__plugin_productivity_gmail, mcp__plugin_product-management_figma,
+       mcp__plugin_product-management_amplitude, mcp__plugin_product-management_amplitude-eu,
+       mcp__plugin_product-management_pendo, mcp__plugin_product-management_intercom,
+       mcp__plugin_product-management_fireflies, mcp__plugin_product-management_google_calendar,
+       mcp__plugin_product-management_gmail, mcp__plugin_product-management_similarweb,
+       mcp__plugin_human-resources_google_calendar, mcp__plugin_human-resources_gmail,
+       mcp__claude_ai_Claude_Docs, mcp__claude_ai_Google_Drive, mcp__claude_ai_Gmail,
+       mcp__claude_ai_Google_Calendar]
     mcp: off
     skills: [adversarial-agent-hardening]
 
   # guidance/red-team.md:34-36: the code graph is the hyper_codegraph.py CLI, not an MCP server,
   # so mcp: off loses nothing. AskUserQuestion: startup/protocol.md:106-111.
+  # v2 denies: the built-ins guidance/red-team.md and hyper-redteam never name, and the 23
+  # listed MCP servers.
   red-team:
     tools_allow: [Read, Grep, Glob, Bash, Edit, Write, Skill, Agent, WebFetch, WebSearch, TodoWrite]
-    tools_deny: [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree]
+    tools_deny:
+      [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree,
+       CronCreate, CronDelete, CronList, DesignSync, ListAgents, ListMcpResourcesTool, Monitor,
+       PushNotification, ReadMcpResourceDirTool, ReadMcpResourceTool, RemoteTrigger, ReportFindings,
+       ScheduleWakeup, SendMessage, TaskStop, Workflow, mcp__plugin_productivity_slack,
+       mcp__plugin_productivity_notion, mcp__plugin_productivity_linear,
+       mcp__plugin_productivity_atlassian, mcp__plugin_productivity_monday,
+       mcp__plugin_productivity_clickup, mcp__plugin_productivity_google_calendar,
+       mcp__plugin_productivity_gmail, mcp__plugin_product-management_figma,
+       mcp__plugin_product-management_amplitude, mcp__plugin_product-management_amplitude-eu,
+       mcp__plugin_product-management_pendo, mcp__plugin_product-management_intercom,
+       mcp__plugin_product-management_fireflies, mcp__plugin_product-management_google_calendar,
+       mcp__plugin_product-management_gmail, mcp__plugin_product-management_similarweb,
+       mcp__plugin_human-resources_google_calendar, mcp__plugin_human-resources_gmail,
+       mcp__claude_ai_Claude_Docs, mcp__claude_ai_Google_Drive, mcp__claude_ai_Gmail,
+       mcp__claude_ai_Google_Calendar]
     mcp: off
     skills: [adversarial-agent-hardening]
 
   # guidance/resolve.md:52: "The skill says to use `AskUserQuestion` for this. **Do not**: this
   # seat runs unattended".
+  # v2 denies: the built-ins guidance/resolve.md and hyper-resolve never name, and the 23
+  # listed MCP servers.
   resolve:
     tools_allow: [Read, Grep, Glob, Bash, Edit, Write, Skill, Agent, WebFetch, WebSearch, TodoWrite]
-    tools_deny: [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree]
+    tools_deny:
+      [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree,
+       CronCreate, CronDelete, CronList, DesignSync, ListAgents, ListMcpResourcesTool, Monitor,
+       PushNotification, ReadMcpResourceDirTool, ReadMcpResourceTool, RemoteTrigger, ReportFindings,
+       ScheduleWakeup, SendMessage, TaskStop, Workflow, mcp__plugin_productivity_slack,
+       mcp__plugin_productivity_notion, mcp__plugin_productivity_linear,
+       mcp__plugin_productivity_atlassian, mcp__plugin_productivity_monday,
+       mcp__plugin_productivity_clickup, mcp__plugin_productivity_google_calendar,
+       mcp__plugin_productivity_gmail, mcp__plugin_product-management_figma,
+       mcp__plugin_product-management_amplitude, mcp__plugin_product-management_amplitude-eu,
+       mcp__plugin_product-management_pendo, mcp__plugin_product-management_intercom,
+       mcp__plugin_product-management_fireflies, mcp__plugin_product-management_google_calendar,
+       mcp__plugin_product-management_gmail, mcp__plugin_product-management_similarweb,
+       mcp__plugin_human-resources_google_calendar, mcp__plugin_human-resources_gmail,
+       mcp__claude_ai_Claude_Docs, mcp__claude_ai_Google_Drive, mcp__claude_ai_Gmail,
+       mcp__claude_ai_Google_Calendar]
     mcp: off
     skills: [adversarial-agent-hardening]
 
   # guidance/execute.md:42-43: the skill's AskUserQuestion prompts "cannot fire here". Agent stays:
   # .agents/skills/hyper-execute/SKILL.md:51 launches the orientation sub-agent with the Agent tool.
+  # v2 denies: the built-ins guidance/execute.md and hyper-execute never name, and the 23
+  # listed MCP servers.
   execute:
     tools_allow: [Read, Grep, Glob, Bash, Edit, Write, Skill, Agent, WebFetch, WebSearch, TodoWrite]
-    tools_deny: [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree]
+    tools_deny:
+      [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree,
+       CronCreate, CronDelete, CronList, DesignSync, ListAgents, ListMcpResourcesTool, Monitor,
+       PushNotification, ReadMcpResourceDirTool, ReadMcpResourceTool, RemoteTrigger, ReportFindings,
+       ScheduleWakeup, SendMessage, TaskStop, Workflow, mcp__plugin_productivity_slack,
+       mcp__plugin_productivity_notion, mcp__plugin_productivity_linear,
+       mcp__plugin_productivity_atlassian, mcp__plugin_productivity_monday,
+       mcp__plugin_productivity_clickup, mcp__plugin_productivity_google_calendar,
+       mcp__plugin_productivity_gmail, mcp__plugin_product-management_figma,
+       mcp__plugin_product-management_amplitude, mcp__plugin_product-management_amplitude-eu,
+       mcp__plugin_product-management_pendo, mcp__plugin_product-management_intercom,
+       mcp__plugin_product-management_fireflies, mcp__plugin_product-management_google_calendar,
+       mcp__plugin_product-management_gmail, mcp__plugin_product-management_similarweb,
+       mcp__plugin_human-resources_google_calendar, mcp__plugin_human-resources_gmail,
+       mcp__claude_ai_Claude_Docs, mcp__claude_ai_Google_Drive, mcp__claude_ai_Gmail,
+       mcp__claude_ai_Google_Calendar]
     mcp: off
     skills: [adversarial-agent-hardening]
 
   # guidance/audit.md:86: "Have a sub-agent ... read each listed node's files", and
   # .agents/skills/hyper-audit/SKILL.md:55 launches it with the Agent tool, so Agent stays.
   # AskUserQuestion: startup/protocol.md:106-111.
+  # v2 denies: the built-ins guidance/audit.md and hyper-audit never name, and the 23
+  # listed MCP servers.
   audit:
     tools_allow: [Read, Grep, Glob, Bash, Edit, Write, Skill, Agent, WebFetch, WebSearch, TodoWrite]
-    tools_deny: [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree]
+    tools_deny:
+      [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree,
+       CronCreate, CronDelete, CronList, DesignSync, ListAgents, ListMcpResourcesTool, Monitor,
+       PushNotification, ReadMcpResourceDirTool, ReadMcpResourceTool, RemoteTrigger, ReportFindings,
+       ScheduleWakeup, SendMessage, TaskStop, Workflow, mcp__plugin_productivity_slack,
+       mcp__plugin_productivity_notion, mcp__plugin_productivity_linear,
+       mcp__plugin_productivity_atlassian, mcp__plugin_productivity_monday,
+       mcp__plugin_productivity_clickup, mcp__plugin_productivity_google_calendar,
+       mcp__plugin_productivity_gmail, mcp__plugin_product-management_figma,
+       mcp__plugin_product-management_amplitude, mcp__plugin_product-management_amplitude-eu,
+       mcp__plugin_product-management_pendo, mcp__plugin_product-management_intercom,
+       mcp__plugin_product-management_fireflies, mcp__plugin_product-management_google_calendar,
+       mcp__plugin_product-management_gmail, mcp__plugin_product-management_similarweb,
+       mcp__plugin_human-resources_google_calendar, mcp__plugin_human-resources_gmail,
+       mcp__claude_ai_Claude_Docs, mcp__claude_ai_Google_Drive, mcp__claude_ai_Gmail,
+       mcp__claude_ai_Google_Calendar]
     mcp: off
     skills: [adversarial-agent-hardening]
 
   # guidance/scribe.md works in the existing checkout and its linked worktrees (scribe.md:71) and
   # never creates one. AskUserQuestion: startup/protocol.md:106-111.
+  # v2 denies: the built-ins guidance/scribe.md, hyper-document and hyper-publish never name
+  # (Workflow stays: hyper-document names it), and the 23 listed MCP servers.
   scribe:
     tools_allow: [Read, Grep, Glob, Bash, Edit, Write, Skill, Agent, WebFetch, WebSearch, TodoWrite]
-    tools_deny: [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree]
+    tools_deny:
+      [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree,
+       CronCreate, CronDelete, CronList, DesignSync, ListAgents, ListMcpResourcesTool, Monitor,
+       PushNotification, ReadMcpResourceDirTool, ReadMcpResourceTool, RemoteTrigger, ReportFindings,
+       ScheduleWakeup, SendMessage, TaskStop, mcp__plugin_productivity_slack,
+       mcp__plugin_productivity_notion, mcp__plugin_productivity_linear,
+       mcp__plugin_productivity_atlassian, mcp__plugin_productivity_monday,
+       mcp__plugin_productivity_clickup, mcp__plugin_productivity_google_calendar,
+       mcp__plugin_productivity_gmail, mcp__plugin_product-management_figma,
+       mcp__plugin_product-management_amplitude, mcp__plugin_product-management_amplitude-eu,
+       mcp__plugin_product-management_pendo, mcp__plugin_product-management_intercom,
+       mcp__plugin_product-management_fireflies, mcp__plugin_product-management_google_calendar,
+       mcp__plugin_product-management_gmail, mcp__plugin_product-management_similarweb,
+       mcp__plugin_human-resources_google_calendar, mcp__plugin_human-resources_gmail,
+       mcp__claude_ai_Claude_Docs, mcp__claude_ai_Google_Drive, mcp__claude_ai_Gmail,
+       mcp__claude_ai_Google_Calendar]
     mcp: off
     skills: [adversarial-agent-hardening]

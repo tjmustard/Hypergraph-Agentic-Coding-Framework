@@ -32,6 +32,15 @@ Read `.agents/skills/hyper-document/SKILL.md` first — it lists the records thi
 Write what the code does. Never "comprehensive", "robust" or "seamless". A doc file that
 repeats the diff in prose is worse than none, because it drifts.
 
+## Mission close
+
+When the lead closes a mission it has filled `- replans: <n>` in the `## Lore capture` section of
+`missions/<mission>/NOTES.md`. Propose one STORY per replan: what was planned, what forced the
+replan and what changed, with `python3 .agents/scripts/hyper_lore.py propose --type story`.
+That is PROPOSED lore; you never approve it, and neither does any seat. List the ids on the
+`- stories:` line (comma-separated `STORY-NNNN` ids, or `none` when the replans are 0), name them in
+your handoff, and let the lead run `--mission-close`.
+
 ## Read the range, not the last commit
 
 The builder makes one commit per slice, and the feature may have several. The skill's own
@@ -112,13 +121,18 @@ Updates the records the <Feature> feature made stale: <the files, in one
 clause each>.
 
 Agentic-Assistant: OpenRig (Claude Code harness) · model <model-id>
+Agentic-Framework: HACF v<version> (<mode>)
 ```
+
+`<version>` is the `version` field of `.agents/hacf-manifest.json` (in the HACF repository itself,
+the installed manifest if present, else `HACF_VERSION` in `HACF-install.sh`), read at commit time.
+`<mode>` is `OpenRig` for a seat of an OpenRig HACF team, `manual` for HACF skills used by hand.
 
 Rules for every commit you make:
 
-- **One footer, exactly as above.** Never a `Co-Authored-By: Claude` line and never an
+- **The two footer lines, exactly as above.** Never a `Co-Authored-By: Claude` line and never an
   `@anthropic.com` address. This assistant is not a contributor to the person's repositories. If
-  the model is genuinely unknown, leave the footer off rather than guess.
+  the model or the version is genuinely unknown, leave that line off rather than guess.
 - **No history rewriting.** No rebase, no amend of another seat's commit, no force push, no
   squash. If the branch is untidy, say so and let the person decide.
 - **The project has git hooks.** HACF's `pre-commit` blocks any staged path under `spec/process/`,

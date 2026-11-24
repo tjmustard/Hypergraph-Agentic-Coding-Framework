@@ -1239,3 +1239,93 @@ def test_no_shipped_file_reads_the_live_overrides() -> None:
             hits += [f"{path}: {n}" for n in ("HACF_LIVE_ACCEPT_EXTRA", "HACF_LIVE_RECORD_DIR")
                      if n in text]  # fmt: skip
     assert hits == []
+
+
+# --- spec validate of the shipped rig.yaml (v064-context OPR.99.0.8.7) -------------------------
+
+
+def _validate_rig(tmp_path: Path, stdout: str, rc: int) -> str:
+    """A fake candidate `rig` whose `spec validate --json <path>` prints stdout and exits rc."""
+    rig = tmp_path / "validate-rig"
+    (tmp_path / "validate.out").write_text(stdout, encoding="utf-8")
+    rig.write_text(
+        "#!/bin/sh\n"
+        f"echo \"$@\" > '{tmp_path / 'validate.argv'}'\n"
+        f"cat '{tmp_path / 'validate.out'}'\n"
+        f"exit {rc}\n",
+        encoding="utf-8",
+    )
+    rig.chmod(0o755)
+    return str(rig)
+
+
+@pytest.mark.parametrize(
+    ("stdout", "rc", "want", "record"),
+    [
+        ('{"valid": true}', 0, oc.EXIT_OK, {"exit": 0, "valid": True}),
+        ('{"valid": false, "errors": ["x"]}', 1, oc.EXIT_FAIL, {"exit": 1, "valid": False}),
+        ("", 1, oc.EXIT_FAIL, {"exit": 1, "valid": None}),
+        ('{"valid": false}', 0, oc.EXIT_FAIL, {"exit": 0, "valid": False}),
+        ("not json", 0, oc.EXIT_SETUP, {"exit": 0, "valid": None}),
+    ],
+    ids=["valid", "invalid-exit-1", "exit-1-no-json", "valid-false-exit-0", "garbled"],
+)
+def test_run_spec_validate(tmp_path: Path, stdout: str, rc: int, want: int, record: dict) -> None:
+    """The step passes only on exit 0 with valid true; a refusal is a FAIL, garble a setup."""
+    out = tmp_path / "spec_validate.json"
+    spec = tmp_path / "rig.yaml"
+    assert oc.run_spec_validate(_validate_rig(tmp_path, stdout, rc), spec, out) == want
+    assert json.loads(out.read_text()) == record
+    assert (tmp_path / "validate.argv").read_text().split() == [
+        "spec", "validate", "--json", str(spec)
+    ]  # fmt: skip
+
+
+def test_spec_validate_is_a_required_step() -> None:
+    """Every mode must run spec-validate; its kind maps exit 1 to fail."""
+    assert "spec-validate" in oc.REQUIRED_STEPS and "spec-validate" in oc.SEED_REQUIRED_STEPS
+    assert oc.classify_exit(1, False, oc.STEP_KINDS["spec-validate"]) == "fail"
+    assert oc.classify_exit(2, False, oc.STEP_KINDS["spec-validate"]) == "setup"
+
+
+def test_report_spec_invalid_fails(tmp_path: Path, capsys) -> None:
+    """A spec-validate step that exits 1 makes the verdict FAIL spec-invalid, with the record."""
+    state, evidence, ns = tmp_path / "state", tmp_path / "evidence", _ns(tmp_path)
+    _green_state(state)
+    rows = (state / "steps.tsv").read_text().splitlines(keepends=True)
+    rows = [
+        r if not r.startswith("spec-validate\t") else "spec-validate\t1\t1\t0\t\n" for r in rows
+    ]
+    (state / "steps.tsv").write_text("".join(rows))
+    oc.write_json(state / "spec_validate.json", {"exit": 1, "valid": False})
+    assert oc.report(ns) == 1
+    assert capsys.readouterr().out.strip().endswith(f"FAIL spec-invalid ({evidence})")
+    verdict = json.loads((evidence / "verdict.json").read_text())
+    assert verdict["verdict"] == "FAIL" and verdict["failed_step"] == "spec-invalid"
+    assert verdict["spec_validate"] == {"exit": 1, "valid": False}
+    assert (
+        "Spec validate (openrig/hacf/rig.yaml): exit 1, valid false."
+        in (evidence / "REPORT.md").read_text()
+    )
+
+
+def test_report_spec_valid_passes(tmp_path: Path, capsys) -> None:
+    """Exit 0 with valid true: the step is ok and the verdict records it."""
+    state, evidence, ns = tmp_path / "state", tmp_path / "evidence", _ns(tmp_path)
+    _green_state(state)
+    oc.write_json(state / "spec_validate.json", {"exit": 0, "valid": True})
+    assert oc.report(ns) == 0
+    verdict = json.loads((evidence / "verdict.json").read_text())
+    assert verdict["verdict"] == "PASS"
+    assert verdict["spec_validate"] == {"exit": 0, "valid": True}
+    assert "exit 0, valid true." in (evidence / "REPORT.md").read_text()
+
+
+def test_the_shell_runs_spec_validate_on_the_shipped_spec() -> None:
+    """compat.sh runs the step on the tree's openrig/hacf/rig.yaml with the candidate rig."""
+    text = (REPO_ROOT / "dev" / "openrig_compat.sh").read_text()
+    assert (
+        'step spec-validate python3 "$compat" spec-validate --rig "$T/npm/node_modules/.bin/rig"'
+        in text
+    )
+    assert '--spec "$T/hacf/openrig/hacf/rig.yaml" --out "$T/state/spec_validate.json"' in text

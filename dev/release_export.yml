@@ -42,7 +42,9 @@ releases:
         - dev/tests/compat/test_openrig_watch_install.py
         - dev/tests/compat/test_openrig_compat.py
   - version: "0.6.3"
-    source: 9c1e3714d15d159a0d88b8c0f3ebd3792c9ce3c0
+    source: b7dcb443411c23d59825ac0f20f9ac0eacee0789
+  - version: "0.6.4"
+    source: 2d1d8930b9cbf55fc186c76b96c851fd7b21152b
 exclude:
   # HACF's own development records (private).
   - path: lore/
@@ -69,7 +71,8 @@ exclude:
   - path: .agents/memory/activeContext.md
     reason: "HACF's own bootstrap procedure; public on 984ca46, deliberately deleted from the public tree; installs get theirs from the scaffold"
     versions: all
-  # Tests that read HACF's private development history.
+  # Tests that read HACF's private development history. The paths are as of v0.6.2; from 0.6.3 these
+  # tests live under dev/tests/private_records/, excluded by that row below (versions: all).
   - path: dev/tests/engine/test_orchestrator_cli.py
     reason: "reads HACF's private development history"
     versions: "<=0.6.2"

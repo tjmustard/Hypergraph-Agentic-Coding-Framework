@@ -1404,11 +1404,97 @@ def cmd_resolve(ns: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+# ---------------------------------------------------------------------------
+# lint gates: --min-confidence and --mission-close (v064-process OPR.99.0.9.4)
+# ---------------------------------------------------------------------------
+
+CONFIDENCE_HEADING = "## 1. The Confidence Mandate"
+# `**Score: 9/10**` or `**Score: 9/10.**`: compiled slices write both forms.
+SCORE_RE = re.compile(r"\*\*Score: (\d+)/10\.?\*\*")
+LORE_CAPTURE_HEADING = "## Lore capture"
+REPLANS_RE = re.compile(r"^- replans: (\d+)\s*$")
+STORIES_RE = re.compile(r"^- stories: (none|STORY-\d{4}(?:\s*,\s*STORY-\d{4})*)\s*$")
+
+
+def _confidence_level(value: str) -> int:
+    """Parse --min-confidence: an int from 1 to 10, else an argparse error (exit 2)."""
+    try:
+        level = int(value)
+    except ValueError:
+        level = 0
+    if not 1 <= level <= 10:
+        raise argparse.ArgumentTypeError(f"{value!r} is not an int from 1 to 10")
+    return level
+
+
+def confidence_findings(specs: list[Spec], level: int) -> list[Finding]:
+    """An error for each compiled slice whose recorded score is missing or below level."""
+    found = []
+    for spec in specs:
+        front = spec.front or {}
+        if spec.layout != SLICE or front.get("hacf_status") != "compiled":
+            continue
+        slice_id = front.get("id") or spec.rel
+        items = _section_items(spec.body, CONFIDENCE_HEADING)
+        match = next((m for m in map(SCORE_RE.search, items or []) if m), None)
+        if match is None:
+            message = f"confidence: no score recorded ({slice_id})"
+        elif int(match.group(1)) < level:
+            message = f"confidence: {match.group(1)}/10 < {level} ({slice_id})"
+        else:
+            continue
+        found.append(Finding("error", spec.rel, "confidence", message))
+    return found
+
+
+def mission_close_findings(mission: Path, specs: list[Spec], top: Path) -> list[Finding]:
+    """Check the lore capture of a finished mission (every live slice audited).
+
+    A live slice is one under slices/ (closed/ holds superseded ones). A mission with a live slice
+    that is not audited, or with none, gets one note and no error.
+    """
+    notes = Path(mission) / "NOTES.md"
+    rel = _rel(notes, top)
+    live_root = (Path(mission) / "slices").resolve()
+    live = [
+        spec
+        for spec in specs
+        if spec.layout == SLICE and spec.path.resolve().parent.parent == live_root
+    ]
+    if not live or any((spec.front or {}).get("hacf_status") != "audited" for spec in live):
+        return [Finding("note", rel, "lore_capture", "mission not closed")]
+
+    def error(message: str) -> list[Finding]:
+        return [Finding("error", rel, "lore_capture", f"lore capture: {message}")]
+
+    text = _read_optional(notes)
+    if text is None:
+        return error("no NOTES.md")
+    items = _section_items(text, LORE_CAPTURE_HEADING)
+    if items is None:
+        return error(f"no {LORE_CAPTURE_HEADING!r} section")
+    replans = next((m for m in map(REPLANS_RE.match, items) if m), None)
+    if replans is None:
+        return error("no '- replans: <int>' line")
+    stories = next((m for m in map(STORIES_RE.match, items) if m), None)
+    if stories is None:
+        return error("no '- stories: <STORY ids or none>' line")
+    want = int(replans.group(1))
+    have = 0 if stories.group(1) == "none" else len(stories.group(1).split(","))
+    if have < want:
+        return error(f"stories {have} < replans {want}")
+    return []
+
+
 def cmd_lint(ns: argparse.Namespace) -> int:
     """Lint one spec, one mission or the whole tree; exit 1 when there is an error."""
     chosen = [bool(ns.path), bool(ns.mission), ns.all]
     if chosen.count(True) != 1:
         raise UsageError("lint takes exactly one of <path>, --mission <dir> or --all")
+    if ns.min_confidence is not None and ns.path:
+        raise UsageError("--min-confidence needs --mission <dir> or --all")
+    if ns.mission_close and not ns.mission:
+        raise UsageError("--mission-close needs --mission <dir>")
     top, mroot = _context()
     findings: list[Finding] = []
     specs: list[Spec] = []
@@ -1432,6 +1518,10 @@ def cmd_lint(ns: argparse.Namespace) -> int:
     ids = known_ids(mroot)
     for spec in specs:
         findings += lint_spec(spec, ids, top)
+    if ns.min_confidence is not None:
+        findings += confidence_findings(specs, ns.min_confidence)
+    if ns.mission_close:
+        findings += mission_close_findings(Path(ns.mission), specs, top)
     failed = any(finding.severity == "error" for finding in findings)
     if ns.json:
         report = {"ok": not failed, "findings": [finding._asdict() for finding in findings]}
@@ -1630,6 +1720,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--mission", help="a mission directory: its SPEC.md and every slice")
     p.add_argument("--all", action="store_true", help="root SPEC.md, every mission, legacy files")
     p.add_argument("--json", action="store_true", help="print the findings as JSON")
+    p.add_argument(
+        "--min-confidence",
+        type=_confidence_level,
+        metavar="N",
+        help="error for each compiled slice whose Confidence Mandate score is missing or below N",
+    )
+    p.add_argument(
+        "--mission-close",
+        action="store_true",
+        help="with --mission: a finished mission's NOTES.md must record its lore capture",
+    )
     p = command("progress", cmd_progress, "record one slice event")
     p.add_argument("--slice", required=True, help="the slice directory (or a legacy flat file)")
     p.add_argument("--event", required=True, choices=EVENTS)

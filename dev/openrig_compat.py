@@ -618,6 +618,7 @@ STEP_KINDS = {
     "captures": "compare",
     "help": "compare",
     "watched": "compare",
+    "spec-validate": "compare",
     "delegate-probe": "product",
     "delegate-contract": "harness",
     "delegate-verify": "product",
@@ -631,8 +632,8 @@ SAFETY_STEPS = ("daemon-contact", "host-touched")
 # SETUP-ERROR naming it: the verdict fails closed, and slice 4 auto-accepts on PASS.
 REQUIRED_STEPS = tuple(STEP_KINDS)
 SEED_REQUIRED_STEPS = (
-    "install", "tree", "live", "help", "delegate-probe", "delegate-contract", "delegate-verify",
-    "delegate-proof", "delegate-oracle", "daemon-contact", "host-touched",
+    "install", "tree", "live", "help", "spec-validate", "delegate-probe", "delegate-contract",
+    "delegate-verify", "delegate-proof", "delegate-oracle", "daemon-contact", "host-touched",
 )  # fmt: skip
 
 
@@ -667,6 +668,57 @@ def decide(steps: list[dict], watched_diff: dict, seed: bool) -> tuple[str, str 
     if watched_diff:
         return "REVIEW", None, None
     return "PASS", None, None
+
+
+SPEC_VALIDATE_STEP = "spec-validate"
+SPEC_INVALID = "spec-invalid"
+SPEC_VALIDATE_TIMEOUT = 120
+
+
+def run_spec_validate(rig: str, spec: Path, out: Path) -> int:
+    """Run the candidate's `rig spec validate --json <spec>` and record {exit, valid} in out.
+
+    The candidate runs in the caller's isolated environment (the shell drops every OPENRIG_* and
+    RIGGED_* variable and points OPENRIG_URL at a dead listener); `spec validate` needs no daemon.
+    Exit 0 when it exits 0 with `"valid": true`, EXIT_FAIL when it exits non-zero or says
+    `"valid": false` (the verdict's `spec-invalid`), EXIT_SETUP when it cannot run or its output
+    is not the JSON object it documents.
+    """
+    record: dict = {"exit": None, "valid": None}
+    try:
+        result = subprocess.run(
+            [rig, "spec", "validate", "--json", str(spec)],
+            capture_output=True, text=True, timeout=SPEC_VALIDATE_TIMEOUT,
+            stdin=subprocess.DEVNULL,
+        )  # fmt: skip
+    except (OSError, subprocess.SubprocessError) as exc:
+        write_json(out, {**record, "error": type(exc).__name__})
+        return EXIT_SETUP
+    record["exit"] = result.returncode
+    try:
+        data = json.loads(result.stdout[:MAX_JSON_BYTES]) if result.stdout.strip() else None
+    except ValueError:
+        data = None
+    if isinstance(data, dict) and isinstance(data.get("valid"), bool):
+        record["valid"] = data["valid"]
+    write_json(out, record)
+    if result.returncode != 0 or record["valid"] is False:
+        return EXIT_FAIL
+    return EXIT_OK if record["valid"] is True else EXIT_SETUP
+
+
+def read_spec_validate(state: Path) -> dict | None:
+    """The spec-validate step's {exit, valid}, or None when it wrote nothing readable."""
+    path = state / "spec_validate.json"
+    if not path.exists():
+        return None
+    try:
+        data = load_json_file(path)
+    except CompatInputError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return {"exit": data.get("exit"), "valid": data.get("valid")}
 
 
 def read_steps(path: Path) -> list[dict]:
@@ -1434,6 +1486,9 @@ def report(ns: argparse.Namespace) -> int:
                           "seconds": None, "detail": "; ".join(problems)[:500]})  # fmt: skip
     watched_diff = watched.get("watched_diff", {})
     verdict, failed, setup_error = decide(steps, watched_diff, ns.seed)
+    if failed == SPEC_VALIDATE_STEP:
+        failed = SPEC_INVALID
+    spec_validate = read_spec_validate(state)
     timings = {s["name"]: s["seconds"] for s in steps if s.get("seconds") is not None}
     out = {
         "version": ns.version,
@@ -1451,6 +1506,7 @@ def report(ns: argparse.Namespace) -> int:
                       if isinstance(diffs, dict)},
         "json_paths_added": _obj(captured.get("json_paths_added")),
         "setup_error": setup_error,
+        "spec_validate": spec_validate,
         "timings": timings,
         "steps": steps,
         "integrity": ns.integrity,
@@ -1477,6 +1533,13 @@ def report(ns: argparse.Namespace) -> int:
         lines.append(f"Setup error: {setup_error}.")
     if watched_diff:
         lines.append(f"Watched items that differ (REVIEW): {json.dumps(watched_diff)}.")
+    if spec_validate is None:
+        lines.append("Spec validate: not recorded.")
+    else:
+        lines.append(
+            f"Spec validate (openrig/hacf/rig.yaml): exit {spec_validate['exit']},"
+            f" valid {json.dumps(spec_validate['valid'])}."
+        )
     (evidence / "REPORT.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     tail = f" {failed}" if verdict == "FAIL" else ""
     print(f"openrig-compat {ns.version}: {verdict}{tail} ({evidence})")
@@ -1906,6 +1969,10 @@ def _cli() -> argparse.ArgumentParser:
     s.add_argument("--baselines", default="")
     s.add_argument("--out", required=True)
     s.add_argument("--seed", action="store_true")
+    s = sub.add_parser("spec-validate")
+    s.add_argument("--rig", required=True)
+    s.add_argument("--spec", required=True)
+    s.add_argument("--out", required=True)
     s = sub.add_parser("watched")
     s.add_argument("--root", required=True)
     s.add_argument("--package", required=True)
@@ -2030,6 +2097,8 @@ def _dispatch(ns: argparse.Namespace) -> int:  # noqa: C901 - a flat table of su
     if ns.cmd == "help":
         return run_help(Path(ns.root), ns.rig, Path(ns.out_dir), _baseline_list(ns.baselines),
                         Path(ns.out), seed=ns.seed)  # fmt: skip
+    if ns.cmd == "spec-validate":
+        return run_spec_validate(ns.rig, Path(ns.spec), Path(ns.out))
     if ns.cmd == "watched":
         out = Path(ns.out)
         return run_watched(Path(ns.root), Path(ns.package), _baseline_list(ns.baselines), out,

@@ -19,6 +19,7 @@ This skill implements a spec precisely, minimally, and in full, adhering to exis
 - Ledger writes go through `hyper_ledger.py` and `hypergraph_updater.py` only; never edit the ledger by hand.
 - The tracking document is the spec's own task checkboxes; create no progress file.
 - `python3 .agents/scripts/hyper_gates.py mode` prints `autonomous` only under `HACF_AUTONOMOUS=1`. In that mode nobody can answer a question, so follow each step's `Autonomous:` line, and the scripts send ledger, lore and progress writes to `$HACF_OUTBOX` on their own.
+- Record a halt: when you stop without a finished spec after `resolve` succeeded, first run `python3 .agents/scripts/hyper_spec.py progress --slice <spec> --event blocked --detail-file <file>`, the file holding one line of reason. If execution had not begun, record `--event executing` first, then `blocked`. Every `--event executing` you record passes a `--detail-file` whose text includes `escape_tracking: v1`, which tells the escape counter that halts are recorded.
 - Placeholders: `<spec>` is the path `resolve` reports (`resolve` itself takes the user's path or dot-id). `<SID>` is the slice id; for a legacy MiniPRD it is the `slice:` of its `hacf-bootstrap` block, else its file name without `.md`.
 - Fenced blocks tagged `legacy` hold the commands of the legacy branch, including those both layouts share. Blocks tagged `v6` hold the commands only a slice runs.
 
