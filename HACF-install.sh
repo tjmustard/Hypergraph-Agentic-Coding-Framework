@@ -17,20 +17,27 @@ set -euo pipefail
 # The runs write no __pycache__ into the project (D1).
 export PYTHONDONTWRITEBYTECODE=1
 
-# Hypergraph Coding Agent Framework — consent-first installer and upgrader (v0.6.0)
+# Hypergraph Agentic Coding Framework — consent-first installer and upgrader (v0.6.0)
 #
 # Supported platforms: Linux (Ubuntu 22.04+, Debian 12+) and WSL2. macOS is best-effort (needs
 # bash >= 4 from Homebrew). Hashing uses Python hashlib; no GNU-only tool is required.
 #
 # Fresh install (interactive):
-#   curl -sSL https://raw.githubusercontent.com/tjmustard/Hypergraph-Coding-Agent-Framework/main/HACF-install.sh -o HACF-install.sh && bash HACF-install.sh
+#   curl -sSL https://raw.githubusercontent.com/tjmustard/Hypergraph-Agentic-Coding-Framework/main/HACF-install.sh -o HACF-install.sh && bash HACF-install.sh
 # Fresh install (non-interactive; downloads nothing third-party and consents to nothing):
-#   curl -sSL https://raw.githubusercontent.com/tjmustard/Hypergraph-Coding-Agent-Framework/main/HACF-install.sh | bash -s -- -y --ides=claude
+#   curl -sSL https://raw.githubusercontent.com/tjmustard/Hypergraph-Agentic-Coding-Framework/main/HACF-install.sh | bash -s -- -y --ides=claude
 # From a local checkout (one commit object, never its working tree; no network):
 #   bash /path/to/hacf/HACF-install.sh --source=/path/to/hacf [--ref=<commit|branch|tag>]
 #   --ref defaults to HEAD and is printed as a full sha before any write. --source cannot be
 #   combined with --repo-url or --branch, and --dry-run with --source still fetches into the
 #   temp dir. The absolute path goes only to the gitignored .agents/state/install/source.json.
+# Re-running on a project installed from a local checkout (D1, v0.6.3):
+#   bash HACF-install.sh                      reinstalls the manifest's installed_commit; refuses
+#                                             (writes nothing) when the recorded checkout's HEAD moved
+#   bash HACF-install.sh --ref=<commit>       moves to that commit of the recorded checkout
+#   --source=<the recorded checkout> without --ref is pinned the same way; another checkout is a
+#   new source (its HEAD). This protects re-runs of a v0.6.3+ installer; a checkout moved to an
+#   older commit runs that commit's older installer.
 #
 # Consent: -y and a run without a terminal never consent to a download, a third-party install
 # or a user-level change. Each such action runs only when its own flag is given, or when you
@@ -86,7 +93,10 @@ Other:
   --source=PATH              install from a commit of a local HACF git checkout (never its
                              working tree); cannot be combined with --repo-url or --branch
   --ref=REF                  commit, branch or tag in --source (default HEAD); printed as a
-                             full sha before any write
+                             full sha before any write. Without --source on a project installed
+                             from a local checkout: moves to REF there. A re-run without --ref
+                             (or with --source= that checkout) reinstalls installed_commit and
+                             refuses when the checkout's HEAD moved
                              (--dry-run with --source still fetches into the temp dir)
   -h, --help                this text
 USAGE
@@ -95,8 +105,8 @@ USAGE
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-HACF_VERSION="0.6.2"
-DEFAULT_REPO_URL="https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework.git"
+HACF_VERSION="0.6.3"
+DEFAULT_REPO_URL="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git"
 DEFAULT_BRANCH="main"
 CBM_VERSION="0.12.1"
 CBM_VENDOR_URL="https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/v${CBM_VERSION}/install.sh"
@@ -194,6 +204,9 @@ SOURCE_KIND="remote"   # remote | local (--source)
 SOURCE_REAL=""         # the --source checkout, realpath'd; the only form passed to git
 SOURCE_REF=""          # the --ref as given (default HEAD)
 SRC_COMMIT=""          # the full sha SOURCE_REF names in SOURCE_REAL
+PIN_COMMIT=""          # D1: the installed_commit a re-run without --ref must match ("" = none)
+PIN_PATH=""            # D1: the recorded checkout path shown in the refusal
+PIN_SOURCE_ARG=""      # D1: " --source=<p>" when the re-run named the recorded checkout
 REPO_URL=""
 BRANCH=""
 UPSTREAM_SHA=""
@@ -907,7 +920,10 @@ parse_args() {
     usage_error "--rig cannot be combined with --mode=$MODE. Nothing was written."
   fi
   if $SOURCE_GIVEN && [ -z "$FLAG_SOURCE" ]; then usage_error "--source needs a non-empty path. Nothing was written."; fi
-  if $REF_GIVEN && ! $SOURCE_GIVEN; then usage_error "--ref needs --source. Nothing was written."; fi
+  # --ref without --source needs a local-source record; resolve_upstream checks that (D1).
+  if $REF_GIVEN && ! $SOURCE_GIVEN && { [ -n "$FLAG_REPO_URL" ] || [ -n "$FLAG_BRANCH" ]; }; then
+    usage_error "--ref needs --source. Nothing was written."
+  fi
   if $SOURCE_GIVEN && { [ -n "$FLAG_REPO_URL" ] || [ -n "$FLAG_BRANCH" ]; }; then
     usage_error "--source cannot be combined with --repo-url or --branch. Nothing was written."
   fi
@@ -921,17 +937,22 @@ parse_args() {
 }
 
 resolve_upstream() {
+  PIN_COMMIT=""; PIN_PATH=""; PIN_SOURCE_ARG=""
   if $SOURCE_GIVEN; then
     # --source: one commit of a local checkout. The HACF_TEST env overrides are not read here.
+    $REF_GIVEN || same_recorded_source
     resolve_local_source
     return 0
   fi
   if [ -z "$FLAG_REPO_URL" ] && [ -z "$FLAG_BRANCH" ] \
       && ! { [ "${HACF_TEST:-}" = "1" ] && [ -n "${HACF_REPO_URL:-}" ]; } \
       && recorded_source; then
+    # D1: a plain re-run reinstalls installed_commit; --ref moves within the recorded checkout.
+    if ! $REF_GIVEN; then PIN_COMMIT="$REC_INSTALLED"; PIN_PATH="$REC_PATH"; fi
     resolve_local_source
     return 0
   fi
+  if $REF_GIVEN; then usage_error "--ref needs --source. Nothing was written."; fi
   REPO_URL="$DEFAULT_REPO_URL"
   BRANCH="$DEFAULT_BRANCH"
   if [ "${HACF_TEST:-}" = "1" ]; then
@@ -1050,8 +1071,9 @@ refuse_recorded() {
   die "this project was installed from a local HACF checkout ($where) at ${REC_INSTALLED:-(no installed_commit)}; $1. Pass --source=<checkout> or --repo-url=<https url>. Nothing was written."
 }
 
-# Slice 32 Task 5: an upgrade of a --source install takes the recorded checkout's current HEAD.
-# Returns 1 (the remote path, unchanged) unless the manifest records source.kind == local; then
+# Slice 32 Task 5, D1 (OPR.99.0.6.1): an upgrade of a --source install reads the recorded checkout.
+# Without --ref it is pinned to installed_commit (resolve_local_source refuses a moved HEAD); with
+# --ref it resolves that ref in the checkout. Returns 1 (the remote path, unchanged) unless the manifest records source.kind == local; then
 # the per-machine file must be valid and its path usable, or the run refuses.
 recorded_source() {
   [ -f "$MANIFEST_REL" ] || return 1
@@ -1069,10 +1091,23 @@ recorded_source() {
   [ -n "$REC_PATH" ] || refuse_recorded "$SOURCE_FILE_REL records no path"
   check_local_path "$REC_PATH" || refuse_recorded "the source $LS_REASON"
   FLAG_SOURCE="$REC_PATH"
-  FLAG_REF=""
-  REF_GIVEN=false
   echo "    source: recorded by the previous install (pass --repo-url to switch to a remote)"
   return 0
+}
+
+# same_recorded_source (D1): --source without --ref naming the checkout this project records is
+# pinned like a plain re-run. Any other --source is an explicit new source (HEAD, as before).
+same_recorded_source() {
+  [ -f "$MANIFEST_REL" ] || return 0
+  read_install_record
+  [ "$REC_KIND" = "local" ] && [ -z "$REC_FILE_ERR" ] && [ "$REC_SCHEMA" = "$SOURCE_SCHEMA" ] \
+    && [ "$REC_FILE_KIND" = "local" ] && [ -n "$REC_PATH" ] && [ -n "$REC_INSTALLED" ] || return 0
+  local given
+  check_local_path "$FLAG_SOURCE" || return 0   # resolve_local_source refuses it with its reason
+  given="$SOURCE_REAL"
+  check_local_path "$REC_PATH" || return 0
+  [ "$given" = "$SOURCE_REAL" ] || return 0
+  PIN_COMMIT="$REC_INSTALLED"; PIN_PATH="$REC_PATH"; PIN_SOURCE_ARG=" --source=$(q "$FLAG_SOURCE")"
 }
 
 # R56 (slice 31): resolve --source/--ref to one commit of a local HACF checkout before any
@@ -1108,12 +1143,26 @@ resolve_local_source() {
   esac
   SRC_COMMIT=$(git -C "$SOURCE_REAL" rev-parse --verify --quiet "$SOURCE_REF^{commit}" 2>/dev/null </dev/null || true)
   [ -n "$SRC_COMMIT" ] || die "refusing --ref $(q "$SOURCE_REF"): unknown ref in $(q "$SOURCE_REAL"). Nothing was written."
+  # 7b. D1: a re-run of the recorded checkout without --ref installs installed_commit or nothing.
+  if [ -n "$PIN_COMMIT" ] && [ "$SRC_COMMIT" != "$PIN_COMMIT" ]; then
+    if ! [[ "$PIN_COMMIT" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] \
+        || ! git -C "$SOURCE_REAL" cat-file -e "$PIN_COMMIT^{commit}" 2>/dev/null </dev/null; then
+      refuse_recorded "its installed_commit is not a commit in that checkout"
+    fi
+    local again="bash $(q "$PIN_PATH")/HACF-install.sh$PIN_SOURCE_ARG"
+    die "refusing a plain re-run: the recorded HACF checkout $(q "$PIN_PATH") is at $SRC_COMMIT, but this project is installed at $PIN_COMMIT.
+  to reinstall the installed commit:  $again --ref=$PIN_COMMIT
+  to move to the checkout's HEAD:     $again --ref=$SRC_COMMIT
+Nothing was written."
+  fi
   # 8. Version guard: the commit's own installer must be this version.
   local blob version=""
   blob=$(git -C "$SOURCE_REAL" show "$SRC_COMMIT:HACF-install.sh" 2>/dev/null </dev/null || true)
   if [[ "$blob" =~ (^|$'\n')HACF_VERSION=\"([^\"]*)\" ]]; then version="${BASH_REMATCH[2]}"; fi
   if [ "$version" != "$HACF_VERSION" ]; then
-    die "commit $SRC_COMMIT carries HACF ${version:-(no HACF_VERSION)}; this installer is $HACF_VERSION; run that commit's own HACF-install.sh. Nothing was written."
+    local tmp_installer="${TMPDIR:-/tmp}/HACF-install-${SRC_COMMIT:0:12}.sh"
+    die "commit $SRC_COMMIT carries HACF ${version:-(no HACF_VERSION)}; this installer is $HACF_VERSION; run it from that commit: git -C $(q "$SOURCE_REAL") show $SRC_COMMIT:HACF-install.sh > $(q "$tmp_installer"); bash $(q "$tmp_installer") --source=$(q "$SOURCE_REAL") --ref=$SRC_COMMIT
+Nothing was written."
   fi
   # 9. Dirty warning (non-bare only); --no-optional-locks keeps status from writing the index.
   if [ "$bare" != "true" ]; then
@@ -2101,7 +2150,7 @@ main() {
 
   echo ""
   echo "╔══════════════════════════════════════════════════════════╗"
-  echo "║       Hypergraph Coding Agent Framework Installer        ║"
+  echo "║      Hypergraph Agentic Coding Framework Installer       ║"
   echo "╚══════════════════════════════════════════════════════════╝"
   echo ""
   if [ "$SOURCE_KIND" = "local" ]; then

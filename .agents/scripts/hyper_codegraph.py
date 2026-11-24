@@ -23,7 +23,10 @@ Configuration, three layers under the repository root (later layers win):
 Executable resolution (never downloads or installs anything): the state file's recorded
 `exe_argv_prefix`; then `codebase-memory-mcp` on PATH; then `['uvx',
 'codebase-memory-mcp@0.12.1']`, only when hacf.yml records `install_method: uvx` (the
-installer writes it after the user's consent, S12b). Nothing resolved: status `unavailable`.
+installer writes it after the user's consent, S12b). Each candidate must report the pinned
+version: the first two are probed with `--version` and skipped at any other version; the uvx
+argv pins the version itself and is not probed, also when the state file records it. Nothing
+resolved: status `unavailable`, with a line naming each version found and the fix.
 
 Placeholders (R24.6) are validated before any argv is built: a value starting with `-` is
 refused; `repo_root` is an absolute existing directory; `project` matches PROJECT_RE; `symbol`
@@ -141,6 +144,8 @@ QN_RULE = 'qn = qn_prefix == "" ? name : qn_prefix + "." + name'
 LINES_RE = re.compile(r"(\d+)(?:-\d+)?")
 
 PROJECT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+PROJECT_MAX = 128  # PROJECT_RE's length limit (P12: not widened)
+PROJECT_CHARS_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")  # PROJECT_RE without the limit
 SYMBOL_RE = re.compile(r"[\w.:$<>-]{1,256}")
 PATTERN_MAX = 256
 TOKEN_RE = re.compile(r"\{([a-z_]+)\}")
@@ -533,6 +538,12 @@ def validate_placeholders(values: dict[str, str | None]) -> dict[str, str]:
                 raise _refuse(name, value, "is not an absolute existing directory")
         elif name == "project":
             if not PROJECT_RE.fullmatch(value):
+                if len(value) > PROJECT_MAX and PROJECT_CHARS_RE.fullmatch(value):
+                    raise PlaceholderRefused(
+                        f"refused: project name is {len(value)} characters; the limit is "
+                        f"{PROJECT_MAX} (it is derived from the repository path): use a "
+                        "shorter checkout path; nothing was run"
+                    )
                 raise _refuse(name, value, f"does not match ^{PROJECT_RE.pattern}$")
         elif name == "symbol":
             if not SYMBOL_RE.fullmatch(value):
@@ -605,29 +616,68 @@ def _recorded_prefix(state: dict) -> list[str] | None:
     return list(prefix)
 
 
+def _resolve(cfg: Config) -> tuple[list[str] | None, list[str], list[str]]:
+    """Return (the chosen prefix or None, one line per step tried, each `candidate: version`).
+
+    The recorded prefix and the PATH binary are chosen only when `--version` reports exactly the
+    pinned version; the uvx prefix (also when the state file records it) pins the version in its
+    argv and is never run here, since running uvx can download.
+    """
+    pinned = str(cfg.entry.get("pinned_version", PINNED_VERSION))
+    timeout = _timeout(cfg, "status")
+    lines: list[str] = []
+    found: list[str] = []
+
+    def pinned_ok(candidate: str, prefix: list[str]) -> bool:
+        version = backend_version(prefix, cfg.repo_root, timeout) or "unknown"
+        if version == pinned:
+            return True
+        found.append(f"{candidate}: {version}")
+        lines.append(f"{candidate}: version {version}, not {pinned} (skipped)")
+        return False
+
+    uvx = (cfg.entry.get("install_options") or {}).get("uvx")
+    uvx_argv = [str(part) for part in uvx] if isinstance(uvx, list) and uvx else None
+    recorded = _recorded_prefix(cfg.state)
+    if recorded is None:
+        lines.append("state exe_argv_prefix: not recorded")
+    elif recorded == uvx_argv or pinned_ok(
+        f"state exe_argv_prefix {json.dumps(recorded)}", recorded
+    ):
+        lines.append(f"state exe_argv_prefix: {json.dumps(recorded)} (chosen)")
+        return recorded, lines, found
+    path_exe = shutil.which(EXE_NAME)
+    if not path_exe:
+        lines.append(f"PATH {EXE_NAME}: not found")
+    elif pinned_ok(f"PATH {EXE_NAME} {path_exe}", [path_exe]):
+        lines.append(f"PATH {EXE_NAME}: {path_exe} (chosen)")
+        return [path_exe], lines, found
+    if cfg.install_method == "uvx" and uvx_argv:
+        lines.append(f"uvx with recorded consent (install_method uvx): {json.dumps(uvx)} (chosen)")
+        return uvx_argv, lines, found
+    lines.append("uvx: no recorded consent (hacf.yml code_graph.install_method is not uvx)")
+    return None, lines, found
+
+
 def resolution_chain(cfg: Config) -> tuple[list[str] | None, list[str]]:
     """Return (the argv prefix that runs the backend or None, one line per step tried).
 
     Order: the state file's exe_argv_prefix; `codebase-memory-mcp` on PATH; the uvx prefix only
-    with recorded consent (hacf.yml install_method uvx). Nothing here downloads or installs.
+    with recorded consent (hacf.yml install_method uvx). Each candidate must report the pinned
+    version. Nothing here downloads or installs.
     """
-    lines: list[str] = []
-    recorded = _recorded_prefix(cfg.state)
-    if recorded is not None:
-        lines.append(f"state exe_argv_prefix: {json.dumps(recorded)} (chosen)")
-        return recorded, lines
-    lines.append("state exe_argv_prefix: not recorded")
-    found = shutil.which(EXE_NAME)
-    if found:
-        lines.append(f"PATH {EXE_NAME}: {found} (chosen)")
-        return [found], lines
-    lines.append(f"PATH {EXE_NAME}: not found")
-    uvx = (cfg.entry.get("install_options") or {}).get("uvx")
-    if cfg.install_method == "uvx" and isinstance(uvx, list) and uvx:
-        lines.append(f"uvx with recorded consent (install_method uvx): {json.dumps(uvx)} (chosen)")
-        return [str(part) for part in uvx], lines
-    lines.append("uvx: no recorded consent (hacf.yml code_graph.install_method is not uvx)")
-    return None, lines
+    prefix, lines, _ = _resolve(cfg)
+    return prefix, lines
+
+
+def pin_required_line(cfg: Config, found: list[str]) -> str:
+    """Return the unavailable line naming the pin, each version found and the fix."""
+    pinned = str(cfg.entry.get("pinned_version", PINNED_VERSION))
+    return (
+        f"{EXE_NAME} {pinned} is required; found: {', '.join(found) or 'none'}. Install it "
+        f"with: uv tool install {EXE_NAME}=={pinned}, or record consent for uvx "
+        "(install_method: uvx)."
+    )
 
 
 def resolve_prefix(cfg: Config) -> list[str] | None:
@@ -1022,9 +1072,12 @@ def _dispatch(
         result["warnings"].append(f"no project recorded in {STATE_REL}; nothing to delete")
         return
     # A missing executable is the root cause, so it is reported before any index state.
-    prefix = resolve_prefix(cfg)
+    prefix, _, found = _resolve(cfg)
     if prefix is None:
-        result.update(status="unavailable", error=f"{EXE_NAME} is not installed or not on PATH")
+        result.update(
+            status="unavailable",
+            error=f"{EXE_NAME} is not installed or not on PATH\n{pin_required_line(cfg, found)}",
+        )
         result["warnings"].append(fallback_line("unavailable"))
         return
     if "project" in NEEDS[capability] and "project" not in values:
@@ -1151,10 +1204,10 @@ def doctor(repo_root: Path) -> dict:
         report["warnings"].append(
             f"{cfg.backend} is unverified: the S04 contract test has not passed for it"
         )
-    prefix, lines = resolution_chain(cfg)
+    prefix, lines, found = _resolve(cfg)
     report["resolution"], report["prefix"] = lines, prefix
     if prefix is None:
-        report["warnings"].append(fallback_line("unavailable"))
+        report["warnings"] += [pin_required_line(cfg, found), fallback_line("unavailable")]
     else:
         version = backend_version(prefix, cfg.repo_root, _timeout(cfg, "status"))
         report["backend_version"] = version

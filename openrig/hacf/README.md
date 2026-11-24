@@ -1,7 +1,7 @@
 # hacf
 
 A seven-seat OpenRig team that runs the [Hypergraph Agentic Coding
-Framework](https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework): one seat for
+Framework](https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework): one seat for
 each of its stages, one to hold the sequence, one to keep the record.
 
 The framework's SOP asks every phase boundary to happen in a **new context window**, because
@@ -112,12 +112,12 @@ If those are missing, the lead installs the framework first — **in both cases*
 `/hyper-discover` and `/hyper-baseline` are framework skills, so an existing repository needs the
 installer too. Then `/hyper-discover` + `/hyper-baseline` (existing code), or straight to the
 architect (greenfield). The installer is the framework's own, `HACF-install.sh` from
-`https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework.git`, run from the project's git
+`https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git`, run from the project's git
 top level (it refuses anywhere else, with `Nothing was written.`):
 
 ```sh
 HACF="$(mktemp -d)/hacf"
-git clone --quiet https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework.git "$HACF"
+git clone --quiet https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git "$HACF"
 bash "$HACF/HACF-install.sh" --dry-run -y --ides=claude   # prints every write, writes nothing
 bash "$HACF/HACF-install.sh" -y --ides=claude             # installs upstream main
 ```
@@ -168,6 +168,44 @@ and everything else — project root, feature, `Base`, branch, `Rig spec:`, and 
 `## Per-run grants` / `## Environment` sections, verbatim — from that rig's own run record, so it
 never names another rig's seats. The lead copies it to `~/.hacf/<rig>/bin/` and runs it there.
 
+## Context guard
+
+`bin/context-guard.sh --rig <rig> --project-root <dir> [--project-root <dir> …] [--apply] [--log <file>]`
+keeps seats from dragging a huge context from one slice into the next. One run is one tick: it
+restarts at most **one** idle, non-lead seat whose context is over `HACF_CTX_MAX` input tokens
+(default `150000`) with `rig seat launch <seat> --fresh --stop --reason …`, then tells `orch-lead`
+with `rig send`. It is **dry-run by default**: without `--apply` it only reads (`rig ps`,
+`rig queue list`, `rig seat launch … --fresh --stop --plan`) and logs `action=would-restart`.
+
+It restarts a seat only at a durable point, and fails closed: any doubt means no restart.
+
+- The seat is running, `idle`, not stale, with a fresh, known context count over the cap.
+- It holds no pending, in-progress or blocked queue row (its counts in `rig ps` and
+  `rig queue list` both agree).
+- Every `--project-root`, and every worktree git lists for it, has a clean `git status`
+  (untracked files included) and no untracked or ignored file under `spec/active/`. One dirty
+  root blocks every seat, because the rig's seats work in all of them.
+- It never restarts `orch-lead` (its handover is planned), a busy, stale or `unknown` seat, or more
+  than one seat per run. A failed or unreadable `rig` answer, or a root git cannot read, means no
+  restart. Right before the launch it reads the seat and the roots again and asks
+  `rig seat launch … --fresh --stop --plan`, a preview of the real launch; anything changed, or a
+  plan without `launchable: true`, means no restart.
+
+Every decision is one line, on stdout and in the log (`--log`, default
+`~/.hacf/<rig>/context-guard.log`, its directory `0700`):
+`<UTC ts> rig=<r> mode=<dry-run|apply> seat=<session|-> tokens=<n|-> action=<restart|would-restart|skip|failed> reason=<text>`.
+A lock beside the log keeps two runs from overlapping. Exit 0 when it ran, restart or not; 1 when
+the launch or the note to the lead failed; 2 on a usage error or a bad `HACF_CTX_MAX`.
+
+The script changes nothing on the host by itself. The operator runs it from the host's existing
+digest timer — no new unit — for rig `hacf` only (OPS-2), with one `--project-root` per git
+checkout the rig works in (the guard finds their worktrees itself):
+
+```bash
+# HACF context guard: rig hacf only, one tick per digest run (OPS-2)
+"<hacf checkout>/openrig/hacf/bin/context-guard.sh" --rig hacf --project-root "<project root>" --apply || true
+```
+
 ## Permissions
 
 Every seat launches with Claude Code's permission prompts off
@@ -181,6 +219,17 @@ sandbox walls.
 To go back to prompting, change `permission_policy` in `rig.yaml` and relaunch from the spec
 (`rig up <spec> --name <name>`, after `--plan`); `rig up <name> --existing` keeps the stored
 posture.
+
+**Per-role tool denies.** `roles.yml` (`hacf.roles/v1`) names, for each of the seven roles, the
+native Claude Code tools it uses, the tools it denies (every role denies `AskUserQuestion`,
+`NotebookEdit`, the plan-mode and worktree tools), whether it needs MCP servers, and its skills.
+`bin/seat-rules.py --role <role> --json` turns one role into the JSON that
+`rig seat set-permissions <seat> --rules <file>` takes, and `--check` keeps the table, `agent.yaml`
+and `rig.yaml` consistent. `rig.yaml` itself stays free of per-member permission keys, so it
+launches on every OpenRig this rig is tested against. The rules are native tool rules, not a
+sandbox: the denies hold under `builtin:yolo`, where allows would not constrain anything, so the
+generator emits none. `OPS.md` is the operator's recipe for applying them per seat, the turn-1
+probe and the rollback; nothing applies them on its own.
 
 ## Keeping rig files out of commits
 
@@ -202,7 +251,11 @@ startup/context.md              start steps shared by every seat, and the mode r
 startup/protocol.md             seat addresses, the handoff recipe, how to ask the person, the
                                 two record files, the defaults and the per-run-grant pattern
 startup/lead-first-move.md      what the lead does before it dispatches anything
+roles.yml                       the role table: each role's tools, denies, MCP need and skills
+OPS.md                          applying roles.yml to a running rig per seat: probe, rollback
 bin/brief.sh                    the execute/audit brief, from the running rig's own run record
+bin/context-guard.sh            restarts one idle seat over the context cap at a durable point
+bin/seat-rules.py               one role of roles.yml as `rig seat set-permissions --rules` JSON
 agents/hacf/agent.yaml          seven profiles, one per stage
 agents/hacf/guidance/*.md       one role file per seat
 agents/hacf/runtime/            the Claude Code activity-hooks selection marker
@@ -227,7 +280,7 @@ never curated, so the register holds the findings that produced a rule, not all 
 
 ## Example host notes (verified on one machine, 2026-11-16)
 
-Facts about the one machine this rig was first run on (`tj-intel`, an Ubuntu desktop). They are
+Facts about the one machine this rig was first run on (the first host, an Ubuntu desktop). They are
 examples of what a host check finds, not rules; re-check them on yours.
 
 - The seats were tmux sessions on that desktop, so a reboot dropped them; `rig up hacf --existing`

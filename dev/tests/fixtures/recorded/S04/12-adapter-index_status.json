@@ -1,0 +1,7 @@
+{
+  "step": "adapter-index_status",
+  "cwd": "<TMP>/pytest-126/test_codegraph_contract0/repo",
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "{\"project\":\"<TMP-SLUG>-pytest-126-test_codegraph_contract0-repo\",\"nodes\":41,\"edges\":52,\"status\":\"ready\",\"root_path\":\"<TMP>/pytest-126/test_codegraph_contract0/repo\",\"indexed_at\":\"2026-10-27T14:39:49Z\",\"parse_partial\":{\"files\":[],\"count\":0,\"truncated\":false},\"parse_unusable\":{\"files\":[],\"count\":0,\"truncated\":false},\"skipped\":{\"files\":[],\"count\":0,\"truncated\":false},\"not_indexed\":{\"dirs\":[],\"dirs_count\":1,\"files\":[],\"files_count\":0,\"truncated\":true,\"dirs_omitted\":1},\"cross_repo\":{\"status\":\"never_run\"},\"doc_links\":{\"mentions\":0,\"unresolved\":{},\"status\":\"ok\"},\"watch\":{\"watched\":false,\"reason\":\"cli_session\",\"hint\":\"Auto-sync watches only the active MCP session's project; re-run index_repository to refresh this index.\"}}\n"
+}

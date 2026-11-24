@@ -3,10 +3,10 @@
 - Run: `dev/openrig_compat.sh 0.7.21` -> `openrig-compat 0.7.21: REVIEW` (exit 3), every step green
   (install, tree, live 63 checks, captures, help, delegate probe/verify/proof, oracle, 0 daemon
   connections, ~/.openrig unchanged).
-- Evidence: `~/.hacf/hacf/evidence/openrig-compat-0.7.21-20261123T075801Z/` (`verdict.json`, `REPORT.md`,
+- Evidence: `<private evidence dir>/openrig-compat-0.7.21-20261123T075801Z/` (`verdict.json`, `REPORT.md`,
   `diffs/watched-mission-composition.js-vs-0.7.16.diff`, `diffs/watched-scope-audit.js-vs-0.7.16.diff`).
 - Baselines: newest 0.7.16, newest person-accepted 0.7.16 (the same dir).
-- Earlier read: Part A, `~/.hacf/hacf/evidence/openrig-0721-20261123T032756Z/REPORT.md` (rows (e) and (f))
+- Earlier read: Part A, `<private evidence dir>/openrig-0721-20261123T032756Z/REPORT.md` (rows (e) and (f))
   and its `pkg-diff/`. This run's two diffs carry the same added and removed lines as Part A's.
 
 Only two of the 8 watched items differ. lifecycle-manifest.js, scaffold-placeholder.js and the 4

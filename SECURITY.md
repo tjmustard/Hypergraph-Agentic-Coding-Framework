@@ -1,12 +1,12 @@
 # Security Policy
 
-Thanks for helping make Hypergraph Coding Agent Framework safe for everyone.
+Thanks for helping make Hypergraph Agentic Coding Framework safe for everyone.
 
 We take the security of our software products and services seriously.
 
 ## Reporting Security Issues
 
-If you believe you have found a security vulnerability in Hypergraph Coding Agent Framework, please report it to us through coordinated disclosure.
+If you believe you have found a security vulnerability in Hypergraph Agentic Coding Framework, please report it to us through coordinated disclosure.
 
 **Please do not report security vulnerabilities through public GitHub issues, discussions, or pull requests.**
 

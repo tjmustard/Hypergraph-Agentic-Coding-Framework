@@ -1,0 +1,6 @@
+{
+  "step": "ask-user-unavailable",
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "{\"session_id\":\"<SESSION-7>\",\"total_cost_usd\":1.0,\"permission_denials\":[],\"is_error\":false,\"num_turns\":2,\"subtype\":\"success\",\"api_error_status\":null,\"result\":\"NO_ASK_TOOL\",\"type\":\"result\"}\n"
+}

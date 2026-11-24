@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""
-Thinking Token Ceiling Resolver
+"""Thinking Token Ceiling Resolver.
 
 Determines the appropriate thinking token ceiling for a skill based on
 model tier and per-skill overrides.
 """
 
 import os
-import yaml
 from typing import Optional
+
+import yaml
 
 
 class CeilingResolver:
@@ -22,16 +22,11 @@ class CeilingResolver:
     }
 
     def __init__(self, skills_base_dir: str = ".agents/skills"):
+        """Set the skills directory that META.yml files are read from."""
         self.skills_base_dir = skills_base_dir
 
-    def get_ceiling(
-        self,
-        skill_name: str,
-        model: str = "opus",
-        verbose: bool = True
-    ) -> int:
-        """
-        Get the thinking token ceiling for a skill.
+    def get_ceiling(self, skill_name: str, model: str = "opus", verbose: bool = True) -> int:
+        """Get the thinking token ceiling for a skill.
 
         Args:
             skill_name: Name of skill (e.g., "hyper-execute")
@@ -58,14 +53,9 @@ class CeilingResolver:
         return default
 
     def set_override(
-        self,
-        skill_name: str,
-        tokens: int,
-        reason: str = "",
-        verbose: bool = True
+        self, skill_name: str, tokens: int, reason: str = "", verbose: bool = True
     ) -> bool:
-        """
-        Set a custom thinking token ceiling for a skill.
+        """Set a custom thinking token ceiling for a skill.
 
         Args:
             skill_name: Name of skill
@@ -85,7 +75,7 @@ class CeilingResolver:
 
         # Load existing metadata
         try:
-            with open(meta_path, 'r') as f:
+            with open(meta_path, "r") as f:
                 data = yaml.safe_load(f) or {}
         except FileNotFoundError:
             data = {"name": skill_name, "assigned_model": "opus"}
@@ -102,7 +92,7 @@ class CeilingResolver:
         # Save updated metadata
         try:
             os.makedirs(os.path.dirname(meta_path), exist_ok=True)
-            with open(meta_path, 'w') as f:
+            with open(meta_path, "w") as f:
                 yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
             if verbose:
@@ -119,8 +109,7 @@ class CeilingResolver:
             return False
 
     def clear_override(self, skill_name: str, verbose: bool = True) -> bool:
-        """
-        Clear a ceiling override for a skill.
+        """Clear a ceiling override for a skill.
 
         Args:
             skill_name: Name of skill
@@ -137,12 +126,12 @@ class CeilingResolver:
             return True
 
         try:
-            with open(meta_path, 'r') as f:
+            with open(meta_path, "r") as f:
                 data = yaml.safe_load(f) or {}
 
             if "max_thinking_tokens" in data:
                 del data["max_thinking_tokens"]
-                with open(meta_path, 'w') as f:
+                with open(meta_path, "w") as f:
                     yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
                 if verbose:
@@ -150,7 +139,7 @@ class CeilingResolver:
 
             if "ceiling_override_reason" in data:
                 del data["ceiling_override_reason"]
-                with open(meta_path, 'w') as f:
+                with open(meta_path, "w") as f:
                     yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
             return True
@@ -168,7 +157,7 @@ class CeilingResolver:
             return None
 
         try:
-            with open(meta_path, 'r') as f:
+            with open(meta_path, "r") as f:
                 data = yaml.safe_load(f) or {}
 
             return data.get("max_thinking_tokens")

@@ -117,7 +117,7 @@ block (write the banner plus the current block body to a temporary file and run
 HACF block gets one through Option A's instruction decision instead:
 
 ```
-> **HACF as a Toolchain:** This project uses the Hypergraph Coding Agent Framework
+> **HACF as a Toolchain:** This project uses the Hypergraph Agentic Coding Framework
 > (HACF) as its development toolchain. The skills in `.agents/skills/`, the scripts
 > in `.agents/scripts/`, and the schemas in `.agents/schemas/` are development tools —
 > they are **not** subjects of this project's plans, PRDs, or architecture docs.

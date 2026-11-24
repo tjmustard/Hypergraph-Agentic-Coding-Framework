@@ -70,7 +70,7 @@ INSTALL_NOTICE = "run HACF-install.sh to complete the upgrade"
 
 # Embedded defaults: the shipped upstream.yml (Task 2, R24.10).
 DEFAULT_CONFIG = {
-    "repo_url": "https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework.git",
+    "repo_url": "https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git",
     "ref": "main",
     "verification": {
         "allowed_signers": [],

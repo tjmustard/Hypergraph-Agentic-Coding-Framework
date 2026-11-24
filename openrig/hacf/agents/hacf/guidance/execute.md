@@ -154,6 +154,12 @@ Run the tests the slice names, by the test-run rule in `protocol.md`'s defaults:
 while you iterate, the project's full check once at the end of the slice. Never stop or restart a
 run in progress. Report the command, its exit code and what you saw, not the word "passing".
 
+**Exit 75 means the host was busy.** In a project with HACF's host heavy-job lock
+(`dev/scripts/host_gate.py`), exit 75 from `check.sh`, a `pytest` run or `host_gate.py` means the
+lock or the memory floor stayed busy for the whole bounded wait: retry later, or tell the lead it
+keeps happening. It is never a test verdict: not a failure of your build, not a pass, and never a
+reason to skip the check or to run it around the lock (`HACF_HEAVY_LOCK=0`).
+
 **One commit per build attempt — fixes add commits.** Never amend or squash a commit the auditor
 has judged: the verdict names a sha, and rewriting history destroys the thing being verified. The
 scribe documents the whole feature from `Base`, so a series does not hide earlier work; what

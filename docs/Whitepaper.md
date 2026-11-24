@@ -1,8 +1,8 @@
-# **Hypergraph Coding Agent Framework: Orchestrating Autonomous Software Engineering via Multi-Dimensional Specification and Deterministic State Management**
+# **Hypergraph Agentic Coding Framework: Orchestrating Autonomous Software Engineering via Multi-Dimensional Specification and Deterministic State Management**
 
 ## **Abstract**
 
-The transition to the "Hypergraph Coding Agent Framework" shifts the developer's role from a writer of syntax to an architect of intent. This transition is bottlenecked by the **Specification Alignment Problem**: Large Language Models (LLMs) suffer from context collapse and hallucination when forced to ingest monolithic requirements or traverse complex system architectures probabilistically.
+The transition to the "Hypergraph Agentic Coding Framework" shifts the developer's role from a writer of syntax to an architect of intent. This transition is bottlenecked by the **Specification Alignment Problem**: Large Language Models (LLMs) suffer from context collapse and hallucination when forced to ingest monolithic requirements or traverse complex system architectures probabilistically.
 
 This whitepaper describes a "Spec-First" framework, as shipped in v0.6.0, designed around those constraints. It decouples probabilistic reasoning (LLM agents) from deterministic state management (Python scripts), serializes the system's architecture into a component ledger, keeps the project's decisions in a gated lore graph, and runs agents in sandboxed, isolated sessions whose every git write is made by the engine, not the agent.
 
@@ -124,4 +124,4 @@ Details: [MasterSOP](MasterSOP.md).
 
 ## **Conclusion**
 
-The Hypergraph Coding Agent Framework is not defined by the intelligence of the model but by the rigor of the system around it. By wrapping LLMs in deterministic writers, state-machine pacing, a component ledger, gated lore and isolated sessions, it turns probabilistic text generators into dependable software engineering engines.
+The Hypergraph Agentic Coding Framework is not defined by the intelligence of the model but by the rigor of the system around it. By wrapping LLMs in deterministic writers, state-machine pacing, a component ledger, gated lore and isolated sessions, it turns probabilistic text generators into dependable software engineering engines.

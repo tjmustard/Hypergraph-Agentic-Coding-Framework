@@ -1,0 +1,6 @@
+{
+  "step": "curl-blocked",
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "{\"session_id\":\"<SESSION-5>\",\"total_cost_usd\":1.0,\"permission_denials\":[{\"tool_name\":\"Bash\"}],\"is_error\":false,\"num_turns\":2,\"subtype\":\"success\",\"api_error_status\":null,\"result\":\"Done. The command was run once as written and was denied by the permission layer, so no output was written and `curl_out.html` was not created. I did not retry or try another route to fetch the page.\",\"type\":\"result\"}\n"
+}

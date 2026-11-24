@@ -1,0 +1,7 @@
+{
+  "step": "adapter-list_projects",
+  "cwd": "<TMP>/pytest-126/test_codegraph_contract0/repo",
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "{\"projects\":[],\"total\":0,\"offset\":0,\"limit\":500,\"returned\":0,\"has_more\":false,\"hint\":\"No projects indexed. Call index_repository(repo_path=...) first.\"}\n"
+}

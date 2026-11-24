@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 INSTALLER = REPO_ROOT / "HACF-install.sh"
 BUILDER = REPO_ROOT / "dev" / "tests" / "fixtures" / "build_user_project_v059.py"
 SHIMS = ("curl", "wget", "pip", "pip3", "uv", "uvx", "npx", "npm")
-DEFAULT_URL = "https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework.git"
+DEFAULT_URL = "https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git"
 
 
 def git_env(scratch: Path, **extra: str) -> dict[str, str]:

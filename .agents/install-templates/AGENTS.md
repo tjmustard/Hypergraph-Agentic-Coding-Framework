@@ -1,8 +1,8 @@
 Trailhead: start at lore/MAP.md, then SPEC.md, then the active mission under missions/
 
-# Hypergraph Coding Agent Framework — Agent Instructions
+# Hypergraph Agentic Coding Framework — Agent Instructions
 
-> **HACF as a Toolchain:** This project uses the Hypergraph Coding Agent Framework
+> **HACF as a Toolchain:** This project uses the Hypergraph Agentic Coding Framework
 > (HACF) as its development toolchain. The skills in `.agents/skills/`, the scripts
 > in `.agents/scripts/`, and the schemas in `.agents/schemas/` are development tools —
 > they are **not** subjects of this project's plans, PRDs, or architecture docs.
@@ -11,7 +11,7 @@ Trailhead: start at lore/MAP.md, then SPEC.md, then the active mission under mis
 >
 > Cross-IDE manifest: always-on context for Windsurf, Cursor, Roo Code, GitHub Copilot, Zed and
 > Codex. Bridge files in `.claude/`, `.cursor/`, `.windsurf/`, `.clinerules/` and `.roo/` add
-> tool-specific overrides. Human guide: HACF's README, <https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework#readme>.
+> tool-specific overrides. Human guide: HACF's README, <https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework#readme>.
 
 ---
 

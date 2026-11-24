@@ -1,6 +1,6 @@
 # Example Commit Messages
 
-This file shows real commit messages from the Hypergraph Coding Agent Framework repo, demonstrating the style conventions Claude adapts for auto-suggesting commit messages.
+This file shows real commit messages from the Hypergraph Agentic Coding Framework repo, demonstrating the style conventions Claude adapts for auto-suggesting commit messages.
 
 ---
 
@@ -25,7 +25,7 @@ Release v0.4.1: Framework upgrades with /hyper-update and /hyper-recover
 feat: add hyper-update skill to architecture and commands
 
 Introduces /hyper-update as a smart framework upgrade mechanism. Users can
-now safely upgrade the Hypergraph Coding Agent Framework while preserving
+now safely upgrade the Hypergraph Agentic Coding Framework while preserving
 customizations to CLAUDE.md, AGENTS.md, IDE rules, and other sensitive files.
 
 New hypergraph node: hyper_update (Module dimension)

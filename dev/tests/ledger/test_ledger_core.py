@@ -21,7 +21,7 @@ import _runtime
 import hyper_ledger
 import pytest
 import yaml
-from conftest import FIXTURES_DIR, SCRIPTS_DIR
+from conftest import FIXTURES_DIR, REPO_ROOT, SCRIPTS_DIR
 
 LEDGER = "spec/compiled/architecture.yml"
 SCRIPT = str(SCRIPTS_DIR / "hyper_ledger.py")
@@ -635,6 +635,121 @@ def test_ensure_node_list_flags_and_spec_refs(tmp_git_repo):
     assert path.read_bytes() == before
 
 
+# -- ensure-node owner guard (OPR.99.0.6.4) ------------------------------------------------
+
+
+def _owned_ledger(repo) -> Path:
+    """Seed the v2 sample with other_owner holding a literal path and an openrig/hacf/** glob."""
+    data = _sample()
+    _node(data, "component_ledger")["files"] = ["a.py", "shared.md"]
+    _node(data, "ledger_validate")["files"] = ["owned.py", "openrig/hacf/**", "shared.md"]
+    return _seed_data(repo, data)
+
+
+def test_owners_of_literal_glob_and_glob_path():
+    """owners_of matches an equal entry, a glob entry and (for a glob path) a literal entry."""
+    data = _sample()
+    _node(data, "ledger_validate")["files"] = ["owned.py", "openrig/hacf/**"]
+    owners = hyper_ledger.owners_of
+    assert owners(data, "owned.py", "component_ledger") == ["ledger_validate"]
+    assert owners(data, "openrig/hacf/rig.yml", "component_ledger") == ["ledger_validate"]
+    assert owners(data, "openrig/hacf/**", "component_ledger") == ["ledger_validate"]
+    assert owners(data, "*.py", "x_node") == ["ledger_validate"]
+    assert owners(data, "src/ledger.py", "ledger_validate") == ["component_ledger"]
+    assert owners(data, "free.py", "component_ledger") == []
+    assert owners(data, "owned.py", "ledger_validate") == []  # the node itself is excluded
+
+
+def test_ensure_node_from_spec_skips_owned_touches(tmp_git_repo, tmp_path):
+    """--from-spec skips a touch another node owns (literal or glob) and names the owner."""
+    path = _owned_ledger(tmp_git_repo)
+    spec = _v6_spec(tmp_path, ["owned.py", "openrig/hacf/rig.yml", "c.py", "shared.md"])
+    proc = _cli(tmp_git_repo, "ensure-node", "--from-spec", str(spec))
+    assert proc.returncode == 0, proc.stderr
+    assert "ensure-node: skipped owned.py: owned by ledger_validate" in proc.stderr
+    assert "ensure-node: skipped openrig/hacf/rig.yml: owned by ledger_validate" in proc.stderr
+    assert "shared.md" not in proc.stderr  # already the node's own path: never re-checked
+    assert _node(_read(tmp_git_repo), "component_ledger")["files"] == ["a.py", "shared.md", "c.py"]
+    once = path.read_bytes()
+    assert _cli(tmp_git_repo, "ensure-node", "--from-spec", str(spec)).returncode == 0
+    assert path.read_bytes() == once
+
+
+def test_ensure_node_files_refuses_owned_path_unless_allow_shared(tmp_git_repo):
+    """--files with an owned new path exits 2 and writes nothing; --allow-shared shares it."""
+    path = _owned_ledger(tmp_git_repo)
+    before = path.read_bytes()
+    args = ("ensure-node", "--id", "component_ledger", "--files", "a.py,owned.py,openrig/hacf/x.md")
+    proc = _cli(tmp_git_repo, *args)
+    assert proc.returncode == 2
+    assert (
+        "refused: owned.py is owned by ledger_validate; pass --allow-shared to share it"
+        in proc.stderr
+    )
+    assert "refused: openrig/hacf/x.md is owned by ledger_validate" in proc.stderr
+    assert path.read_bytes() == before
+    proc = _cli(tmp_git_repo, *args, "--allow-shared")
+    assert proc.returncode == 0, proc.stderr
+    assert "ensure-node: shared owned.py with ledger_validate" in proc.stderr
+    assert "ensure-node: shared openrig/hacf/x.md with ledger_validate" in proc.stderr
+    files = _node(_read(tmp_git_repo), "component_ledger")["files"]
+    assert files == ["a.py", "owned.py", "openrig/hacf/x.md"]
+
+
+def test_ensure_node_files_keeps_existing_shared_path(tmp_git_repo):
+    """An entry the node already has is not re-checked, even when another node owns it."""
+    _owned_ledger(tmp_git_repo)
+    proc = _cli(
+        tmp_git_repo, "ensure-node", "--id", "component_ledger", "--files", "shared.md,b.py"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "shared" not in proc.stderr.replace("shared.md", "")
+    assert _node(_read(tmp_git_repo), "component_ledger")["files"] == ["shared.md", "b.py"]
+
+
+def test_ensure_node_new_node_owner_guard(tmp_git_repo, tmp_path):
+    """A new node's initial files follow the same rules for --files and --from-spec."""
+    path = _owned_ledger(tmp_git_repo)
+    before = path.read_bytes()
+    new = (
+        "ensure-node",
+        "--id",
+        "x_mod",
+        "--dimension",
+        "Module",
+        "--parent",
+        "orchestration_layer",
+    )
+    proc = _cli(tmp_git_repo, *new, "--files", "x.py,owned.py")
+    assert proc.returncode == 2
+    assert "refused: owned.py is owned by ledger_validate" in proc.stderr
+    assert path.read_bytes() == before
+    spec = _v6_spec(tmp_path, ["x.py", "openrig/hacf/a.yml"], node_id="x_mod")
+    proc = _cli(tmp_git_repo, "ensure-node", "--from-spec", str(spec), "--dimension", "Module")
+    assert proc.returncode == 0, proc.stderr
+    assert "ensure-node: skipped openrig/hacf/a.yml: owned by ledger_validate" in proc.stderr
+    assert _node(_read(tmp_git_repo), "x_mod")["files"] == ["x.py"]
+    proc = _cli(tmp_git_repo, *new[:2], "y_mod", *new[3:], "--files", "owned.py", "--allow-shared")
+    assert proc.returncode == 0, proc.stderr
+    assert _node(_read(tmp_git_repo), "y_mod")["files"] == ["owned.py"]
+
+
+def test_validate_real_ledger_copy_ok(tmp_git_repo):
+    """Validate is ok on copies of the real ledger (no ownership rule; shared paths stay valid).
+
+    The copies are S00's fixture and, when present, this checkout's own compiled ledger.
+    """
+    copies = [FIXTURES_DIR / REAL]
+    live = REPO_ROOT / LEDGER
+    if live.is_file():
+        copies.append(live)
+    for source in copies:
+        tmp_git_repo.write(LEDGER, source.read_text(encoding="utf-8"))
+        proc = _cli(tmp_git_repo, "validate")
+        assert proc.returncode == 0, (source.name, proc.stdout + proc.stderr)
+        assert "validate: ok" in proc.stdout, source.name
+
+
 # -- review patches -------------------------------------------------------------------------
 
 
@@ -867,6 +982,7 @@ CONTRACT = {
     "validate": ["--against-file", "--against-ref", "--json", "--strict"],
     "impact": ["--files", "--from-diff", "--nodes"],
     "ensure-node": [
+        "--allow-shared",
         "--associated-file",
         "--depends-on",
         "--description-file",

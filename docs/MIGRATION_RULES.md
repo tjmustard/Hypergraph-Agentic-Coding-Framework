@@ -40,8 +40,21 @@ python3 .agents/scripts/hyper_update_core.py             # the update
   URLs are refused. The environment overrides `HACF_REPO_URL`, `HACF_BRANCH` and
   `HACF_UPSTREAM_URL` apply only with `HACF_TEST=1`.
 - There is no local counterpart: `/hyper-update` has no `--source`. A project installed with
-  `HACF-install.sh --source` is updated by re-running `HACF-install.sh --source=<checkout>`; see the
-  CHANGELOG known issues.
+  `HACF-install.sh --source` is updated by re-running `HACF-install.sh` from that checkout with
+  `--ref=<commit>`; see the CHANGELOG known issues.
+- **A re-run without `--ref` is pinned (v0.6.3+).** A plain re-run, or `--source=<the recorded
+  checkout>` without `--ref`, reinstalls the manifest's `installed_commit`. When the checkout's `HEAD`
+  has moved, it refuses and writes nothing:
+
+  ```text
+  refusing a plain re-run: the recorded HACF checkout <path> is at <head sha>, but this project is installed at <installed sha>.
+    to reinstall the installed commit:  bash <path>/HACF-install.sh --ref=<installed sha>
+    to move to the checkout's HEAD:     bash <path>/HACF-install.sh --ref=<head sha>
+  Nothing was written.
+  ```
+
+  Run one of the two commands as printed. This protects re-runs of a v0.6.3+ installer; a checkout
+  moved to an older commit runs that commit's older installer.
 - **Anti-rollback:** the installed commit is recorded in `.agents/hacf-manifest.json`. An upstream
   commit that does not descend from it is refused unless you pass `--allow-downgrade`.
 - Only `.agents/skills/`, `.agents/scripts/` and `.agents/schemas/` are synced; `AGENTS.md`,

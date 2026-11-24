@@ -114,7 +114,7 @@ top level — the installer refuses anywhere else, with `Nothing was written.`:
 cd <project root>
 git rev-parse --show-toplevel || git init        # the installer needs a git root
 HACF="$(mktemp -d)/hacf"
-git clone --quiet https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework.git "$HACF"
+git clone --quiet https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git "$HACF"
 bash "$HACF/HACF-install.sh" --help              # the flags this version takes
 bash "$HACF/HACF-install.sh" --dry-run -y --ides=claude   # prints every write, writes nothing
 bash "$HACF/HACF-install.sh" -y --ides=claude

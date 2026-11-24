@@ -1,0 +1,236 @@
+# The release-export profile: what `dev/release_export.py` builds for each public release.
+# Schema hacf.release-export/v2; validate with `python3 dev/release_export.py profile check`.
+# v2 names no private value and no digest of one (lead P14 F1): private literals live only in the
+# untracked digest file (--digests / HACF_EXPORT_DIGESTS), which must hold every label of
+# required_digest_labels (`release_export.py digest-line` prints a line for it). scan.strict holds
+# only the tool's generic home roots, written with the first / escaped so these bytes hold neither.
+# Each exclude row is {path, reason, versions}; a trailing / means a directory. A `versions` value is
+# all, <v>, <=<v> or >=<v>. Removing a row is a later release's deliberate act, never a gate fix.
+schema: hacf.release-export/v2
+base: 984ca46f3f87b95856b402f595d10017e05497a5
+required_digest_labels:
+  - private-project
+  - projects-dir
+  - host-name
+  - account-address
+  - account-regex
+  - evidence-root
+  - private-address
+  - notifier
+identity:
+  name: "Thomas J. L. Mustard Ph.D."
+  email_from: base
+releases:
+  - version: "0.6.0"
+    source: e4da6ef5b726af57c08b08c7bd1988831d6a6282
+  - version: "0.6.1"
+    source: b01d41b90c8a44e67cfaff67ade843a68e2d8a06
+  - version: "0.6.2"
+    source: 5028b9f61b1c860d487c156ee3c67058b67a3a5b
+    overlay:
+      commit: f31713a2af7b03dc6e09fb5e9474ccb834b0c7f5 # slice 4 commit: the README and dev-file fixes
+      paths:
+        - README.md
+        - dev/tests/docs/test_readme_mermaid.py
+        - DEVELOPMENT.md
+        - dev/openrig_watch.sh
+        - dev/openrig_watch_install.sh
+        - dev/openrig_compat.sh
+        - dev/openrig_compat.py
+        - dev/systemd/hacf-openrig-watch.timer
+        - dev/tests/compat/test_openrig_watch.py
+        - dev/tests/compat/test_openrig_watch_install.py
+        - dev/tests/compat/test_openrig_compat.py
+  - version: "0.6.3"
+    source: 9c1e3714d15d159a0d88b8c0f3ebd3792c9ce3c0
+exclude:
+  # HACF's own development records (private).
+  - path: lore/
+    reason: "HACF's own lore records: private development decisions and notes"
+    versions: all
+  - path: lore_hypergraph.yml
+    reason: "HACF's own lore graph: private development records"
+    versions: all
+  - path: missions/
+    reason: "HACF's own mission specs and progress: private development records"
+    versions: all
+  - path: SPEC.md
+    reason: "HACF's own top-level spec: private development record"
+    versions: all
+  - path: project.yaml
+    reason: "HACF's own OpenRig project manifest: private development record"
+    versions: all
+  - path: workspace.yaml
+    reason: "HACF's own OpenRig workspace manifest: private development record"
+    versions: all
+  - path: PRDs/v0.6.0/
+    reason: "HACF's own v0.6.0 PRDs: private development records"
+    versions: all
+  - path: .agents/memory/activeContext.md
+    reason: "HACF's own bootstrap procedure; public on 984ca46, deliberately deleted from the public tree; installs get theirs from the scaffold"
+    versions: all
+  # Tests that read HACF's private development history.
+  - path: dev/tests/engine/test_orchestrator_cli.py
+    reason: "reads HACF's private development history"
+    versions: "<=0.6.2"
+  - path: dev/tests/retire/test_retire_unwired_stores.py
+    reason: "reads HACF's private development history"
+    versions: "<=0.6.2"
+  - path: dev/tests/lore/test_lore_index.py
+    reason: "reads HACF's private development history"
+    versions: "<=0.6.2"
+  - path: dev/tests/openrig/test_openrig_adapter.py
+    reason: "reads HACF's private development history"
+    versions: "<=0.6.2"
+  - path: dev/tests/installer/test_instruction_files.py
+    reason: "reads HACF's private development history"
+    versions: "<=0.6.2"
+  - path: dev/tests/installer/test_contract_pin_upgrade.py
+    reason: "reads HACF's private development history"
+    versions: "<=0.6.2"
+  - path: dev/tests/installer/test_hook_upgrade.py
+    reason: "reads HACF's private development history"
+    versions: "<=0.6.2"
+  - path: dev/tests/test_release_dag.py
+    reason: "reads HACF's private development history"
+    versions: "<=0.6.2"
+  - path: dev/tests/e2e/test_from_diff_real_history.py
+    reason: "reads HACF's private development history"
+    versions: "<=0.6.2"
+  - path: dev/tests/rig_spec/test_brief.py
+    reason: "reads HACF's private development history"
+    versions: "<=0.6.2"
+  # Recorded live captures that are not normalised yet, and the tests that read them.
+  - path: dev/tests/fixtures/recorded/S04/
+    reason: "raw recorded live capture (0.6.3 ships cleaned copies)"
+    versions: "<=0.6.2"
+  - path: dev/tests/fixtures/recorded/S08/
+    reason: "raw recorded live capture (0.6.3 ships cleaned copies)"
+    versions: "<=0.6.2"
+  - path: dev/tests/fixtures/recorded/S11/
+    reason: "raw recorded live capture (0.6.3 ships cleaned copies)"
+    versions: "<=0.6.2"
+  - path: dev/tests/codegraph/test_codegraph.py
+    reason: "reads the S04 recorded capture, which is excluded"
+    versions: "<=0.6.2"
+  - path: dev/tests/engine/test_executors.py
+    reason: "reads the S08 recorded capture, which is excluded"
+    versions: "<=0.6.2"
+  - path: dev/tests/firewall/test_gate_hook.py
+    reason: "writes the S11 recorded capture in its opt-in live test; excluded with the capture"
+    versions: "<=0.6.2"
+  # Raw captures and the private-record tests (0.6.3 on).
+  - path: dev/tests/fixtures/recorded-raw/
+    reason: "raw recorded live captures: never published (TJ 14:39Z)"
+    versions: all
+  - path: dev/tests/private_records/
+    reason: "tests that read HACF's private development records"
+    versions: all
+expected_skips:
+  - versions: all
+    nodeid: dev/tests/migration/test_migrate_specs.py::test_golden_plan_hacf_snapshot
+    reason_contains: "8e9464e"
+top_level:
+  - .agent
+  - .agentignore
+  - .agents
+  - .claude
+  - .clinerules
+  - .codeiumignore
+  - .cursor
+  - .cursorignore
+  - .gitignore
+  - .python-version
+  - .roo
+  - .rooignore
+  - .windsurf
+  - AGENTS.md
+  - Agentic-Memory.md
+  - CHANGELOG.md
+  - CITATION.cff
+  - CLAUDE.md
+  - CODE_OF_CONDUCT.md
+  - CONTRIBUTING.md
+  - DEVELOPMENT.md
+  - GEMINI.md
+  - HACF-install.sh
+  - HACF-uninstall.sh
+  - LICENSE
+  - PRDs
+  - README.md
+  - SECURITY.md
+  - dev
+  - docs
+  - media
+  - openrig
+  - pyproject.toml
+  - requirements.txt
+  - skills-info.md
+  - uv.lock
+# The scan (mission R9). Strict literals are stored as sha256 + length, so no tracked file names
+# them; the tool hashes every window of that length. The private address is matched only by the
+# digest file named by --digests or HACF_EXPORT_DIGESTS (never tracked).
+scan:
+  strict:
+    - label: home-dir # the Linux home root
+      literal: "\x2Fhome/"
+    - label: users-dir # the macOS home root
+      literal: "\x2FUsers/"
+  # Raw-only keys of the recorded live captures (F7): a JSON key of these names fails anywhere.
+  strict_keys:
+    - apiKeySource
+    - credential_expires_at
+    - five_hour
+    - isUsingOverage
+    - messaging_socket_path
+    - overageDisabledReason
+    - overageStatus
+    - rate_limit_event
+    - rate_limit_info
+    - request_id
+    - seven_day
+    - unifiedWindows
+  email_allowlist:
+    - example.com
+    - example.org
+    - example.net
+    - "*.invalid"
+    - "*.test"
+    - localhost
+    - users.noreply.github.com
+    - noreply@anthropic.com
+    - tjmustard@mustardfamily.com # the contact address of CODE_OF_CONDUCT.md and SECURITY.md, public on the base
+  advisory:
+    - label: kernel-seat
+      regex: "@kernel"
+    - label: hacf-home
+      regex: "~/\\.hacf"
+    - label: hacf-state
+      regex: "\\.hacf/hacf"
+    - label: pytest-temp
+      regex: "pytest-of-"
+    - label: initials
+      regex: "\\bTJ\\b"
+    - label: advisor-seat
+      regex: "advisor-lead"
+# Allowlist rows (mission R9, R19): {path, pattern, count, reason, versions} with an exact count,
+# or {path, blob_sha256, reason, versions} for a binary blob. Never for a digest-file label or
+# a digest hit; raw-key only for this file's own path. Measured by `scan` at 0.6.0, 0.6.1 and 0.6.2 (overlay HEAD); a
+# row whose file is absent at a version reports n/a there. The contact address needs no row: it is
+# on scan.email_allowlist.
+allowlist:
+  - path: dev/tests/engine/test_engine_integration.py
+    pattern: home-dir
+    count: 3
+    reason: "synthetic: a fake $HOME under the home root in the sandbox argv and oracle env tests"
+    versions: all
+  - path: dev/tests/compat/test_openrig_compat.py
+    pattern: home-dir
+    count: 1
+    reason: "synthetic: a fake temp path under the home root in the capture helper"
+    versions: all
+  - path: dev/tests/compat/test_openrig_watch_install.py
+    pattern: home-dir
+    count: 2
+    reason: "negative assertion: the templates, installer and watcher hold no home path"
+    versions: all

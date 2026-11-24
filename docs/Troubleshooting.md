@@ -1,6 +1,6 @@
 # **Troubleshooting Guide: Agent Failure States**
 
-Large Language Models are probabilistic engines. Even with rigid constraints, they occasionally fail. This guide shows how to diagnose and recover from the most common failure states in the Hypergraph Coding Agent Framework (v0.6.0). Every command uses `python3`.
+Large Language Models are probabilistic engines. Even with rigid constraints, they occasionally fail. This guide shows how to diagnose and recover from the most common failure states in the Hypergraph Agentic Coding Framework (v0.6.0). Every command uses `python3`.
 
 `<spec>` below is a slice `SPEC.md` (`missions/<mission>/slices/<NN-slug>/SPEC.md`, by path or dot-id) or a legacy flat `spec/compiled/MiniPRD_*.md`, which is still read until v0.7.0.
 
@@ -114,6 +114,7 @@ Details: [MasterSOP](MasterSOP.md#the-workflow-engine).
 |---|---|
 | The update refuses an unsigned upstream in CI | Expected: releases are unsigned in v0.6.x and `--allow-unsigned` needs a TTY. Update from a terminal. |
 | The update refuses a non-descendant upstream | Pass `--allow-downgrade` only if you meant to move back. |
+| `HACF-install.sh` says `refusing a plain re-run: the recorded HACF checkout <path> is at <head sha>, but this project is installed at <installed sha>.` | The local checkout this project was installed from has moved. Nothing was written. Reinstall what is installed with `bash <path>/HACF-install.sh --ref=<installed sha>`, or move to the checkout's HEAD with `bash <path>/HACF-install.sh --ref=<head sha>` (both lines are printed ready to copy). |
 | `hyper_migrate.py rollback` lists drifted paths and restores nothing | Files changed since the apply. Save your edits, then `python3 .agents/scripts/hyper_migrate.py rollback --journal .agents/state/migrations/v0.6.0.json --force`. |
 
 Details: [Migration Rules](MIGRATION_RULES.md#updating-hacf-adr-0010).

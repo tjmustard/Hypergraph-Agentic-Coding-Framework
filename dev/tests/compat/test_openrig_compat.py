@@ -1101,8 +1101,13 @@ def _run_script(
 ) -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items()
            if k not in ("TMPDIR", "HACF_COMPAT_EVIDENCE_ROOT", "UV_CACHE_DIR",
-                        "XDG_STATE_HOME")}  # fmt: skip
+                        "XDG_STATE_HOME", "HACF_HEAVY_LOCK_HELD")}  # fmt: skip
     env.update(_sandbox(tmp_path))
+    # The host lock the script takes (OPR.99.0.6.2) under tmp_path, its memory floor met.
+    (tmp_path / "heavy-lock").mkdir(exist_ok=True)
+    (tmp_path / "heavy-lock" / "meminfo").write_text("MemAvailable: 16777216 kB\n")
+    env["HACF_HEAVY_LOCK_PATH"] = str(tmp_path / "heavy-lock" / "heavy-job.lock")
+    env["HACF_HOST_MEMINFO"] = str(tmp_path / "heavy-lock" / "meminfo")
     env.update(extra or {})
     if env_tmpdir is not None:
         env["TMPDIR"] = env_tmpdir
@@ -1166,20 +1171,11 @@ def test_script_refuses_tmp_tmpfs_and_unset_tmpdir(tmp_path: Path) -> None:
     assert list((tmp_path / "fake-home").iterdir()) == []
 
 
-def _mem_available_mb() -> int:
-    for line in Path("/proc/meminfo").read_text().splitlines():
-        if line.startswith("MemAvailable:"):
-            return int(line.split()[1]) // 1024
-    return 0
-
-
 def test_the_sandbox_catches_a_fall_through(tmp_path: Path) -> None:
     """The control for the refusal tests: an accepted TMPDIR reaches the stub npm, not a real one.
 
     It ends as a SETUP-ERROR (install), with its evidence under the fake HOME.
     """
-    if _mem_available_mb() < 6144:
-        pytest.skip("MemAvailable < 6144 MB: the script stops at its own memory check")
     ondisk = tmp_path / "ondisk"
     ondisk.mkdir()
     proc = _run_script(["0.7.21"], str(ondisk), tmp_path)
@@ -1190,11 +1186,32 @@ def test_the_sandbox_catches_a_fall_through(tmp_path: Path) -> None:
     assert len(evidence) == 1 and str(evidence[0]) in proc.stdout
 
 
+def test_the_script_runs_under_the_host_lock(tmp_path: Path) -> None:
+    """Past its argument and TMPDIR checks the script holds the host heavy-job lock.
+
+    The lock is dev/scripts/host_gate.py's (job openrig_compat); its memory floor replaces the
+    script's own MemAvailable check, and a wait that runs out exits 75.
+    """
+    ondisk = tmp_path / "ondisk"
+    ondisk.mkdir()
+    proc = _run_script(["0.7.21"], str(ondisk), tmp_path)
+    assert proc.returncode == 2, proc.stderr
+    log = (tmp_path / "heavy-lock" / "heavy-job.log").read_text().splitlines()
+    assert [line.split()[1:4:2] for line in log] == [
+        ["acquire", "job=openrig_compat"],
+        ["release", "job=openrig_compat"],
+    ]
+    low = tmp_path / "meminfo-low"
+    low.write_text("MemAvailable: 102400 kB\n")
+    extra = {"HACF_HEAVY_WAIT_S": "0", "HACF_HOST_MEMINFO": str(low)}
+    proc = _run_script(["0.7.21"], str(ondisk), tmp_path, extra)
+    assert proc.returncode == 75, proc.stderr
+    assert "host busy: MemAvailable 100 MB < 6144 MB; retry later (exit 75)" in proc.stderr
+
+
 @pytest.mark.parametrize("source", ["env", "xdg"])
 def test_the_evidence_root_setting_and_the_xdg_default(source: str, tmp_path: Path) -> None:
     """HACF_COMPAT_EVIDENCE_ROOT wins over XDG_STATE_HOME; the HOME default is the test above."""
-    if _mem_available_mb() < 6144:
-        pytest.skip("MemAvailable < 6144 MB: the script stops at its own memory check")
     ondisk = tmp_path / "ondisk"
     ondisk.mkdir()
     extra = {"XDG_STATE_HOME": str(tmp_path / "xdg")}

@@ -13,9 +13,12 @@
 # Isolation (R6, R13): $TMPDIR must be on disk (not /tmp, not a tmpfs); every OPENRIG_* and
 # RIGGED_* variable is dropped; OPENRIG_URL is the dead discard port; OPENRIG_HOME, the npm
 # cache, XDG_CACHE_HOME and NODE_COMPILE_CACHE live under the run's temp dir, which is removed on
-# exit. The host's own rig is never called. Host safety: MemAvailable must be at least 6144 MB.
+# exit. The host's own rig is never called. Host safety: after its TMPDIR checks the script re-runs
+# itself under `python3 dev/scripts/host_gate.py run --job openrig_probe`, the host heavy-job lock
+# (MemAvailable >= HACF_HOST_MIN_MB, one HACF heavy job at a time, a bounded wait).
 #
-# Exit codes: 0 printed, 1 the probe or the two runs disagree, 2 usage or setup error.
+# Exit codes: 0 printed, 1 the probe or the two runs disagree, 2 usage or setup error, 75 host busy
+# (retry later).
 set -euo pipefail
 
 die() {
@@ -28,14 +31,17 @@ die() {
 version=$1
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 
-# Host safety: an on-disk TMPDIR and enough free memory.
+# Host safety: an on-disk TMPDIR, then the heavy-job lock and memory floor.
 tmpdir=${TMPDIR-}
 [[ -n $tmpdir ]] || die "TMPDIR is not set; point it at an on-disk directory (not /tmp)"
 [[ $(realpath -m -- "$tmpdir") != /tmp ]] || die "TMPDIR is /tmp; use an on-disk directory"
 mkdir -p -- "$tmpdir"
 [[ $(stat -f -c %T -- "$tmpdir") != tmpfs ]] || die "TMPDIR $tmpdir is on a tmpfs"
-avail=$(awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo 2>/dev/null || true)
-[[ -n $avail && $avail -ge 6144 ]] || die "MemAvailable is ${avail:-unknown} MB (< 6144); wait"
+if ! python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import host_gate as h
+sys.exit(0 if h.token_valid() else 1)' "$root/dev/scripts"; then
+    exec python3 "$root/dev/scripts/host_gate.py" run --job openrig_probe -- \
+        bash "$root/dev/openrig_probe_record.sh" "$version"
+fi
 
 T=$(mktemp -d -- "$tmpdir/hacf-probe-record-XXXXXX")
 trap 'rm -rf -- "$T"' EXIT

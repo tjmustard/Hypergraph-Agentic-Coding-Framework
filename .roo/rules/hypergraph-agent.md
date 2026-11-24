@@ -1,4 +1,4 @@
-# Hypergraph Coding Agent Framework — Agent Instructions
+# Hypergraph Agentic Coding Framework — Agent Instructions
 # Applies to all Roo Code modes
 
 Trailhead: start at lore/MAP.md, then SPEC.md, then the active mission under missions/

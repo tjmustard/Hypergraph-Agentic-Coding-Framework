@@ -1,0 +1,7 @@
+{
+  "step": "adapter-list_projects",
+  "cwd": "<TMP>/pytest-126/test_codegraph_contract0/repo",
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "{\"projects\":[{\"name\":\"<TMP-SLUG>-pytest-126-test_codegraph_contract0-repo\",\"root_path\":\"<TMP>/pytest-126/test_codegraph_contract0/repo\",\"branch\":\"main\"}],\"total\":1,\"offset\":0,\"limit\":500,\"returned\":1,\"has_more\":false}\n"
+}

@@ -1,33 +1,4 @@
 {
   "step": "slice-create-adapter-spike",
-  "argv": [
-    "npx",
-    "-y",
-    "--package=@openrig/cli@0.6.13",
-    "rig",
-    "scope",
-    "--workspace",
-    "/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo",
-    "slice",
-    "create",
-    "release-0.6.0",
-    "adapter-spike",
-    "--intent",
-    "Exercise slice create",
-    "--json"
-  ],
-  "cwd": "/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo",
-  "exit_code": 0,
-  "stdout": "{\n  \"ok\": true,\n  \"slice\": {\n    \"mission\": \"release-0.6.0\",\n    \"name\": \"01-adapter-spike\",\n    \"id\": \"OPR.0.6.0.1\",\n    \"path\": \"/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo/missions/release-0.6.0/slices/01-adapter-spike\",\n    \"readmePath\": \"/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo/missions/release-0.6.0/slices/01-adapter-spike/SPEC.md\",\n    \"template\": \"placeholder\"\n  }\n}\n",
-  "stderr": "",
-  "rig_version": "0.6.13 (9eeb2e42)",
-  "captured_at": "2026-10-26T05:10:01+00:00",
-  "git_status_after": [
-    " M missions/release-0.6.0/mission.yaml",
-    "?? missions/release-0.6.0/slices/.nn-01",
-    "?? missions/release-0.6.0/slices/01-adapter-spike/PROGRESS.md",
-    "?? missions/release-0.6.0/slices/01-adapter-spike/PROOF.md",
-    "?? missions/release-0.6.0/slices/01-adapter-spike/SPEC.md",
-    "?? missions/release-0.6.0/slices/01-adapter-spike/slice.yaml"
-  ]
+  "exit_code": 0
 }

@@ -1,0 +1,5 @@
+{
+  "step": "archive-specs-default",
+  "exit_code": 0,
+  "stdout": "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"<SESSION-8>\"}\n{\"type\":\"assistant\",\"session_id\":\"<SESSION-8>\"}\n{\"type\":\"rate_limit_event\",\"session_id\":\"<SESSION-8>\"}\n{\"type\":\"user\",\"session_id\":\"<SESSION-8>\"}\n{\"type\":\"assistant\",\"session_id\":\"<SESSION-8>\"}\n{\"session_id\":\"<SESSION-8>\",\"total_cost_usd\":1.0,\"permission_denials\":[],\"is_error\":false,\"num_turns\":2,\"subtype\":\"success\",\"api_error_status\":null,\"result\":\"Done. I ran `python3 .agents/scripts/archive_specs.py --miniprd spec/compiled/MiniPRD_99_X.md`. It exited with no output, and I did not check the result any further.\",\"type\":\"result\"}\n"
+}

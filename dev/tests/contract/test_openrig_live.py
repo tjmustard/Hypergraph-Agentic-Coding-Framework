@@ -10,7 +10,7 @@ user sets after consenting to download and run `@openrig/cli@<RIG_VERSION>` (or 
         dev/tests/contract/test_openrig_live.py
 
 The harness, never the model, writes one verbatim capture per external call to
-dev/tests/fixtures/recorded/S02/<NN>-<step>.json, or HACF_LIVE_RECORD_DIR (argv, stdout, stderr,
+dev/tests/fixtures/recorded-raw/S02/<NN>-<step>.json, or HACF_LIVE_RECORD_DIR (argv, stdout, stderr,
 exit code, `rig --version`, UTC date, and `git status --porcelain` after the call), computes
 spike_verdict_cli from the checks (`pass` only when every check passed) and writes verdict.json
 there (R27). rig runs against throwaway git repositories under tmp_path with OPENRIG_HOME in
@@ -20,6 +20,10 @@ except npx's cache.
 Two overrides exist for dev/openrig_compat.sh only (release-0.6.2 R13); no shipped file reads
 them. HACF_LIVE_ACCEPT_EXTRA=<M.m.p> adds that version to the accepted set for this run, and
 HACF_LIVE_RECORD_DIR=<absolute dir> records there instead of RECORDED.
+
+After a live run, write the cleaned copies with `python3 dev/tests/fixtures/normalize_recorded.py
+--set S02`: only those (dev/tests/fixtures/recorded/S02/) are committed for export; the raw
+captures in recorded-raw/ never ship.
 """
 
 from __future__ import annotations
@@ -34,7 +38,7 @@ import hyper_openrig
 import pytest
 from conftest import FIXTURES_DIR, GitRepo
 
-RECORDED = FIXTURES_DIR / "recorded" / "S02"
+RECORDED = FIXTURES_DIR / "recorded-raw" / "S02"
 MISSION = "release-0.6.0"
 FIRST_CALL_TIMEOUT = 900  # the first npx call downloads and installs the package
 DEAD_OPENRIG_URL = "http://127.0.0.1:9"  # the discard port: nothing listens (release-0.6.2 R6)

@@ -195,6 +195,250 @@ def test_check_sh_rejects_bad_workers(tmp_path):
     assert "[2/4]" not in output, "check.sh ran a pytest leg with an invalid worker count"
 
 
+def test_check_sh_header_documents_the_host_lock():
+    """The header names the lock, its env vars, `status` and exit 75 (retry later, no verdict)."""
+    header = CHECK_SH.read_text(encoding="utf-8").split("set -euo pipefail", 1)[0]
+    for needle in (
+        "dev/scripts/host_gate.py run --job check.sh",
+        "hacf/heavy-job.lock",
+        "HACF_HOST_MIN_MB",
+        "HACF_HEAVY_WAIT_S",
+        "HACF_HEAVY_LOCK_HELD",
+        "HACF_TEST_WORKERS_SHARED",
+        "host_gate.py status",
+        "Exit 75",
+        "never a test verdict",
+        "Live tests (marker `live`) never run here.",
+    ):
+        assert needle in header, needle
+
+
+def _lock_env(tmp_path, **extra):
+    """check.sh's environment with the host lock under tmp_path and the memory floor met."""
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemAvailable: 16777216 kB\n", encoding="utf-8")
+    return dict(
+        HACF_HEAVY_LOCK_PATH=str(tmp_path / "lock" / "heavy-job.lock"),
+        HACF_HOST_MEMINFO=str(meminfo),
+        HACF_HEAVY_LOCK_HELD="",
+        HACF_PY310=str(_xdist_shim(tmp_path)),
+        PYTEST_ADDOPTS="--collect-only",
+        HACF_TEST_WORKERS="abc",  # stops check.sh right after the lock (exit 2), no pytest leg
+        HACF_TEST_TMPDIR=str(tmp_path / "temp"),
+        **extra,
+    )
+
+
+def _lock_log(tmp_path):
+    log = tmp_path / "lock" / "heavy-job.log"
+    return [line.split()[1:4:2] for line in log.read_text().splitlines()] if log.exists() else []
+
+
+def test_check_sh_reruns_itself_under_the_host_lock(tmp_path):
+    """Without a lease, check.sh re-runs itself under host_gate.py (job check.sh)."""
+    proc = _run(["bash", str(CHECK_SH)], **_lock_env(tmp_path))
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert _lock_log(tmp_path) == [["acquire", "job=check.sh"], ["release", "job=check.sh"]]
+
+
+def test_check_sh_with_a_valid_token_does_not_rerun(tmp_path, monkeypatch):
+    """Inside a lease (a valid HACF_HEAVY_LOCK_HELD, as under the gate) check.sh runs in place."""
+    env = _lock_env(tmp_path)
+    for key in ("HACF_HEAVY_LOCK_PATH", "HACF_HOST_MEMINFO"):
+        monkeypatch.setenv(key, env[key])
+    sys.path.insert(0, str(REPO_ROOT / "dev" / "scripts"))
+    import host_gate
+
+    with host_gate.acquire("test-lease") as lease:
+        env.update(lease.env())
+        proc = _run(["bash", str(CHECK_SH)], **env)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "HACF_TEST_WORKERS=abc is not valid" in proc.stderr
+    assert _lock_log(tmp_path) == [["acquire", "job=test-lease"], ["release", "job=test-lease"]]
+
+
+STUB = r"""
+import os, re, sys
+from pathlib import Path
+
+args = sys.argv[1:]
+tool = Path(sys.argv[0]).name
+
+
+def leg(name):
+    mode = os.environ.get(f"STUB_{name.upper()}", "pass")
+    print(f"STUB FULL OUTPUT {name}")
+    for i in range(1, 51):
+        print(f"stub {name} line {i}")
+    xml = next((a.split("=", 1)[1] for a in args if a.startswith("--junitxml=")), None)
+    if xml and mode != "noxml":
+        bad = mode == "fail"
+        case = '<testcase classname="dev.tests.x.test_a" name="test_b"><failure message="m">' \
+            'stub traceback\nassert 1 == 2</failure></testcase>' if bad else ""
+        Path(xml).write_text(
+            '<testsuites><testsuite name="pytest" time="1.5">'
+            '<testcase classname="dev.tests.x.test_a" name="test_ok"/>'
+            f"{case}</testsuite></testsuites>"
+        )
+    sys.exit(0 if mode == "pass" else 1)
+
+
+if tool == "uv" and args[:3] == ["run", "--locked", "python"]:
+    print("3.8.0")
+elif tool == "uv" and args[:3] == ["run", "--locked", "pytest"]:
+    leg("uv")
+elif tool == "uv" and args[:3] == ["run", "--locked", "ruff"]:
+    print("stub ruff")
+    sys.exit(int(os.environ.get("STUB_RUFF_RC", "0")))
+elif tool == "py310" and args[:2] == ["-m", "pytest"]:
+    leg("py310")
+elif tool == "py310" and args[0] == "-c":
+    if "print" in args[1]:
+        print("3.8.0")
+else:
+    sys.exit(f"stub {tool}: unexpected {args}")
+"""
+
+
+def _stub_env(tmp_path, **extra):
+    """check.sh's environment with `uv` and HACF_PY310 stubs, its lock and logs under tmp_path."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    for name in ("uv", "py310"):
+        stub = bin_dir / name
+        stub.write_text(f"#!{sys.executable}\n{STUB}", encoding="utf-8")
+        stub.chmod(0o755)
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemAvailable: 16777216 kB\n", encoding="utf-8")
+    env = dict(
+        PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        HACF_PY310=str(bin_dir / "py310"),
+        HACF_HEAVY_LOCK_PATH=str(tmp_path / "lock" / "heavy-job.lock"),
+        HACF_HOST_MEMINFO=str(meminfo),
+        HACF_HEAVY_LOCK_HELD="",
+        HACF_TEST_WORKERS="0",
+        HACF_TEST_TMPDIR=str(tmp_path / "temp"),
+        HACF_LOG_DIR=str(tmp_path / "logs"),
+        HACF_CHECK_VERBOSE="",
+    )
+    env.update(extra)
+    return env
+
+
+def _run_dir(tmp_path) -> Path:
+    (run,) = (tmp_path / "logs").iterdir()
+    return run
+
+
+def test_check_sh_failing_leg_runs_every_leg(tmp_path):
+    """The uv leg fails: the 3.10 leg and ruff still run, the summary names the id, exit 1."""
+    proc = _run(["bash", str(CHECK_SH)], **_stub_env(tmp_path, STUB_UV="fail"))
+    out = proc.stdout
+    assert proc.returncode == 1, out + proc.stderr
+    run = _run_dir(tmp_path)
+    assert f"==> logs: {run}" in out
+    for header in ("==> [2/4] pytest (uv venv)", "==> [3/4] pytest (", "==> [4/4] ruff"):
+        assert header in out, header
+    assert (
+        "    [2/4] pytest (uv venv): FAIL (exit 1) 1 passed, 1 failed, 0 errors, 0 skipped in 1.5s"
+        in out
+    )
+    assert "      FAILED dev/tests/x/test_a.py::test_b" in out
+    assert "        assert 1 == 2" in out
+    assert f"      log: {run}/2-pytest-uv.log  junit: {run}/2-pytest-uv.xml" in out
+    assert "[3/4] pytest (" in out and "): PASS (exit 0) 1 passed, 0 failed" in out
+    assert "    [4/4] ruff: PASS (exit 0)" in out
+    assert "❌  check.sh failed: [2/4] pytest (uv venv)" in proc.stderr
+    assert "✅" not in out
+    assert "STUB FULL OUTPUT" not in out, "the full output belongs only in the log"
+    log = (run / "2-pytest-uv.log").read_text()
+    assert "STUB FULL OUTPUT uv" in log and "stub uv line 50" in log
+    assert "STUB FULL OUTPUT py310" in (run / "3-pytest-py310.log").read_text()
+    assert (run / "4-ruff.log").exists()
+    assert run.stat().st_mode & 0o777 == 0o700
+
+
+def test_check_sh_all_pass(tmp_path):
+    """Every leg passes: exit 0 and the ✅ line."""
+    proc = _run(["bash", str(CHECK_SH)], **_stub_env(tmp_path))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "✅  check.sh passed (uv venv and " in proc.stdout
+    assert "STUB FULL OUTPUT" not in proc.stdout
+
+
+def test_check_sh_ruff_failure_fails_the_run(tmp_path):
+    """A failing ruff leg is a FAIL with its log tail, after both pytest legs ran."""
+    proc = _run(["bash", str(CHECK_SH)], **_stub_env(tmp_path, STUB_RUFF_RC="1"))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "    [4/4] ruff: FAIL (exit 1) " in proc.stdout
+    assert "        stub ruff" in proc.stdout
+    assert "❌  check.sh failed: [4/4] ruff" in proc.stderr
+
+
+def test_check_sh_no_junit_falls_back_to_the_tail(tmp_path):
+    """A pytest leg that writes no junit XML: the log's last 40 lines in its summary."""
+    proc = _run(["bash", str(CHECK_SH)], **_stub_env(tmp_path, STUB_PY310="noxml"))
+    out = proc.stdout
+    assert proc.returncode == 1, out + proc.stderr
+    assert "      (no junit XML; the last 40 lines of the log)" in out
+    assert "        stub py310 line 50" in out and "        stub py310 line 11" in out
+    assert "stub py310 line 10\n" not in out
+    assert "stub uv line" not in out
+
+
+def test_check_sh_verbose_prints_everything(tmp_path):
+    """HACF_CHECK_VERBOSE=1: the legs' full output on stdout, and the summaries too."""
+    env = _stub_env(tmp_path, HACF_CHECK_VERBOSE="1", STUB_UV="fail")
+    proc = _run(["bash", str(CHECK_SH)], **env)
+    out = proc.stdout
+    assert proc.returncode == 1, out + proc.stderr
+    for name in ("uv", "py310"):
+        assert f"STUB FULL OUTPUT {name}" in out and f"stub {name} line 50" in out
+    assert "stub ruff" in out
+    assert "      FAILED dev/tests/x/test_a.py::test_b" in out
+    assert "STUB FULL OUTPUT uv" in (_run_dir(tmp_path) / "2-pytest-uv.log").read_text()
+
+
+def test_check_sh_keeps_the_newest_ten_run_dirs(tmp_path):
+    """12 old run dirs, a `notes` dir and an `old-run` symlink: 10 run dirs stay, the rest too."""
+    logs = tmp_path / "logs"
+    old = [f"2020010{d}T000000Z-{100 + h}" for d in range(1, 7) for h in (1, 2)]
+    for name in old:
+        (logs / name).mkdir(parents=True)
+        (logs / name / "2-pytest-uv.log").write_text("old\n")
+    (logs / "notes").mkdir()
+    (logs / "notes" / "keep.txt").write_text("mine\n")
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    (target / "keep.txt").write_text("mine\n")
+    (logs / "old-run").symlink_to(target)
+    (logs / "20200101T000000Z-9").symlink_to(target, target_is_directory=True)
+
+    proc = _run(["bash", str(CHECK_SH)], **_stub_env(tmp_path))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    runs = sorted(p.name for p in logs.iterdir() if p.is_dir() and not p.is_symlink())
+    runs.remove("notes")
+    assert len(runs) == 10
+    assert runs[:9] == old[3:]  # the oldest three of 12+1 are gone, the new run kept
+    assert runs[9] > old[-1]
+    assert (logs / "notes" / "keep.txt").read_text() == "mine\n"
+    assert (logs / "old-run").is_symlink() and (logs / "20200101T000000Z-9").is_symlink()
+    assert (target / "keep.txt").read_text() == "mine\n"
+
+
+def test_check_sh_header_documents_the_log_dir():
+    """The header documents HACF_CHECK_VERBOSE, HACF_LOG_DIR, the retention and every-leg runs."""
+    header = CHECK_SH.read_text(encoding="utf-8").split("set -euo pipefail", 1)[0]
+    for needle in (
+        "HACF_CHECK_VERBOSE=1",
+        "HACF_LOG_DIR",
+        "newest 10 run dirs",
+        "every leg runs",
+        "Live tests (marker `live`) never run here.",
+    ):
+        assert needle in header, needle
+
+
 def test_xdist_group_needs_loadgroup():
     """Any xdist_group mark under dev/tests requires HACF_TEST_DIST=loadgroup (R5)."""
     this = Path(__file__).resolve()
@@ -213,6 +457,121 @@ def test_legacy_lint_baseline():
     for argv in (["ruff", "check"], ["ruff", "format", "--check"]):
         proc = _run(["uv", "run", "--locked", *argv, "--no-cache", "--", *LEGACY_SCRIPTS])
         assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+SHIPPED_SCRIPTS = [
+    *(
+        f".agents/scripts/{name}"
+        for name in (
+            "hyper_update_recovery.py",
+            "ceiling_enforcer.py",
+            "heuristic_classifier.py",
+            "override_manager.py",
+            "meta_loader.py",
+            "ceiling_resolver.py",
+            "thinking_token_monitor.py",
+        )
+    ),
+    *(
+        f".agents/skills/hyper-publish/scripts/{name}"
+        for name in (
+            "generate_commit_message.py",
+            "generate_pr_description.py",
+            "setup_permissions.py",
+        )
+    ),
+]
+
+
+def test_shipped_lint_baseline():
+    """Ruff check and format --check pass on the 10 shipped scripts F2 fixed, with no ignores."""
+    for argv in (["ruff", "check"], ["ruff", "format", "--check"]):
+        flags = ["--force-exclude", "--no-cache"]
+        proc = _run(["uv", "run", "--locked", *argv, *flags, "--", *SHIPPED_SCRIPTS])
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_pyproject_excludes_prds_from_ruff():
+    """`[tool.ruff]` holds extend-exclude = ["PRDs/"] (F2: historical, non-code records)."""
+    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    section = text.split("[tool.ruff]\n", 1)[1].split("\n[", 1)[0]
+    assert re.search(r'^extend-exclude = \["PRDs/"\]$', section, flags=re.MULTILINE), section
+
+
+def _ruff_files(repo) -> list[str]:
+    """Source check_env.sh in repo's work tree and return hacf_ruff_files' NUL-separated paths."""
+    proc = repo.run(["bash", "-c", f'source "{CHECK_ENV}"; hacf_ruff_files'])
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "" or proc.stdout.endswith("\0"), repr(proc.stdout)
+    return proc.stdout.split("\0")[:-1]
+
+
+def _py_repo(repo):
+    """Commit a.py, b.py, c.py and README.md on main; return the repo."""
+    for name in ("a.py", "b.py", "c.py"):
+        repo.write(name, "X = 1\n")
+    repo.commit("python files")
+    return repo
+
+
+def test_ruff_files_without_main_lists_every_python_file(tmp_git_repo):
+    """No `main` (branch trunk): every tracked .py plus untracked .py, never the .md."""
+    repo = tmp_git_repo
+    repo.write("a.py", "A = 1\n")
+    repo.write("pkg/b.py", "B = 1\n")
+    repo.commit("two python files")
+    repo.git("branch", "-m", "main", "trunk")
+    repo.write("new.py", "N = 1\n")
+    assert _ruff_files(repo) == ["a.py", "new.py", "pkg/b.py"]
+
+
+def test_ruff_files_on_main_lists_every_tracked_python_file(tmp_git_repo):
+    """`main` checked out at HEAD (merge-base == HEAD): every tracked .py, not an empty list."""
+    repo = _py_repo(tmp_git_repo)
+    assert _ruff_files(repo) == ["a.py", "b.py", "c.py"]
+
+
+def test_ruff_files_ahead_of_main_lists_the_changed_files(tmp_git_repo):
+    """One commit ahead of main changing b.py and deleting c.py: b.py only."""
+    repo = _py_repo(tmp_git_repo)
+    repo.git("switch", "-q", "-c", "feature")
+    repo.write("b.py", "X = 2\n")
+    repo.git("rm", "-q", "c.py")
+    repo.commit("change b, delete c", "b.py")  # git rm already staged c.py's deletion
+    assert _ruff_files(repo) == ["b.py"]
+
+
+def test_ruff_files_skips_a_python_file_deleted_in_the_work_tree(tmp_git_repo):
+    """A tracked .py deleted in the work tree (not committed) is not listed."""
+    repo = _py_repo(tmp_git_repo)
+    (repo.path / "b.py").unlink()
+    assert _ruff_files(repo) == ["a.py", "c.py"]
+
+
+def test_ruff_files_fails_without_a_merge_base(tmp_git_repo):
+    """A `main` that shares no merge-base with HEAD: status 1, as check.sh's leg expects."""
+    repo = _py_repo(tmp_git_repo)
+    repo.git("switch", "-q", "--orphan", "other")
+    repo.commit("unrelated root")
+    proc = repo.run(["bash", "-c", f'source "{CHECK_ENV}"; hacf_ruff_files'])
+    assert proc.returncode == 1, proc.stdout
+    assert proc.stdout == ""
+
+
+def test_check_sh_ruff_leg_force_excludes_and_never_vacuous():
+    """Both ruff argvs pass --force-exclude; `nothing to lint` only in the changed-files branch."""
+    text = CHECK_SH.read_text(encoding="utf-8")
+    leg = text.split("# --- 4. ruff", 1)[1]
+    ruff_calls = re.findall(r"uv run --locked ruff (check|format --check)(.*)", leg)
+    assert [call[0] for call in ruff_calls] == ["check", "format --check"], ruff_calls
+    for _, rest in ruff_calls:
+        assert rest.startswith(" --force-exclude -- "), rest
+    assert text.count("nothing to lint") == 1
+    branches = leg.split("elif [[ ${#ruff_files[@]} -eq 0 ]]; then", 1)
+    assert len(branches) == 2, "the changed-files empty branch moved"
+    assert "nothing to lint" not in branches[0]
+    assert "nothing to lint" in branches[1].split("else", 1)[0]
+    assert "all tracked Python files (${#ruff_files[@]}): fresh clone or HEAD on main" in leg
 
 
 def test_per_file_ignores_cover_only_legacy_scripts():

@@ -1,13 +1,13 @@
 # Claude Code Integration Guide
 
-> **HACF as a Toolchain:** This project uses the Hypergraph Coding Agent Framework
+> **HACF as a Toolchain:** This project uses the Hypergraph Agentic Coding Framework
 > (HACF) as its development toolchain. The skills in `.agents/skills/`, the scripts
 > in `.agents/scripts/`, and the schemas in `.agents/schemas/` are development tools —
 > they are **not** subjects of this project's plans, PRDs, or architecture docs.
 > When you create SuperPRDs, MiniPRDs, or architecture nodes, you are documenting
 > **this project**, not the HACF framework itself.
 
-> **For Human Developers:** See HACF's README (<https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework#readme>) for the complete usage guide, available slash
+> **For Human Developers:** See HACF's README (<https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework#readme>) for the complete usage guide, available slash
 > commands, and setup instructions.
 
 ---

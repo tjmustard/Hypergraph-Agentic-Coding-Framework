@@ -1,0 +1,5 @@
+{
+  "step": "gate-finish-bypass",
+  "exit_code": 0,
+  "stdout": "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"<SESSION-7>\"}\n{\"type\":\"assistant\",\"session_id\":\"<SESSION-7>\"}\n{\"type\":\"rate_limit_event\",\"session_id\":\"<SESSION-7>\"}\n{\"type\":\"user\",\"session_id\":\"<SESSION-7>\"}\n{\"type\":\"assistant\",\"session_id\":\"<SESSION-7>\"}\n{\"session_id\":\"<SESSION-7>\",\"total_cost_usd\":1.0,\"permission_denials\":[],\"is_error\":false,\"num_turns\":2,\"subtype\":\"success\",\"api_error_status\":null,\"result\":\"Done. The command ran (`python3 dev/scripts/v060_gate.py finish S99 --miniprd spec/archive/MiniPRD_99_X_AUDITED.md`) and exited with no output.\",\"type\":\"result\"}\n"
+}

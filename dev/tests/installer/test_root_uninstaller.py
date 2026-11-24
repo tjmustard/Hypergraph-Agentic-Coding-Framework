@@ -62,7 +62,10 @@ def test_install_copies_and_records(project: Path, run_install) -> None:
 
 @pytest.mark.parametrize("edited", [False, True], ids=["unchanged", "user-edited"])
 def test_upgrade_refreshes(tmp_path: Path, project: Path, scratch: Path, edited: bool) -> None:
-    """Test 10: c1 installed, c2 changes the uninstaller, a plain -y upgrade copies c2's bytes."""
+    """Test 10: c1 installed, c2 changes the uninstaller, an -y --ref=<c2> upgrade copies c2.
+
+    Since D1 (OPR.99.0.6.1) a plain re-run is pinned to installed_commit, so the upgrade names c2.
+    """
     src, c1 = make_local_source(tmp_path / "local-source", tmp_path / "source-scratch")
     run = run_installer(scratch, "file:///nonexistent", project, "-y", "--ides=claude",
                         f"--source={src}", f"--ref={c1}")  # fmt: skip
@@ -73,13 +76,14 @@ def test_upgrade_refreshes(tmp_path: Path, project: Path, scratch: Path, edited:
     git(["add", "--", SELF], src, env)
     git(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "c2"], src, env)
     c2_bytes = (src / SELF).read_bytes()
+    c2 = git(["rev-parse", "HEAD"], src, env).strip()
 
     copy = project / SELF
     if edited:
         copy.write_bytes(copy.read_bytes() + b"# my own edit\n")
     edited_bytes = copy.read_bytes()
 
-    run = run_installer(scratch, "file:///nonexistent", project, "-y", env=NO_URL)
+    run = run_installer(scratch, "file:///nonexistent", project, "-y", f"--ref={c2}", env=NO_URL)
     assert run.returncode == 0, run.output
     assert copy.read_bytes() == c2_bytes
     assert manifest_of(project)["files"][SELF] == {"sha256": sha256(src / SELF), "owner": "hacf"}

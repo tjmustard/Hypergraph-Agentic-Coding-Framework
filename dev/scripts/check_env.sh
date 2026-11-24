@@ -1,11 +1,11 @@
 # shellcheck shell=bash
 # Test-environment helpers for dev/scripts/check.sh, which sources this file.
 #
-# Sourcing it has no side effects: it defines three constants and three functions, and the
+# Sourcing it has no side effects: it defines three constants and six functions, and the
 # functions only print or return non-zero. They never create a directory, export a variable or
 # change the working directory; check.sh does that with what they print.
 
-# Memory kept free for everything else on the host (the other seat, the desktop, eta's runs).
+# Memory kept free for everything else on the host (the other seat, the desktop, another project's runs).
 HACF_TEST_HEADROOM_MB=4096
 # Peak resident memory one xdist worker is budgeted (slice 3 sets the measured value).
 HACF_TEST_PER_WORKER_MB=256
@@ -92,4 +92,45 @@ hacf_pick_tmpdir() {
         return 1
     fi
     printf '%s\t%s\n' "$dir" "$reason"
+}
+
+# hacf_ruff_mode (run in the repository's work tree)
+# Print `all` when there is no local `main` (a fresh clone of another branch) or when HEAD is the
+# merge-base of HEAD and main (HEAD on main); otherwise print that merge-base. A `main` that shares
+# no merge-base with HEAD: git's message on stderr and status 1.
+hacf_ruff_mode() {
+    local base head
+    if ! git rev-parse -q --verify refs/heads/main >/dev/null; then
+        printf 'all\n'
+        return 0
+    fi
+    base=$(git merge-base HEAD main) || return 1
+    head=$(git rev-parse HEAD) || return 1
+    if [[ $base == "$head" ]]; then
+        printf 'all\n'
+    else
+        printf '%s\n' "$base"
+    fi
+}
+
+# hacf_ruff_files (run in the repository's work tree)
+# Print, NUL-separated and sorted, the Python files check.sh's ruff leg lints: in the `all` mode of
+# hacf_ruff_mode every tracked *.py, otherwise the paths changed since the merge-base
+# (--diff-filter=d); untracked *.py in both modes. Paths missing from the work tree are skipped.
+# Status 1 when hacf_ruff_mode fails.
+hacf_ruff_files() {
+    local mode path
+    mode=$(hacf_ruff_mode) || return 1
+    while IFS= read -r -d '' path; do
+        if [[ $path == *.py && -f $path ]]; then
+            printf '%s\0' "$path"
+        fi
+    done < <({
+        if [[ $mode == all ]]; then
+            git ls-files -z -- '*.py'
+        else
+            git diff --name-only -z --diff-filter=d "$mode" --
+        fi
+        git ls-files --others --exclude-standard -z
+    } | sort -zu)
 }

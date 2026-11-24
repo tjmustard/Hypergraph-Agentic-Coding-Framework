@@ -1,0 +1,8 @@
+{
+  "contract_verdict": "pass",
+  "observations": {
+    "index_result": {
+      "project": "<TMP-SLUG>-pytest-126-test_codegraph_contract0-repo"
+    }
+  }
+}

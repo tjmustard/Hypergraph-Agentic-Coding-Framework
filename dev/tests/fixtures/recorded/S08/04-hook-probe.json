@@ -1,0 +1,6 @@
+{
+  "step": "hook-probe",
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "{\"session_id\":\"<SESSION-4>\",\"total_cost_usd\":1.0,\"permission_denials\":[],\"is_error\":false,\"num_turns\":2,\"subtype\":\"success\",\"api_error_status\":null,\"result\":\"Done. The command `echo hook-test` ran once and printed `hook-test`.\",\"type\":\"result\"}\n"
+}

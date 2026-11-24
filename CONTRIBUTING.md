@@ -1,6 +1,6 @@
-# Contributing to Hypergraph Coding Agent Framework
+# Contributing to Hypergraph Agentic Coding Framework
 
-Hi there! We're thrilled that you'd like to contribute to Hypergraph Coding Agent Framework. Contributions to this project are released to the public under the [project's open source license](LICENSE).
+Hi there! We're thrilled that you'd like to contribute to Hypergraph Agentic Coding Framework. Contributions to this project are released to the public under the [project's open source license](LICENSE).
 
 Please note that this project is released with a [Contributor Code of Conduct](CODE_OF_CONDUCT.md). By participating in this project you agree to abide by its terms.
 
@@ -39,7 +39,7 @@ We welcome and encourage the use of AI tools (such as Claude, GitHub Copilot, Cu
 That being said, if you are using AI assistance, **this must be disclosed in the pull request**, along with the extent to which AI assistance was used.
 
 An example disclosure:
-> This PR was authored by Claude using the Hypergraph Coding Agent Framework.
+> This PR was authored by Claude using the Hypergraph Agentic Coding Framework.
 
 Failure to disclose this makes it difficult to determine how much scrutiny to apply to the contribution.
 

@@ -23,8 +23,9 @@
 #                        commit, never pushed) after the openrig tests pass on it. The result is
 #                        `accept` in verdict.json; no commit otherwise.
 #
-# Exit: 0 PASS, 1 FAIL, 2 usage or SETUP-ERROR, 3 REVIEW, 4 SEED. With --accept the exit is the
-# verdict's, except a PASS refused for the watcher streak (review-streak), which exits 3 (REVIEW).
+# Exit: 0 PASS, 1 FAIL, 2 usage or SETUP-ERROR, 3 REVIEW, 4 SEED, 75 host busy (retry later; no
+# verdict). With --accept the exit is the verdict's, except a PASS refused for the watcher streak
+# (review-streak), which exits 3 (REVIEW).
 #
 # The evidence root: HACF_COMPAT_EVIDENCE_ROOT (a setting; the watcher passes its own root through
 # it), else ${XDG_STATE_HOME:-$HOME/.local/state}/hacf/evidence.
@@ -39,9 +40,14 @@
 # the user's (UV_CACHE_DIR), so the clone's venv needs no download.
 #
 # Host safety: run it under `systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0
-# -p OOMPolicy=continue` with MemAvailable >= 6144 MB. OOMPolicy=continue matters: systemd's default
-# (stop) kills the whole scope, this script included, on the first OOM kill, so no verdict prints;
-# with it, the killed step is recorded and the run ends SETUP-ERROR (exit 2).
+# -p OOMPolicy=continue`. OOMPolicy=continue matters: systemd's default (stop) kills the whole
+# scope, this script included, on the first OOM kill, so no verdict prints; with it, the killed
+# step is recorded and the run ends SETUP-ERROR (exit 2). After its argument and TMPDIR checks the
+# script re-runs itself under `python3 dev/scripts/host_gate.py run --job openrig_compat`, the host
+# heavy-job lock: it waits for MemAvailable >= HACF_HOST_MIN_MB (6144) and for any other HACF heavy
+# job, holds the lock for the whole run (its pytest legs inherit the lease's token) and exits 75
+# when the bounded wait (HACF_HEAVY_WAIT_S) runs out. The scope's processes descend from the caller,
+# so the token validates inside it.
 set -uo pipefail
 
 usage() {
@@ -54,6 +60,7 @@ die_usage() {
     exit 2
 }
 
+orig_args=("$@")
 version="" seed=0 accept=0 registry="" package_dir=""
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -103,11 +110,11 @@ tmpdir=${TMPDIR-}
 [[ $(realpath -m -- "$tmpdir") != /tmp ]] || die_usage "TMPDIR is /tmp; use an on-disk directory"
 mkdir -p -- "$tmpdir" || die_usage "cannot create TMPDIR $tmpdir"
 [[ $(stat -f -c %T -- "$tmpdir") != tmpfs ]] || die_usage "TMPDIR $tmpdir is on a tmpfs"
-avail=$(awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo 2>/dev/null || true)
-if [[ -z $avail || $avail -lt 6144 ]]; then
-    printf 'openrig_compat.sh: MemAvailable is %s MB (< 6144); SETUP-ERROR, wait and retry\n' \
-        "${avail:-unknown}" >&2
-    exit 2
+# --- Host safety: the heavy-job lock and memory floor (dev/scripts/host_gate.py) ---------------
+if ! python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import host_gate as h
+sys.exit(0 if h.token_valid() else 1)' "$root/dev/scripts"; then
+    exec python3 "$root/dev/scripts/host_gate.py" run --job openrig_compat -- \
+        bash "$root/dev/openrig_compat.sh" "${orig_args[@]}"
 fi
 
 T=$(mktemp -d -- "$(realpath -- "$tmpdir")/openrig-compat-XXXXXX")

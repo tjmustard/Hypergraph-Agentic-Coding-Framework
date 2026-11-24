@@ -6,7 +6,7 @@ trigger: /hyper-sop
 
 # /hyper-sop — Master Standard Operating Procedure Guide
 
-This skill guides the user through the **Master Standard Operating Procedure (SOP)** of the Hypergraph Coding Agent Framework.
+This skill guides the user through the **Master Standard Operating Procedure (SOP)** of the Hypergraph Agentic Coding Framework.
 
 The framework relies on a strict sequential model — Spec-First, Deterministic Memory, and Automated Auditing — to prevent context collapse and hallucinated requirements.
 

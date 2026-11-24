@@ -1,5 +1,5 @@
 ---
-description: Hypergraph Coding Agent Framework system mandates — always active
+description: Hypergraph Agentic Coding Framework system mandates — always active
 alwaysApply: true
 ---
 Trailhead: start at lore/MAP.md, then SPEC.md, then the active mission under missions/

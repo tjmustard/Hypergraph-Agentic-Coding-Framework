@@ -1,31 +1,4 @@
 {
   "step": "nested-slice-create",
-  "argv": [
-    "npx",
-    "-y",
-    "--package=@openrig/cli@0.6.13",
-    "rig",
-    "scope",
-    "--workspace",
-    "/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/rig-workspace/projects/nested-repo",
-    "slice",
-    "create",
-    "release-0.6.0",
-    "nested-spike",
-    "--json"
-  ],
-  "cwd": "/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/rig-workspace/projects/nested-repo",
-  "exit_code": 0,
-  "stdout": "{\n  \"ok\": true,\n  \"slice\": {\n    \"mission\": \"release-0.6.0\",\n    \"name\": \"01-nested-spike\",\n    \"id\": \"OPR.0.6.0.1\",\n    \"path\": \"/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/rig-workspace/projects/nested-repo/missions/release-0.6.0/slices/01-nested-spike\",\n    \"readmePath\": \"/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/rig-workspace/projects/nested-repo/missions/release-0.6.0/slices/01-nested-spike/SPEC.md\",\n    \"template\": \"placeholder\"\n  }\n}\n",
-  "stderr": "",
-  "rig_version": "0.6.13 (9eeb2e42)",
-  "captured_at": "2026-10-26T05:10:10+00:00",
-  "git_status_after": [
-    " M missions/release-0.6.0/mission.yaml",
-    "?? missions/release-0.6.0/slices/.nn-01",
-    "?? missions/release-0.6.0/slices/01-nested-spike/PROGRESS.md",
-    "?? missions/release-0.6.0/slices/01-nested-spike/PROOF.md",
-    "?? missions/release-0.6.0/slices/01-nested-spike/SPEC.md",
-    "?? missions/release-0.6.0/slices/01-nested-spike/slice.yaml"
-  ]
+  "exit_code": 0
 }

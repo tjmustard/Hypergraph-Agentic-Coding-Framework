@@ -60,7 +60,7 @@ uv sync
 
 ## 🤖 Supported Integrations & Commands
 
-This project is built using the Hypergraph Coding Agent Framework. The following slash commands are available to AI agents:
+This project is built using the Hypergraph Agentic Coding Framework. The following slash commands are available to AI agents:
 
 | Command | Description |
 |---|---|

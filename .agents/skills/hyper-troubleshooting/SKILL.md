@@ -1,11 +1,11 @@
 ---
 name: troubleshooting
-description: Guides the user through diagnosing and recovering from common failure states in the Hypergraph Coding Agent Framework. Use when the user reports bugs, hallucinations, desynchronization, or errors with the framework agents.
+description: Guides the user through diagnosing and recovering from common failure states in the Hypergraph Agentic Coding Framework. Use when the user reports bugs, hallucinations, desynchronization, or errors with the framework agents.
 ---
 
 # Troubleshooting
 
-This skill helps diagnose and recover from common failure states in the Hypergraph Coding Agent Framework. Since LLMs are probabilistic engines, they can occasionally fail even with rigid constraints.
+This skill helps diagnose and recover from common failure states in the Hypergraph Agentic Coding Framework. Since LLMs are probabilistic engines, they can occasionally fail even with rigid constraints.
 
 ## When to use this skill
 

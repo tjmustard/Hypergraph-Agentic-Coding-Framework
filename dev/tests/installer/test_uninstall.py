@@ -67,13 +67,32 @@ def run_uninstaller(
     return Run(proc.returncode, proc.stdout.decode("utf-8", "replace"), [])
 
 
+def last_line(output: str) -> str:
+    """The output's last non-blank line, stripped (the prompt a waiting child shows)."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    return lines[-1] if lines else ""
+
+
+def at_yn_prompt(output: str) -> bool:
+    """True when the output ends with a [y/N] or [Y/n] question (tty_ask leaves no newline)."""
+    return last_line(output).endswith(("[y/N]", "[Y/n]"))
+
+
+def at_installer_prompt(output: str) -> bool:
+    """True at any HACF-install.sh terminal question: [y/N], [Y/n] or a `Selection [..]:` menu."""
+    line = last_line(output)
+    return at_yn_prompt(output) or (line.startswith("Selection [") and line.endswith("]:"))
+
+
 def run_in_pty(
     argv: list[str], cwd: Path, env: dict[str, str], answer, *, deadline_s: float = 280
 ) -> tuple[int, str]:
     """Run argv on a pseudo-terminal; answer(output) returns the bytes to type when it goes idle.
 
-    A child still running after deadline_s has its process group killed and the call raises
-    AssertionError, so a stuck run fails instead of hanging the suite.
+    answer is asked once per new output; empty bytes mean "no known prompt yet", and nothing is
+    typed (a load stall mid-run must not type a stray answer). A child still running after
+    deadline_s has its process group killed and the call raises AssertionError, so a stuck run
+    fails instead of hanging the suite.
     """
     pid, fd = pty.fork()
     if pid == 0:  # the child: a new session whose controlling terminal is the pty
@@ -93,9 +112,11 @@ def run_in_pty(
                 break
             ready, _, _ = select.select([fd], [], [], 1.5)
             if not ready:
-                if len(output) > answered_at:  # idle after new output: a question is waiting
-                    os.write(fd, answer(output.decode("utf-8", "replace")))
-                    answered_at = len(output)
+                if len(output) > answered_at:  # idle after new output: maybe a question
+                    reply = answer(output.decode("utf-8", "replace"))
+                    if reply:  # only at a known prompt; otherwise keep waiting
+                        os.write(fd, reply)
+                    answered_at = len(output)  # these bytes are seen either way
                 continue
             try:
                 chunk = os.read(fd, 65536)
@@ -136,6 +157,40 @@ def test_run_in_pty_kills_on_deadline(tmp_path: Path) -> None:
     match = re.search(r"pid (\d+)", str(excinfo.value))
     assert match, str(excinfo.value)
     assert not Path(f"/proc/{match.group(1)}").exists()  # the helper reaped it
+
+
+STALL_SCRIPT = r"""printf 'working...\n'
+sleep 3
+printf '    Replace ./HACF-uninstall.sh with the v0.6.0 uninstaller\n'
+printf '    upstream: stand-in\n    Proceed? [y/N] '
+IFS= read -r line
+if [ "$line" = y ]; then echo "answered y"; else echo "answered [$line]"; exit 3; fi
+"""
+
+
+def test_run_in_pty_types_nothing_during_a_mid_run_stall(tmp_path: Path) -> None:
+    """A 3 s stall before the Replace prompt types nothing; the prompt alone gets exactly one y."""
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    replies: list[bytes] = []
+
+    def answer(output: str) -> bytes:
+        reply = replace_answer(output, other=b"\n")
+        replies.append(reply)
+        return reply
+
+    code, text = run_in_pty(["bash", "-c", STALL_SCRIPT], tmp_path, env, answer, deadline_s=60)
+    assert code == 0, text
+    assert "answered y" in text
+    assert [r for r in replies if r] == [b"y\n"]  # the helper wrote exactly one answer
+    assert b"" in replies  # the stall was seen (idle after "working...") and nothing was typed
+
+    # The old answer shape (b"\n" at any non-Replace tail) types a newline into the stall, which
+    # the prompt then reads as an empty answer: the flake this helper change removes.
+    def old_answer(output: str) -> bytes:
+        return b"y\n" if "Replace ./HACF-uninstall.sh" in output[-600:] else b"\n"
+
+    code, text = run_in_pty(["bash", "-c", STALL_SCRIPT], tmp_path, env, old_answer, deadline_s=60)
+    assert code == 3 and "answered []" in text, text
 
 
 def attributes_file(project: Path) -> Path:
@@ -370,7 +425,12 @@ def test_uninstall_offers_codegraph_delete(
     log = tmp_path / "codegraph.log"
     _codegraph_project(project, run_install, log)
     env = install_env(scratch, upstream.url)
-    code, text = run_in_pty(["bash", str(UNINSTALLER)], project, env, lambda _output: b"y\n")
+    code, text = run_in_pty(
+        ["bash", str(UNINSTALLER)],
+        project,
+        env,
+        lambda output: b"y\n" if at_yn_prompt(output) else b"",
+    )
     assert code == 0, text
     assert "Delete the codebase-memory-mcp index of project 'demo-project'" in text
     assert log.read_text(encoding="utf-8").split() == ["delete"]
@@ -436,6 +496,25 @@ def test_uninstall_repo_url_env_ignored_without_hacf_test(
 # ---------------------------------------------------------------------------
 
 
+def replace_answer(output: str, *, other: bytes) -> bytes:
+    """Answer y at the Replace ./HACF-uninstall.sh consent prompt, other at any other question.
+
+    prompt_consent prints the message, an `upstream:` line, then `Proceed? [y/N] `, so the Replace
+    prompt is the tail's last three non-blank lines. Mid-run output (no prompt) answers b"".
+    """
+    if not at_installer_prompt(output):
+        return b""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    block = lines[-3:]
+    if (
+        block
+        and block[0].startswith("Replace ./HACF-uninstall.sh")
+        and block[-1].startswith("Proceed?")
+    ):
+        return b"y\n"
+    return other
+
+
 def test_saved_uninstaller_replaced_then_runs(v059_project, scratch: Path, upstream) -> None:
     """A saved v0.5.x uninstaller replaced by consent (S12b Task 36) works as the v0.6.0 one."""
     project = v059_project("default")
@@ -443,8 +522,7 @@ def test_saved_uninstaller_replaced_then_runs(v059_project, scratch: Path, upstr
     env = install_env(scratch, upstream.url)
 
     def answer(output: str) -> bytes:
-        tail = output[-600:]
-        return b"y\n" if "Replace ./HACF-uninstall.sh" in tail else b"\n"
+        return replace_answer(output, other=b"\n")
 
     code, text = run_in_pty(["bash", str(INSTALLER), "--ides=claude"], project, env, answer)
     assert code == 0, text

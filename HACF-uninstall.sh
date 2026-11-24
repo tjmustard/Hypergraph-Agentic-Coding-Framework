@@ -16,7 +16,7 @@ set -euo pipefail
 # The runs write no __pycache__ into the project (D1).
 export PYTHONDONTWRITEBYTECODE=1
 
-# Hypergraph Coding Agent Framework — uninstaller (v0.6.0)
+# Hypergraph Agentic Coding Framework — uninstaller (v0.6.0)
 #
 # Deletes only what HACF can prove it owns (R10, US-019):
 # - with .agents/hacf-manifest.json (written by HACF-install.sh v0.6.0): the files it lists whose
@@ -58,7 +58,7 @@ USAGE
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-DEFAULT_REPO_URL="https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework.git"
+DEFAULT_REPO_URL="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git"
 DEFAULT_BRANCH="main"
 MANIFEST_REL=".agents/hacf-manifest.json"
 SOURCE_FILE_REL=".agents/state/install/source.json"   # per-machine record of a --source install
@@ -1246,7 +1246,7 @@ main() {
 
   echo ""
   echo "╔══════════════════════════════════════════════════════════╗"
-  echo "║     Hypergraph Coding Agent Framework Uninstaller        ║"
+  echo "║    Hypergraph Agentic Coding Framework Uninstaller       ║"
   echo "╚══════════════════════════════════════════════════════════╝"
   echo ""
   if $SOURCE_RECORDED; then

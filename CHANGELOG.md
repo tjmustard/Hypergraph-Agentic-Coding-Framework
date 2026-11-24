@@ -7,6 +7,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Dev tooling only: the tests that need HACF's private records, the raw recorded captures or the
+  private release history moved to `dev/tests/private_records/`, so a public clone's test run has no
+  failure and no unexpected skip.
+
+## [0.6.3] - 2026-11-24
+
+### Added
+- The hacf OpenRig team: `openrig/hacf/roles.yml`, a per-role table of the native tools each seat
+  denies (every role denies `AskUserQuestion`), `bin/seat-rules.py`, which turns a role into
+  `rig seat set-permissions --rules` JSON and checks the table against `agent.yaml` and a key-free
+  `rig.yaml`, and `OPS.md`, the per-seat apply, probe and rollback recipe.
+- Dev tooling only, not installed into projects: `dev/release_export.py`, which builds HACF's public,
+  product-only release commits, leaving out HACF's private development records and the tests and
+  recorded captures that cannot be published, and gates each one before a push: a privacy scan,
+  `check.sh` and ruff on a public-only clone, install checks and the code-graph contract. It never
+  pushes.
+- Dev tooling only: `dev/scripts/host_gate.py`, one per-user heavy-job lock and memory floor taken by
+  `check.sh`, every repository pytest, the release gate and the OpenRig compat and probe runs; a
+  wait that runs out exits 75 (retry later).
+- Dev tooling only: `dev/telemetry/collect_metrics.py`, a read-only collector that writes per-seat,
+  per-slice token scorecards from a snapshot copy of the OpenRig database and the seats' JSONL usage
+  numbers, and computes the B0/B1 token-reduction metric.
+- The hacf OpenRig team: `openrig/hacf/bin/context-guard.sh`, a fail-closed, dry-run-by-default
+  guard that restarts at most one idle, non-lead seat over 150k input tokens per run, only at a
+  durable point, logging every decision and telling the lead.
+
+### Changed
+- The framework is renamed to the Hypergraph Agentic Coding Framework (still HACF) in the docs, agent instructions, install templates, skills and installer banners.
+- README.md describes Coding 4.1: the five stages run by hand (Coding 4.0) or as an OpenRig team, with the same human gates, and its diagram now shows the deterministic state scripts. `dev/tests/docs/test_readme_mermaid.py` allows one optional `HACF state` subgraph.
+- Dev tooling only: `dev/scripts/check.sh` prints a short summary per leg (status, counts, failing ids
+  with the tail of their tracebacks, the log path) instead of the full pytest and ruff output, runs
+  every leg after a failure and exits 1 at the end, and keeps the full logs and junit XML in
+  `${XDG_STATE_HOME:-~/.local/state}/hacf/check-logs` (newest 10 runs; `HACF_LOG_DIR`,
+  `HACF_CHECK_VERBOSE=1`); the release gate's console prints the same per-leg summary.
+- `HACF-install.sh` re-runs of a local-checkout install are pinned: a plain re-run (or `--source=` the
+  recorded checkout without `--ref`) reinstalls `installed_commit` and refuses, writing nothing, when
+  the checkout's HEAD has moved; `--ref` alone now moves within the recorded checkout.
+- Dev tooling only, not installed into projects: the OpenRig watcher's notifier
+  (`HACF_WATCH_NOTIFY_CMD`), its queue-row destination (`HACF_WATCH_ROW_DESTINATION`) and the
+  compat evidence root (`HACF_COMPAT_EVIDENCE_ROOT`) are now settings with neutral defaults: no
+  notifier, no row, and `${XDG_STATE_HOME:-~/.local/state}/hacf/evidence`. DEVELOPMENT.md
+  describes them.
+- The shipped `.agents/` scripts pass ruff (no new ignores), `PRDs/` is excluded from ruff, and
+  `dev/scripts/check.sh` and the release gate lint every tracked Python file on a fresh clone.
+- Dev tooling only: the tests that read HACF's private development records moved to
+  `dev/tests/private_records/`, which skips with one stated reason on a checkout without them; the
+  rest of those test files are public again.
+- Dev tooling only: the recorded live captures are cleaned by a keep-list normaliser
+  (`dev/tests/fixtures/normalize_recorded.py`) and read through a placeholder-substituting loader;
+  the raw captures live only in the never-exported `dev/tests/fixtures/recorded-raw/`.
+- Dev tooling only: the release-export profile is `hacf.release-export/v2`. It names no private
+  value or digest of one: private literals live only in the untracked digest file, which gains
+  `window` and `regex` lines (`release_export.py digest-line` prints one from stdin) and must hold
+  every `required_digest_labels` label (the lead appends them before a gate).
+- Dev tooling only: the export scan fails on a raw-only capture key (`scan.strict_keys`) anywhere,
+  the plan's verify-push line carries `--report-root`, and host names and private paths are gone
+  from the current OpenRig docs.
+
+### Fixed
+- Dev tooling only: the OpenRig watcher installer (`dev/openrig_watch_install.sh`) fast-forwards an
+  existing watcher worktree to `--base` on a re-install, and refuses one with uncommitted changes or
+  with commits not in `--base`; it used to leave the worktree where it was.
+- Dev tests only: the pseudo-terminal helper in `dev/tests/installer/test_uninstall.py` types an
+  answer only at a known prompt, so a load stall mid-run no longer types a stray newline that a
+  later prompt reads as "No".
+- `hyper_ledger.py ensure-node` no longer gives a path a second owner by accident: `--from-spec`
+  skips (and names the owner of) a touch another node's `files` already cover, and `--files`
+  refuses such a new path (exit 2, nothing written) unless the new `--allow-shared` is given.
+- `hyper_codegraph.py`: the adapter no longer runs an unpinned backend found on PATH or recorded in the
+  state file; each candidate must report codebase-memory-mcp 0.12.1, and a project name over 128
+  characters is refused with the cause and the workaround (a shorter checkout path).
+
+### Known issues
+- Record correction: the v0.6.0 export commit message says the S04, S08 and S11 recorded live-test
+  fixtures ship unedited. They were left out of v0.6.0-v0.6.2; from v0.6.3 they ship as
+  keep-list-cleaned copies (`dev/tests/fixtures/recorded/`). A pushed commit message cannot change.
+- The optional code graph (codebase-memory-mcp) shares one daemon per user unless
+  `CBM_RUNTIME_DIR` differs between runs.
+- codebase-memory-mcp caps a project name at 128 characters, and the name is derived from the
+  checkout path; the workaround is a shorter checkout path.
+- The pinned re-run of a local-checkout install (D1) protects only re-runs of a v0.6.3 or later
+  installer. A checkout moved to an older commit runs that commit's older installer; the saved
+  installer copy planned for v0.6.4 is the cure.
+- The repository moved from `https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework` to `https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework`. An existing install keeps its pinned old URL and
+  works through GitHub's redirect; to move it, run
+  `/hyper-update --upstream-url https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git`.
+- Of the 127 test functions left out of the public v0.6.2 tree, 110 are back in the public suite.
+  The 17 that read HACF's private development records stay in `dev/tests/private_records/`, the one
+  test directory still left out of every export; on a public clone that directory skips with one
+  stated reason.
+
 ## [0.6.2] - 2026-11-23
 
 ### Added

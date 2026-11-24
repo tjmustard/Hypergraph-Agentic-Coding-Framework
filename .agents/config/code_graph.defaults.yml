@@ -11,6 +11,7 @@ backends:
     # prompt labels the backend "unverified" while this is false. Set by S04 from
     # dev/tests/fixtures/recorded/S04/verdict.json (contract_verdict pass, 0.12.1).
     verified: true
+    # Resolution order; each candidate must report the pinned version (the uvx argv pins it).
     exe_resolution:
       - local override
       - shutil.which('codebase-memory-mcp')

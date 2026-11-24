@@ -7,7 +7,8 @@ between two declared ids (`-->`, `-.->` or `==>`, with an optional `|"label"|`),
 at most one `classDef`. Anything else in the block is a failure, so a renderer-only feature cannot
 slip in. Seat nodes are `<pod>_<member>` (hyphens become underscores), declared inside their
 pod's subgraph; every spec edge is an arrow labelled with its kind; every other node sits in the
-`OpenRig (generic)` subgraph or is the `human` node.
+`OpenRig (generic)` subgraph, in the optional single `HACF state` subgraph (HACF's deterministic
+state scripts), or is the `human` node.
 
 Stdlib and PyYAML only; the checks read files and write nothing in the repository. Each
 `assert_*` function takes the rig spec and README paths, so the mutation tests below run the
@@ -27,6 +28,7 @@ RIG_YAML = REPO_ROOT / "openrig" / "hacf" / "rig.yaml"
 README = REPO_ROOT / "README.md"
 
 GENERIC_LABEL = "OpenRig (generic)"
+STATE_LABEL = "HACF state"
 HUMAN_NODE = "human"
 ID = r"[A-Za-z][A-Za-z0-9_]*"
 FLOWCHART = re.compile(r"^flowchart\s+(TB|TD|BT|LR|RL)$")
@@ -193,21 +195,30 @@ def assert_spec_edges(rig_path: Path, readme_path: Path) -> None:
 
 
 def assert_other_nodes(rig_path: Path, readme_path: Path) -> None:
-    """Non-seat nodes are generic OpenRig parts or the human; arrows join declared nodes."""
+    """Non-seat nodes are generic OpenRig parts, HACF state scripts or the human.
+
+    Arrows join declared nodes. The `HACF state` subgraph is optional and at most one.
+    """
     pods, _ = load_spec(rig_path)
     _, diagram = the_diagram(readme_path)
     nodes, subgraphs = diagram["nodes"], diagram["subgraphs"]
     generic = [sid for sid, label in subgraphs.items() if GENERIC_LABEL in label]
     assert len(generic) == 1, f"{len(generic)} subgraphs labelled {GENERIC_LABEL!r}; one expected"
+    state = [sid for sid, label in subgraphs.items() if STATE_LABEL in label]
+    assert len(state) <= 1, f"{len(state)} subgraphs labelled {STATE_LABEL!r}; at most one"
     assert HUMAN_NODE in nodes, f"no {HUMAN_NODE!r} node for the person"
-    assert set(subgraphs) == set(pods) | set(generic), (
-        f"subgraphs other than the pods and the generic one: {sorted(set(subgraphs) - set(pods))}"
+    allowed = set(pods) | set(generic) | set(state)
+    assert set(subgraphs) == allowed, (
+        f"subgraphs other than the pods, the generic one and the HACF state one: "
+        f"{sorted(set(subgraphs) - allowed)}"
     )
     seats = {node for pod in pods.values() for node in pod["seats"]}
     for node, (_, enclosing) in nodes.items():
         if node in seats or node == HUMAN_NODE:
             continue
-        assert generic[0] in enclosing, f"node {node!r} is neither a seat, generic nor the human"
+        assert generic[0] in enclosing or (state and state[0] in enclosing), (
+            f"node {node!r} is neither a seat, generic, HACF state nor the human"
+        )
     loose = sorted({end for src, dst, _ in diagram["arrows"] for end in (src, dst)} - set(nodes))
     assert not loose, f"arrows to undeclared nodes: {loose}"
 
@@ -286,4 +297,34 @@ def test_mutation_click_line_added(tmp_path):
     click = '    click orch_lead "https://example.com"\n'
     readme.write_text(head + marker + first + "\n" + click + rest, encoding="utf-8")
     with pytest.raises(AssertionError, match="a click line"):
+        assert_readme_matches_rig(rig, readme)
+
+
+def _insert_after_flowchart(readme: Path, lines: str) -> None:
+    """Insert diagram lines right after the README copy's flowchart header."""
+    text = readme.read_text(encoding="utf-8")
+    marker = "```mermaid\nflowchart"
+    assert text.count(marker) == 1
+    head, tail = text.split(marker)
+    first, rest = tail.split("\n", 1)
+    readme.write_text(head + marker + first + "\n" + lines + rest, encoding="utf-8")
+
+
+def test_mutation_loose_node_added(tmp_path):
+    """A node outside the pods, the generic and HACF state subgraphs and the human fails."""
+    rig, readme = _copies(tmp_path)
+    _insert_after_flowchart(readme, '    stray_node["not anywhere allowed"]\n')
+    with pytest.raises(AssertionError, match="stray_node"):
+        assert_readme_matches_rig(rig, readme)
+
+
+def test_mutation_second_state_subgraph(tmp_path):
+    """A second HACF state subgraph fails the checks."""
+    rig, readme = _copies(tmp_path)
+    extra = (
+        '    subgraph hacf_state_two["HACF state: a second box"]\n'
+        '        st_extra["extra"]\n    end\n'
+    )
+    _insert_after_flowchart(readme, extra)
+    with pytest.raises(AssertionError, match="at most one"):
         assert_readme_matches_rig(rig, readme)

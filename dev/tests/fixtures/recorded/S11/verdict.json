@@ -1,0 +1,13 @@
+{
+  "verdicts": {
+    "hook_ask_default_wrote_ticket_and_blocked": true,
+    "hook_deny_bypass_blocked_without_ticket": true,
+    "cat_archive_denied_default": true,
+    "read_deny_enforced_bypass": true,
+    "edit_deny_enforced_bypass": true,
+    "gate_finish_runs_default": true,
+    "gate_finish_runs_bypass": true,
+    "archive_specs_runs_default": true,
+    "archive_specs_runs_bypass": true
+  }
+}

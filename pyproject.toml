@@ -1,12 +1,14 @@
 [project]
 name = "hypergraph-coding-agent-framework"
-version = "0.6.0"
+version = "0.6.3"
 description = "A multi-agent AI coding framework using hypergraph state management."
 requires-python = ">=3.11"
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# F2: PRDs/ holds historical, non-code records; explicit-path callers need --force-exclude.
+extend-exclude = ["PRDs/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "D"]

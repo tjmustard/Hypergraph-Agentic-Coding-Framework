@@ -20,6 +20,7 @@ Later slices copy these subcommand names and flag spellings verbatim into their 
     impact (--nodes a,b | --files p1,p2 | --from-diff <rev-range>)
     ensure-node --id --dimension [--parent] [--member-of] [--depends-on a,b] [--files a,b]
                 [--associated-file] [--description-file] [--spec-refs a,b] [--from-spec <file>]
+                [--allow-shared]
     set-edges --id [--add-depends-on] [--remove-depends-on] [--set-member-of] [--set-implements]
     review-template [--status needs_review,dirty] --json
     apply-review --patch <json> --slice <id>
@@ -46,6 +47,16 @@ Semantics:
   `--parent X` writes `member_of: [X]` for a Layer or System X, and `implements: [X]` only for
   a Module X and an Atomic node; any other combination exits 2 (R21.2). A tombstoned id is
   refused.
+- ensure-node never gives a path a second owner by accident (OPR.99.0.6.4). A path the node is
+  about to gain (one its current `files` lacks; a new node's every path) is checked against
+  every other node's `files`: an equal entry, a glob entry that matches it (`glob_match`), or,
+  for a glob path, a literal entry it matches. A `--from-spec` touch owned that way is skipped
+  with `ensure-node: skipped <path>: owned by <id>[, <id>]` on stderr and the rest are merged.
+  A `--files` entry owned that way refuses the whole run (exit 2, nothing written) unless
+  `--allow-shared` is given, which keeps it and prints `ensure-node: shared <path> with <id>`;
+  `--allow-shared` has no effect without `--files`. Paths the node already has are never
+  re-checked, so existing shared paths stay valid, and `validate` has no ownership rule. Limit:
+  two different glob strings that overlap are not detected (that needs the file list).
 - apply-review takes a JSON file `{<node id>: {description?, inputs?, outputs?, files?,
   edges?}}`; each given key replaces the node's value (for `edges`, each given edge list), and
   every patched node becomes `clean` with a `review` record (R27.4).
@@ -610,6 +621,37 @@ def map_paths(data: dict, paths: list[str]) -> tuple[list[str], list[str]]:
     return sorted(matched), sorted(unmapped)
 
 
+def _is_glob(path: str) -> bool:
+    return bool(TOUCH_GLOB_CHARS & set(path)) or path.endswith("/")
+
+
+def owners_of(data: dict, path: str, exclude_id: str) -> list[str]:
+    """Return the ids of every node but exclude_id whose `files` already cover path.
+
+    An entry covers path when it equals it, when it is a safe glob that matches it
+    (`glob_match`, as `map_paths` does), or, when path is itself a glob, when the entry is a
+    literal path the glob matches. Two different overlapping globs are not detected.
+    """
+    norm = _normalize_path(path)
+    owners: list[str] = []
+    for node_id, node in node_index(data).items():
+        files = node.get("files")
+        if node_id == exclude_id or not isinstance(files, list):
+            continue
+        for entry in files:
+            if not isinstance(entry, str):
+                continue
+            entry_norm = _normalize_path(entry)
+            if (
+                entry_norm == norm
+                or (glob_problem(entry) is None and glob_match(entry_norm, norm))
+                or (_is_glob(norm) and not _is_glob(entry_norm) and glob_match(norm, entry_norm))
+            ):
+                owners.append(node_id)
+                break
+    return owners
+
+
 def blast_radius(data: dict, start_ids: list[str]) -> list[str]:
     """Return the sorted v0.5.9 blast radius of start_ids, the start nodes included.
 
@@ -1092,6 +1134,43 @@ def _merge_files(node: dict, add_files: list[str]) -> None:
         node["files"] = merged
 
 
+def _guard_owners(data: dict, args: dict, node: dict | None) -> None:
+    """Keep ensure-node from giving a path a second owner (OPR.99.0.6.4); see the docstring.
+
+    Only the paths the node is about to gain are checked. `--from-spec` paths (add_files) that
+    another node owns are dropped from args with a warning; owned `--files` entries refuse the
+    run (UsageError, exit 2) unless allow_shared, which keeps them and says so.
+    """
+    node_id = args["id"]
+    current = (node or {}).get("files")
+    have = set(current) if isinstance(current, list) else set()
+    if args.get("add_files"):
+        kept = []
+        for item in args["add_files"]:
+            owners = [] if item in have else owners_of(data, item, node_id)
+            if owners:
+                print(f"ensure-node: skipped {item}: owned by {', '.join(owners)}", file=sys.stderr)
+            else:
+                kept.append(item)
+        args["add_files"] = kept
+    if args.get("files") is not None:
+        owned = []
+        for item in _dedupe(args["files"]):
+            owners = [] if item in have else owners_of(data, item, node_id)
+            if owners:
+                owned.append((item, owners))
+        if owned and not args.get("allow_shared"):
+            raise UsageError(
+                "\n".join(
+                    f"refused: {item} is owned by {', '.join(owners)}; "
+                    "pass --allow-shared to share it"
+                    for item, owners in owned
+                )
+            )
+        for item, owners in owned:
+            print(f"ensure-node: shared {item} with {', '.join(owners)}", file=sys.stderr)
+
+
 def _apply_ensure_node(data: dict, args: dict, path: Path) -> str:
     node_id = args["id"]
     if node_id in removed_ids(data):
@@ -1099,6 +1178,8 @@ def _apply_ensure_node(data: dict, args: dict, path: Path) -> str:
     index = node_index(data)
     node = index.get(node_id)
     created = node is None
+    args = dict(args)  # the guard may drop owned add_files; never mutate the caller's args
+    _guard_owners(data, args, node)
     if created:
         if not args.get("dimension"):
             raise UsageError(f"{node_id} is a new node; --dimension is required")
@@ -1375,6 +1456,7 @@ def normalize_args(op: str, args: dict) -> dict:
             "associated_file",
             "description",
             "spec_refs",
+            "allow_shared",
         )
         return {key: args.get(key) for key in keys}
     if op == "set-edges":
@@ -2184,6 +2266,7 @@ def cmd_ensure_node(ns: argparse.Namespace) -> int:
         "associated_file": ns.associated_file,
         "spec_refs": split_list(ns.spec_refs),
         "description": None,
+        "allow_shared": ns.allow_shared,
     }
     if ns.from_spec:
         spec = read_spec_node(Path(ns.from_spec))
@@ -2355,6 +2438,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--description-file", help="set the description from this file")
     p.add_argument("--spec-refs", metavar="a,b", help="add these dot-IDs to spec_refs")
     p.add_argument("--from-spec", metavar="<file>", help="legacy MiniPRD or v6 SPEC.md")
+    p.add_argument(
+        "--allow-shared",
+        action="store_true",
+        help="with --files: keep a new path another node already owns (default: refuse, "
+        "exit 2); --from-spec always skips such a path with a warning. A glob that overlaps "
+        "another node's different glob is not detected",
+    )
 
     p = command("set-edges", cmd_set_edges, "edit one node's edges (cycle-checked)")
     p.add_argument("--id", required=True, help="node id")

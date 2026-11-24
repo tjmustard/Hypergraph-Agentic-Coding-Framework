@@ -16,7 +16,7 @@
 #     .agents/logs/update-consent.jsonl. HACF signing, if it ever starts, is SSH-only (R11).
 #   gpg_fingerprints: not supported in v0.6.0; a non-empty list stops the update.
 #   require_consent_if_unsigned: always true; an unsigned update is never unattended (R25).
-repo_url: https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework.git
+repo_url: https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git
 ref: main
 verification:
   allowed_signers: []

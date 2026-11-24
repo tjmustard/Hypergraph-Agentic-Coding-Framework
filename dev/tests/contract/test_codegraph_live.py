@@ -8,7 +8,7 @@ shim fetches and verifies the native runtime on its first run):
         dev/tests/contract/test_codegraph_live.py
 
 The harness, never the model, writes one verbatim capture per backend call to
-dev/tests/fixtures/recorded/S04/<NN>-<step>.json (argv, cwd, stdout, stderr, exit code, the
+dev/tests/fixtures/recorded-raw/S04/<NN>-<step>.json (argv, cwd, stdout, stderr, exit code, the
 backend's `--version`, UTC date), computes contract_verdict from the checks (`pass` only when
 every check passed) and writes verdict.json there (R27). Calls the adapter makes are captured
 by wrapping hyper_codegraph._run, so each capture is exactly what the adapter ran and read.
@@ -17,6 +17,10 @@ tmp_path too, so the index (deleted at teardown) and the backend's config and lo
 ~/.cache/codebase-memory-mcp. `observations` in verdict.json record facts that do not gate the
 verdict (Q10-Q12, and R34's `base_commit_id_accepted`: whether `detect_changes --base-branch
 <the HEAD commit id>` sees an uncommitted edit).
+
+After a live run, write the cleaned copies with `python3 dev/tests/fixtures/normalize_recorded.py
+--set S04`: only those (dev/tests/fixtures/recorded/S04/) are committed for export; the raw
+captures in recorded-raw/ never ship.
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ import hypergraph_updater
 import pytest
 from conftest import FIXTURES_DIR, REPO_ROOT, GitRepo
 
-RECORDED = FIXTURES_DIR / "recorded" / "S04"
+RECORDED = FIXTURES_DIR / "recorded-raw" / "S04"
 SCRIPT = REPO_ROOT / ".agents" / "scripts" / "hyper_codegraph.py"
 PREFIX = list(hyper_codegraph.CBM_PREFIX)
 FIRST_CALL_TIMEOUT = 900.0  # the first uvx call downloads the shim and its native runtime

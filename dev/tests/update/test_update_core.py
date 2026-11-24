@@ -188,7 +188,7 @@ def test_upstream_url_env_ignored_without_hacf_test(hx: Harness):
     config = project / ".agents/config/upstream.yml"
     unreachable = "https://127.0.0.1:9/hacf.git"
     config.write_text(config.read_text().replace(
-        "https://github.com/tjmustard/Hypergraph-Coding-Agent-Framework.git", unreachable
+        "https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git", unreachable
     ))  # fmt: skip
     hx.commit(project)
     result = hx.run(project, "--dry-run", env={"HACF_TEST": None, "HACF_UPSTREAM_URL": hx.base.url})
@@ -416,3 +416,19 @@ def test_retention_keeps_only_exact_names_from_an_update(hx: Harness):
     assert "2020-01-01T00-00-00Z" not in left
     assert {"2020-01-01T00-00-00Z-migration", "keep-me"} <= set(left)
     shutil.rmtree(project)
+
+
+def test_default_upstream_url_agrees_everywhere() -> None:
+    """The shipped upstream.yml repo_url, hyper_update_core's default and the installer's agree."""
+    import re
+
+    import hyper_update_core
+    import yaml
+    from conftest import REPO_ROOT
+
+    shipped = yaml.safe_load((REPO_ROOT / ".agents/config/upstream.yml").read_text())["repo_url"]
+    installer = (REPO_ROOT / "HACF-install.sh").read_text(encoding="utf-8")
+    default = re.search(r'^DEFAULT_REPO_URL="([^"]+)"$', installer, re.M)
+    assert default is not None
+    assert shipped == hyper_update_core.DEFAULT_CONFIG["repo_url"] == default.group(1)
+    assert shipped.endswith("/Hypergraph-Agentic-Coding-Framework.git")

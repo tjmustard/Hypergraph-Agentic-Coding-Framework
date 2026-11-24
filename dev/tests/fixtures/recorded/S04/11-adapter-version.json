@@ -1,0 +1,7 @@
+{
+  "step": "adapter-version",
+  "cwd": "<TMP>/pytest-126/test_codegraph_contract0/repo",
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "codebase-memory-mcp 0.12.1\n"
+}

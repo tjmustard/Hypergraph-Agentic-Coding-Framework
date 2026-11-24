@@ -1,10 +1,10 @@
-# **Master SOP: Hypergraph Coding Agent Framework Workflow**
+# **Master SOP: Hypergraph Agentic Coding Framework Workflow**
 
 **Version:** 1.0 (Strict Sequential Execution Model)
 
 **Core Paradigm:** Spec-First, Deterministic Memory, Automated Auditing
 
-This standard operating procedure dictates the exact sequence of operations for generating, executing, and auditing software with the Hypergraph Coding Agent Framework (HACF) v0.6.0. Do not deviate from the sequence. Bypassing the specification or auditing phases leads to context collapse, hallucinated requirements and a corrupted component ledger.
+This standard operating procedure dictates the exact sequence of operations for generating, executing, and auditing software with the Hypergraph Agentic Coding Framework (HACF) v0.6.0. Do not deviate from the sequence. Bypassing the specification or auditing phases leads to context collapse, hallucinated requirements and a corrupted component ledger.
 
 Every script command below uses `python3`. Each phase boundary needs a **fresh context window**.
 

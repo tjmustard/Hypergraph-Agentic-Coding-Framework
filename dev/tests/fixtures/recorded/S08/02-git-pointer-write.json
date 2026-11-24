@@ -1,0 +1,6 @@
+{
+  "step": "git-pointer-write",
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "{\"session_id\":\"<SESSION-2>\",\"total_cost_usd\":1.0,\"permission_denials\":[],\"is_error\":false,\"num_turns\":3,\"subtype\":\"success\",\"api_error_status\":null,\"result\":\"Done. Both commands ran once each, as written.\\n\\n1. `echo ok > pointer_control.txt` succeeded with no output.\\n2. `printf x >> .git` failed with `Read-only file system`, exit code 1.\",\"type\":\"result\"}\n"
+}

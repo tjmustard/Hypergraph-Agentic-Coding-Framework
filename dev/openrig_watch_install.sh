@@ -13,8 +13,10 @@
 #      Without them the watcher calls no notifier and no rig, and keeps its evidence under
 #      ${XDG_STATE_HOME:-~/.local/state}/hacf/evidence;
 #   3. creates the watcher worktree with `git worktree add -b swimlane/openrig-accepted <path>
-#      <commit>` when <path> does not exist (an existing <path> must already be a worktree on that
-#      branch); a write into the common .git;
+#      <commit>` when <path> does not exist (a write into the common .git). An existing <path> must
+#      already be a clean worktree on that branch: it is fast-forwarded to <commit> (`merge
+#      --ff-only`), so the installed timer runs the new code from its next run; one with
+#      uncommitted changes or with commits not in <commit> is refused before anything is written;
 #   4. copies dev/systemd/hacf-openrig-watch.{service,timer} to ~/.config/systemd/user/;
 #   5. systemctl --user daemon-reload; systemctl --user enable --now hacf-openrig-watch.timer;
 #   6. runs the watcher's --check-env under the unit's env file (systemd-run --user --wait --pipe)
@@ -145,6 +147,32 @@ if [[ -n $evidence_root ]]; then
     evidence_root=$(realpath -m -- "$evidence_root")
 fi
 
+# An existing watcher worktree is checked (read-only) before anything is written: it must be a clean
+# worktree on $branch whose HEAD is an ancestor of --base; step 3 then fast-forwards it.
+wt_move=""
+if [[ -e $worktree && $dry -eq 0 ]]; then
+    top=$(git -C "$worktree" rev-parse --show-toplevel 2>/dev/null || true)
+    on=$(git -C "$worktree" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+    [[ $top == "$worktree" && $on == "$branch" ]] ||
+        die "$worktree exists but is not a worktree on $branch"
+    dirty=$(git -C "$worktree" status --porcelain) || die "cannot read the status of $worktree"
+    [[ -z $dirty ]] ||
+        die "$worktree has uncommitted changes; refusing to move it (inspect: git -C $worktree status)"
+    base_sha=$(git -C "$worktree" rev-parse --verify --quiet "$base^{commit}") ||
+        die "--base $base is not a commit in $worktree"
+    head_sha=$(git -C "$worktree" rev-parse --verify HEAD) || die "cannot read HEAD of $worktree"
+    if [[ $head_sha == "$base_sha" ]]; then
+        wt_move=unchanged
+    else
+        git -C "$worktree" merge-base --is-ancestor HEAD "$base_sha"
+        case $? in
+        0) wt_move=ff ;;
+        1) die "$worktree has commits not in $base; refusing to move it (inspect: git -C $worktree log $base..HEAD)" ;;
+        *) die "cannot compare $worktree with $base" ;;
+        esac
+    fi
+fi
+
 # PATH for the unit: npm's dir, node's dir (when npm's dir has no node), uv's, the notifier's (when
 # --notify-cmd is given), then the system dirs; each once.
 dirs=()
@@ -186,13 +214,14 @@ fi
 # --- 3. the watcher worktree -----------------------------------------------------------------------------
 if [[ -e $worktree ]]; then
     if [[ $dry -eq 1 ]]; then
-        say "check $worktree is a worktree on $branch (git, skipped in --dry-run)"
+        say "check $worktree is a clean worktree on $branch with no commits outside $base (git, skipped in --dry-run)"
+        say "would fast-forward $worktree to $base"
+    elif [[ $wt_move == unchanged ]]; then
+        say "unchanged $worktree (a worktree on $branch at $base_sha)"
     else
-        top=$(git -C "$worktree" rev-parse --show-toplevel 2>/dev/null || true)
-        on=$(git -C "$worktree" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-        [[ $top == "$worktree" && $on == "$branch" ]] ||
-            die "$worktree exists but is not a worktree on $branch"
-        say "unchanged $worktree (a worktree on $branch)"
+        git -C "$worktree" merge --ff-only --quiet "$base_sha" ||
+            die "failed: git -C $worktree merge --ff-only $base_sha"
+        say "fast-forwarded $worktree to $base_sha"
     fi
 else
     act "run git -C $root worktree add -b $branch $worktree $base (writes $worktree and the common .git)" \

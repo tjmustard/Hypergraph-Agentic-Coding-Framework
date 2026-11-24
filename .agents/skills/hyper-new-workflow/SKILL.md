@@ -1,6 +1,6 @@
 ---
 name: new-workflow
-description: Converts a desired behavior, prompt, or idea into a properly formatted workflow file in the Hypergraph Coding Agent Framework. Use when the user wants to create a new slash command or workflow.
+description: Converts a desired behavior, prompt, or idea into a properly formatted workflow file in the Hypergraph Agentic Coding Framework. Use when the user wants to create a new slash command or workflow.
 ---
 
 # New Workflow

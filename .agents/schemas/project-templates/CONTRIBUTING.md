@@ -39,7 +39,7 @@ We welcome and encourage the use of AI tools (such as Claude, GitHub Copilot, Cu
 That being said, if you are using AI assistance, **this must be disclosed in the pull request**, along with the extent to which AI assistance was used.
 
 An example disclosure:
-> This PR was authored by Claude using the Hypergraph Coding Agent Framework.
+> This PR was authored by Claude using the Hypergraph Agentic Coding Framework.
 
 Failure to disclose this makes it difficult to determine how much scrutiny to apply to the contribution.
 

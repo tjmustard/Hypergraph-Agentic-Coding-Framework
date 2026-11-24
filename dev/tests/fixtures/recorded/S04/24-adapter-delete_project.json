@@ -1,0 +1,7 @@
+{
+  "step": "adapter-delete_project",
+  "cwd": "<TMP>/pytest-126/test_codegraph_contract0/repo",
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "{\"project\":\"<TMP-SLUG>-pytest-126-test_codegraph_contract0-repo\",\"status\":\"deleted\"}\n"
+}

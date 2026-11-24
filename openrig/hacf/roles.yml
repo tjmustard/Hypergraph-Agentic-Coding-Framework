@@ -1,0 +1,83 @@
+# The hacf team's role table: which native Claude Code tools each seat's role uses, which it
+# denies, whether it needs MCP servers, and its skills. One entry per profile of
+# agents/hacf/agent.yaml.
+#
+# rig.yaml stays free of per-member permission keys, so it keeps launching on every OpenRig this
+# rig is tested against. This table is applied per seat instead: bin/seat-rules.py turns one role
+# into the JSON that `rig seat set-permissions <seat> --rules <file>` takes, and OPS.md is the
+# operator's apply, probe and rollback recipe. Nothing applies it on its own.
+#
+# tools_allow is for review only: seat-rules.py never emits an allow rule. Under the shipped
+#   `builtin:yolo` an allow constrains nothing, and under a prompting mode a bare allow such as
+#   `Bash` would pre-approve that tool and widen the seat.
+# tools_deny is the rule set seat-rules.py emits. Deny only what a role clearly never needs:
+#   AskUserQuestion  every seat runs unattended; startup/protocol.md:106-111 forbids it and says
+#                    the rule overrides any skill that instructs it.
+#   NotebookEdit     the repository has no notebook and no guidance file names one.
+#   EnterPlanMode,   the seats run unattended; nobody approves a plan.
+#   ExitPlanMode
+#   EnterWorktree,   the seats never create worktrees; the pipeline notes forbid
+#   ExitWorktree     `git worktree add`.
+# mcp: off is recorded intent. No guidance file or HACF skill calls an MCP tool (the code graph is
+#   the hyper_codegraph.py CLI). No `rig seat` verb sets MCP loading on an existing seat
+#   (OpenRig 0.7.21), so OPS.md does not change it and the saving is reported unknown.
+# skills: the skill ids agent.yaml may grant that role.
+schema: hacf.roles/v1
+
+roles:
+  # guidance/lead.md dispatches by queue row and asks the person through a durable row
+  # (startup/protocol.md:106-111: never AskUserQuestion). Agent stays: the lead may fan out reads.
+  lead:
+    tools_allow: [Read, Grep, Glob, Bash, Edit, Write, Skill, Agent, WebFetch, WebSearch, TodoWrite]
+    tools_deny: [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree]
+    mcp: off
+    skills: [adversarial-agent-hardening]
+
+  # guidance/architect.md:15: "Never use `AskUserQuestion`, and never wait at a prompt in this
+  # seat." The interview goes through the durable row instead.
+  architect:
+    tools_allow: [Read, Grep, Glob, Bash, Edit, Write, Skill, Agent, WebFetch, WebSearch, TodoWrite]
+    tools_deny: [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree]
+    mcp: off
+    skills: [adversarial-agent-hardening]
+
+  # guidance/red-team.md:34-36: the code graph is the hyper_codegraph.py CLI, not an MCP server,
+  # so mcp: off loses nothing. AskUserQuestion: startup/protocol.md:106-111.
+  red-team:
+    tools_allow: [Read, Grep, Glob, Bash, Edit, Write, Skill, Agent, WebFetch, WebSearch, TodoWrite]
+    tools_deny: [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree]
+    mcp: off
+    skills: [adversarial-agent-hardening]
+
+  # guidance/resolve.md:52: "The skill says to use `AskUserQuestion` for this. **Do not**: this
+  # seat runs unattended".
+  resolve:
+    tools_allow: [Read, Grep, Glob, Bash, Edit, Write, Skill, Agent, WebFetch, WebSearch, TodoWrite]
+    tools_deny: [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree]
+    mcp: off
+    skills: [adversarial-agent-hardening]
+
+  # guidance/execute.md:42-43: the skill's AskUserQuestion prompts "cannot fire here". Agent stays:
+  # .agents/skills/hyper-execute/SKILL.md:51 launches the orientation sub-agent with the Agent tool.
+  execute:
+    tools_allow: [Read, Grep, Glob, Bash, Edit, Write, Skill, Agent, WebFetch, WebSearch, TodoWrite]
+    tools_deny: [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree]
+    mcp: off
+    skills: [adversarial-agent-hardening]
+
+  # guidance/audit.md:86: "Have a sub-agent ... read each listed node's files", and
+  # .agents/skills/hyper-audit/SKILL.md:55 launches it with the Agent tool, so Agent stays.
+  # AskUserQuestion: startup/protocol.md:106-111.
+  audit:
+    tools_allow: [Read, Grep, Glob, Bash, Edit, Write, Skill, Agent, WebFetch, WebSearch, TodoWrite]
+    tools_deny: [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree]
+    mcp: off
+    skills: [adversarial-agent-hardening]
+
+  # guidance/scribe.md works in the existing checkout and its linked worktrees (scribe.md:71) and
+  # never creates one. AskUserQuestion: startup/protocol.md:106-111.
+  scribe:
+    tools_allow: [Read, Grep, Glob, Bash, Edit, Write, Skill, Agent, WebFetch, WebSearch, TodoWrite]
+    tools_deny: [AskUserQuestion, NotebookEdit, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree]
+    mcp: off
+    skills: [adversarial-agent-hardening]

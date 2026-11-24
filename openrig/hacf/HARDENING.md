@@ -153,7 +153,7 @@ rig's human address, and — the one that only a real run finds — does the ins
 
 ## Example host notes (verified on one machine, 2026-11-16)
 
-These are facts about the one machine the rig was first hardened on (`tj-intel`, an Ubuntu
+These are facts about the one machine the rig was first hardened on (the first host, an Ubuntu
 desktop), kept as examples of what a host check finds. They describe the v0.5.x installer, which
 rows 24-26 now mark superseded. Re-check them on your own host; do not assume them.
 
@@ -166,5 +166,5 @@ rows 24-26 now mark superseded. Re-check them on your own host; do not assume th
 - The v0.5.x installer ran end to end in a `mktemp -d` throwaway with `git init`: exit 0,
   "Installation complete!", and the `pre-commit`, `commit-msg` and `pre-push` hooks installed.
   Without `git init` it exited 1 at `install_hook`, after copying files.
-- The human address there was `tjmustard@external`, which the daemon's human-route enforcer
+- The human address there was `<user>@external`, which the daemon's human-route enforcer
   (row 16) does not match.

@@ -157,6 +157,12 @@ required; by `protocol.md`'s defaults the lead clears the builder before every f
 Not "does not meet spec": a builder that cannot tell which sentence it missed will guess, and a
 guess costs an iteration out of five.
 
+**Exit 75 is not a verdict.** In a project with HACF's host heavy-job lock
+(`dev/scripts/host_gate.py`), exit 75 from `check.sh`, a `pytest` run or `host_gate.py` means the
+host stayed busy (the lock or the memory floor) for the whole bounded wait. Retry later; it is never
+a FAIL, never a FAIL iteration in the loop record and never an escape. The builder's exit 75 is
+not evidence either way: the work is judged only on a run that finished.
+
 **At iteration 5, stop bouncing** and say so in the handoff, with the loop record attached. Five is
 this rig's cap; no script here enforces it, so you do. The same applies if one finding survives
 two fixes: that is a spec problem, not a build problem.

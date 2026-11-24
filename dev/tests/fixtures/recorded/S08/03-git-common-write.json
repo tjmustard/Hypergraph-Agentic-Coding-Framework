@@ -1,0 +1,6 @@
+{
+  "step": "git-common-write",
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "{\"session_id\":\"<SESSION-3>\",\"total_cost_usd\":1.0,\"permission_denials\":[],\"is_error\":false,\"num_turns\":4,\"subtype\":\"success\",\"api_error_status\":null,\"result\":\"Done. All three commands ran once each, as written:\\n\\n1. `echo ok > common_control.txt` succeeded with no output.\\n2. `touch .../repo/.git/s08-probe` failed: `Read-only file system`.\\n3. `echo x > .../repo/.git/worktrees/wt/HEAD` failed: `Read-only file system`.\\n\\nCommands 2 and 3 both target the repo's `.git` directory, which the sandbox won't let me write to.\",\"type\":\"result\"}\n"
+}

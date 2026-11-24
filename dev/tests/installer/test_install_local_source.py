@@ -273,9 +273,9 @@ def _refusal(case: str, tmp_path: Path, project: Path, src: Source, env: dict[st
     if case == "version-mismatch":
         installer = path / "HACF-install.sh"
         text = installer.read_text(encoding="utf-8")
-        installer.write_text(text.replace('HACF_VERSION="0.6.2"', 'HACF_VERSION="0.5.9"', 1))
+        installer.write_text(text.replace('HACF_VERSION="0.6.3"', 'HACF_VERSION="0.5.9"', 1))
         git(["-c", "commit.gpgsign=false", "commit", "-q", "-am", "old version"], path, env)
-        return str(path), project, [], None, "carries HACF 0.5.9; this installer is 0.6.2"
+        return str(path), project, [], None, "carries HACF 0.5.9; this installer is 0.6.3"
     if case == "symlinked-payload-root":
         git(["rm", "-r", "-q", "--", ".agents/rules"], path, env)
         os.symlink("../dev", path / ".agents" / "rules")

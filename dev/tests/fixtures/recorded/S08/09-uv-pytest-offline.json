@@ -1,0 +1,6 @@
+{
+  "step": "uv-pytest-offline",
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "{\"session_id\":\"<SESSION-9>\",\"total_cost_usd\":1.0,\"permission_denials\":[],\"is_error\":false,\"num_turns\":2,\"subtype\":\"success\",\"api_error_status\":null,\"result\":\"Done. I ran `uv run --frozen --no-sync pytest -q > pytest_out.txt 2>&1; echo $? > pytest_rc.txt` once. It produced no console output, and the results went to `pytest_out.txt` and `pytest_rc.txt`. I did not read those files, so I don't know whether the tests passed.\",\"type\":\"result\"}\n"
+}

@@ -57,6 +57,51 @@ FROZEN_NOW = datetime(2026, 10, 21, 12, 0, 0, tzinfo=timezone.utc)
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+DEV_SCRIPTS_DIR = REPO_ROOT / "dev" / "scripts"
+_HEAVY_LEASE = pytest.StashKey[object]()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Take the host heavy-job lock (dev/scripts/host_gate.py) for this pytest run (F9).
+
+    Only the xdist controller or a plain run takes it, and not when a valid re-entrancy token is
+    inherited (check.sh, the release gate). The token goes into os.environ, so subprocesses this run
+    starts (a nested check.sh or pytest) run inside the same lease. HACF_HEAVY_LOCK=0 turns it off
+    for one run. A wait that runs out ends the run with exit 75: the host was busy, retry later.
+    """
+    if os.environ.get("HACF_HEAVY_LOCK") == "0":
+        return
+    if hasattr(config, "workerinput") or os.environ.get("PYTEST_XDIST_WORKER"):
+        return
+    if str(DEV_SCRIPTS_DIR) not in sys.path:
+        sys.path.insert(0, str(DEV_SCRIPTS_DIR))
+    import host_gate
+
+    if host_gate.token_valid():
+        return
+    try:
+        lease = host_gate.acquire("pytest")
+    except host_gate.HostBusy as exc:
+        pytest.exit(f"host busy: {exc.reason}; retry later (exit 75)", returncode=75)
+    config.stash[_HEAVY_LEASE] = (lease, os.environ.get(host_gate.TOKEN_VAR))
+    os.environ.update(lease.env())
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Release the lease pytest_configure took and restore the inherited token variable."""
+    held = config.stash.get(_HEAVY_LEASE, None)
+    if held is None:
+        return
+    lease, inherited = held
+    import host_gate
+
+    lease.release()
+    if inherited is None:
+        os.environ.pop(host_gate.TOKEN_VAR, None)
+    else:
+        os.environ[host_gate.TOKEN_VAR] = inherited
+    del config.stash[_HEAVY_LEASE]
+
 
 def clean_env(**extra: str) -> dict[str, str]:
     """Return os.environ without git, uv and venv state that could leak into a child process."""

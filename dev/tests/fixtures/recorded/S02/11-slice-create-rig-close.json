@@ -1,31 +1,4 @@
 {
   "step": "slice-create-rig-close",
-  "argv": [
-    "npx",
-    "-y",
-    "--package=@openrig/cli@0.6.13",
-    "rig",
-    "scope",
-    "--workspace",
-    "/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo",
-    "slice",
-    "create",
-    "release-0.6.0",
-    "rig-close",
-    "--json"
-  ],
-  "cwd": "/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo",
-  "exit_code": 0,
-  "stdout": "{\n  \"ok\": true,\n  \"slice\": {\n    \"mission\": \"release-0.6.0\",\n    \"name\": \"02-rig-close\",\n    \"id\": \"OPR.0.6.0.2\",\n    \"path\": \"/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo/missions/release-0.6.0/slices/02-rig-close\",\n    \"readmePath\": \"/tmp/pytest-of-tjmustard/pytest-73/test_openrig_cli_spike0/repo/missions/release-0.6.0/slices/02-rig-close/SPEC.md\",\n    \"template\": \"placeholder\"\n  }\n}\n",
-  "stderr": "",
-  "rig_version": "0.6.13 (9eeb2e42)",
-  "captured_at": "2026-10-26T05:10:06+00:00",
-  "git_status_after": [
-    " M missions/release-0.6.0/mission.yaml",
-    "?? missions/release-0.6.0/slices/.nn-02",
-    "?? missions/release-0.6.0/slices/02-rig-close/PROGRESS.md",
-    "?? missions/release-0.6.0/slices/02-rig-close/PROOF.md",
-    "?? missions/release-0.6.0/slices/02-rig-close/SPEC.md",
-    "?? missions/release-0.6.0/slices/02-rig-close/slice.yaml"
-  ]
+  "exit_code": 0
 }

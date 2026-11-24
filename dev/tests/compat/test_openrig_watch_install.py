@@ -162,6 +162,101 @@ def test_an_existing_path_must_be_the_watcher_worktree(tmp_path: Path) -> None:
     assert not any("worktree add" in c for c in host.calls())
 
 
+def _git(host: Host, *args: str) -> str:
+    """Real git in the tmp watcher repo, under the fake HOME; returns stdout stripped."""
+    env = {"HOME": str(host.home), "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
+           "GIT_CONFIG_NOSYSTEM": "1"}  # fmt: skip
+    for role in ("AUTHOR", "COMMITTER"):
+        env[f"GIT_{role}_NAME"], env[f"GIT_{role}_EMAIL"] = "t", "t@example.invalid"
+    proc = subprocess.run(["git", "-C", str(host.worktree), *args], capture_output=True,
+                          text=True, env=env, timeout=60, check=True)  # fmt: skip
+    return proc.stdout.strip()
+
+
+def _commit(host: Host, name: str) -> str:
+    (host.worktree / name).write_text(name, encoding="utf-8")
+    _git(host, "add", "--", name)
+    _git(host, "commit", "-q", "-m", name)
+    return _git(host, "rev-parse", "HEAD")
+
+
+def _watch_repo(tmp_path: Path) -> tuple[Host, str, str]:
+    """A Host whose watcher worktree is a real tmp repo on the watcher branch at commit a.
+
+    Commit b (on a side branch) is a's child: the --base a re-install should move to. The stub
+    git is removed, so the installer's git calls run for real, but only with -C <tmp worktree>.
+    """
+    host = Host(tmp_path)
+    (host.stubs / "git").unlink()
+    host.worktree.mkdir()
+    _git(host, "init", "-q", "-b", "swimlane/openrig-accepted")
+    a = _commit(host, "a")
+    _git(host, "checkout", "-q", "-b", "next")
+    b = _commit(host, "b")
+    _git(host, "checkout", "-q", "swimlane/openrig-accepted")
+    return host, a, b
+
+
+def _install_at(host: Host, base: str, *extra: str) -> subprocess.CompletedProcess:
+    return host.run("--worktree", str(host.worktree), "--base", base, *extra)
+
+
+def test_reinstall_fast_forwards_a_behind_worktree_to_base(tmp_path: Path) -> None:
+    """Behind: the existing worktree is fast-forwarded to --base (the timer's code moves)."""
+    host, _a, b = _watch_repo(tmp_path)
+    proc = _install_at(host, b)
+    assert proc.returncode == 0, proc.stderr
+    assert f"fast-forwarded {host.worktree} to {b}" in proc.stdout.splitlines()
+    assert _git(host, "rev-parse", "HEAD") == b
+    assert _git(host, "symbolic-ref", "--short", "HEAD") == "swimlane/openrig-accepted"
+    assert not any(c.startswith("git ") for c in host.calls())  # no stub git: nothing logged
+
+
+def test_reinstall_at_base_leaves_the_worktree_unchanged(tmp_path: Path) -> None:
+    """At base: nothing moves, and the install says so."""
+    host, a, _b = _watch_repo(tmp_path)
+    proc = _install_at(host, a)
+    assert proc.returncode == 0, proc.stderr
+    assert f"unchanged {host.worktree} (a worktree on swimlane/openrig-accepted at {a})" in (
+        proc.stdout.splitlines()
+    )
+    assert _git(host, "rev-parse", "HEAD") == a
+
+
+def test_reinstall_refuses_a_worktree_with_commits_not_in_base(tmp_path: Path) -> None:
+    """Diverged: refused before anything is written; HEAD, the env file and the units unchanged."""
+    host, _a, b = _watch_repo(tmp_path)
+    c = _commit(host, "c")  # a local accept commit that --base does not hold
+    proc = _install_at(host, b)
+    assert proc.returncode == 1
+    assert (f"{host.worktree} has commits not in {b}; refusing to move it "
+            f"(inspect: git -C {host.worktree} log {b}..HEAD)") in proc.stderr  # fmt: skip
+    assert _git(host, "rev-parse", "HEAD") == c
+    assert host.files() == [] and host.calls() == []
+
+
+@pytest.mark.parametrize("change", ["untracked", "modified"])
+def test_reinstall_refuses_a_dirty_worktree(change: str, tmp_path: Path) -> None:
+    """Dirty: refused before any git write or file write, even when a fast-forward is possible."""
+    host, a, b = _watch_repo(tmp_path)
+    (host.worktree / ("new" if change == "untracked" else "a")).write_text("x", encoding="utf-8")
+    proc = _install_at(host, b)
+    assert proc.returncode == 1
+    assert f"{host.worktree} has uncommitted changes; refusing to move it" in proc.stderr
+    assert _git(host, "rev-parse", "HEAD") == a
+    assert host.files() == [] and host.calls() == []
+
+
+def test_reinstall_dry_run_changes_nothing(tmp_path: Path) -> None:
+    """--dry-run: prints the fast-forward it would do and runs no git write."""
+    host, a, b = _watch_repo(tmp_path)
+    proc = _install_at(host, b, "--dry-run")
+    assert proc.returncode == 0, proc.stderr
+    assert f"dry-run: would fast-forward {host.worktree} to {b}" in proc.stdout.splitlines()
+    assert _git(host, "rev-parse", "HEAD") == a
+    assert host.files() == [] and host.calls() == []
+
+
 def test_a_failed_check_env_fails_the_install(tmp_path: Path) -> None:
     """A failed check env fails the install."""
     host = Host(tmp_path)

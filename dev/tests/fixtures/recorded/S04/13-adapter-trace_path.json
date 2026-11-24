@@ -1,0 +1,7 @@
+{
+  "step": "adapter-trace_path",
+  "cwd": "<TMP>/pytest-126/test_codegraph_contract0/repo",
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "{\"function\":\"helper\",\"direction\":\"inbound\",\"callers_total\":1,\"callers_total_relation\":\"eq\",\"callers\":{\"qn_rule\":\"qn = qn_prefix == \\\"\\\" ? name : qn_prefix + \\\".\\\" + name\",\"cols\":[\"name\",\"hop\"],\"groups\":[{\"qn_prefix\":\"<TMP-SLUG>-pytest-126-test_codegraph_contract0-repo.pkg.caller\",\"rows\":[[\"use\",1]]}]}}\n"
+}

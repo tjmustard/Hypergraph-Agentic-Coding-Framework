@@ -1,0 +1,7 @@
+{
+  "step": "adapter-detect_changes",
+  "cwd": "<TMP>/pytest-126/test_codegraph_contract0/repo",
+  "exit_code": 0,
+  "timed_out": false,
+  "stdout": "{\"base\":\"main\",\"merge_base\":\"60edebe5f95b848c8a580e67b30f0662bf78b384\",\"direction\":\"inbound\",\"changed_total\":1,\"changed_returned\":1,\"changed_has_more\":false,\"changed_files\":[\"pkg/core.py\"],\"seed_symbols\":1,\"impacted_total\":1,\"impacted_total_relation\":\"eq\",\"impacted_shown\":1,\"impacted\":[{\"qn\":\"<TMP-SLUG>-pytest-126-test_codegraph_contract0-repo.pkg.caller.use\",\"label\":\"Function\",\"file\":\"pkg/caller.py\",\"hop\":1}],\"impacted_has_more\":false,\"module_total\":1,\"module_total_relation\":\"eq\",\"module_returned\":1,\"module_has_more\":false,\"impacted_modules\":[{\"module\":\"pkg/caller.py\",\"count\":1}],\"truncated\":false}\n"
+}

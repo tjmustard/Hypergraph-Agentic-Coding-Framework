@@ -1,0 +1,5 @@
+{
+  "step": "cat-archive-default",
+  "exit_code": 0,
+  "stdout": "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"<SESSION-3>\"}\n{\"type\":\"assistant\",\"session_id\":\"<SESSION-3>\"}\n{\"type\":\"rate_limit_event\",\"session_id\":\"<SESSION-3>\"}\n{\"type\":\"system\",\"subtype\":\"permission_denied\",\"session_id\":\"<SESSION-3>\"}\n{\"type\":\"user\",\"session_id\":\"<SESSION-3>\"}\n{\"type\":\"system\",\"subtype\":\"thinking_tokens\",\"session_id\":\"<SESSION-3>\"}\n{\"type\":\"system\",\"subtype\":\"thinking_tokens\",\"session_id\":\"<SESSION-3>\"}\n{\"type\":\"assistant\",\"session_id\":\"<SESSION-3>\"}\n{\"type\":\"assistant\",\"session_id\":\"<SESSION-3>\"}\n{\"session_id\":\"<SESSION-3>\",\"total_cost_usd\":1.0,\"permission_denials\":[{\"tool_name\":\"Bash\"}],\"is_error\":false,\"num_turns\":2,\"subtype\":\"success\",\"api_error_status\":null,\"result\":\"I couldn't run `cat spec/archive/x`. The Bash call was denied by the permission settings, so I didn't retry it or read the file another way. Nothing was read or changed.\\n\\nDone.\",\"type\":\"result\"}\n"
+}

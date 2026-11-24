@@ -1,6 +1,6 @@
-# **Hypergraph Coding Agent Framework: A Practical Walkthrough**
+# **Hypergraph Agentic Coding Framework: A Practical Walkthrough**
 
-This tutorial demonstrates exactly how to use the Hypergraph Coding Agent Framework template (v0.6.0) by walking through a real-world scenario: **Adding an Email Newsletter Subscription feature** to an existing system.
+This tutorial demonstrates exactly how to use the Hypergraph Agentic Coding Framework template (v0.6.0) by walking through a real-world scenario: **Adding an Email Newsletter Subscription feature** to an existing system.
 
 ## **The Scenario**
 

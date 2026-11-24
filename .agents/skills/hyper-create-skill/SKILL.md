@@ -1,11 +1,11 @@
 ---
 name: create-skill
-description: Converts an agentic prompt or Gemini Gem into a new structured skill for the Hypergraph Coding Agent Framework. Use this skill when asked to create a new skill from a prompt, gem, or idea.
+description: Converts an agentic prompt or Gemini Gem into a new structured skill for the Hypergraph Agentic Coding Framework. Use this skill when asked to create a new skill from a prompt, gem, or idea.
 ---
 
 # Create Skill
 
-Follow these steps to predictably convert a Gemini Gem or generic agentic prompt into a properly formatted structural skill for the Hypergraph Coding Agent Framework.
+Follow these steps to predictably convert a Gemini Gem or generic agentic prompt into a properly formatted structural skill for the Hypergraph Agentic Coding Framework.
 
 ## When to use this skill
 - When the user provides an agentic prompt, a "Gemini Gem", or a raw textual description and asks you to create a "skill" out of it.
