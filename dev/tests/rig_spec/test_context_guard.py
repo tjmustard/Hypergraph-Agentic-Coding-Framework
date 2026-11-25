@@ -91,6 +91,8 @@ if argv[:2] == ["queue", "list"]:
     dest = argv[argv.index("--destination") + 1]
     own = os.path.exists(os.path.join(d, "queue-%s.json" % dest))
     serve("queue-" + dest if own else "queue", "[]")
+if argv[:2] == ["queue", "create"]:
+    serve("queue-create", "{}")
 if argv[:2] == ["seat", "launch"]:
     if "--plan" in argv:
         serve("plan", '{"launchable": true}')
@@ -1182,3 +1184,116 @@ def test_guard_runs_per_rig_beside_hacf(world: World) -> None:
     assert {arg(r, "--target-session") for r in regs} == {demo_seat, demo_lead}
     assert all(arg(r, "--registered-by") == demo_lead for r in regs)
     assert {p.name: p.read_bytes() for p in hacf_state.iterdir()} == before
+
+
+# --- seat config: caps through seat-config.py (v0.6.6, OPR.99.0.11.6) ------------------------
+
+SEAT_CONFIG = REPO_ROOT / "openrig" / "hacf" / "seat-config.yml"
+INVALID_OVERRIDES = "seats:\n  execute:\n    modle: claude-opus-5-5\n"
+
+
+def with_seat_config(w: World, overrides: str | None = None) -> None:
+    """Put the shipped seat-config.yml (and an overrides.yml) beside the world's caps file."""
+    (w.caps.parent / "seat-config.yml").write_text(SEAT_CONFIG.read_text())
+    if overrides is not None:
+        (w.caps.parent / "overrides.yml").write_text(overrides)
+
+
+def alert_creates(w: World) -> list[list[str]]:
+    """The `rig queue create` calls the fake received."""
+    return [c for c in w.calls if c[:2] == ["queue", "create"]]
+
+
+def markers(w: World) -> list[Path]:
+    """The alert markers under the world's HOME."""
+    where = w.home / ".hacf" / RIG / "guard-alerts"
+    return sorted(where.iterdir()) if where.exists() else []
+
+
+def test_f_a_cap_override_is_the_cap_the_guard_acts_on(world: World) -> None:
+    """(f) With seat-config.yml, an overrides.yml cap decides: 200000 is over 150000, not 300000."""
+    with_seat_config(world, "seats:\n  execute:\n    cap_tokens: 300000\n")
+    result = world.run(apply=True)
+    assert result.returncode == 0, result.stderr
+    assert world.launches() == [] and world.sends() == []
+    line = world.line_for(SEAT)
+    assert "max=300000" in line and "action=skip" in line
+    assert any(
+        "note=caps_source=resolved non-default: execute.cap_tokens=override" in ln
+        for ln in world.log_lines
+    ), world.log_lines
+    # the same seat without the override restarts at the default cap
+    (world.tmp / "plain").mkdir()
+    plain = World(world.tmp / "plain")
+    with_seat_config(plain)
+    assert plain.run(apply=True).returncode == 0
+    assert len(plain.launches()) == 1
+    assert any(ln.endswith("note=caps_source=resolved") for ln in plain.log_lines), plain.log_lines
+
+
+def test_h_without_seat_config_the_caps_file_is_read_as_before(world: World) -> None:
+    """(h) No seat-config.yml: no caps_source note (lead ruling P39), as before."""
+    result = world.run(apply=True)
+    assert result.returncode == 0, result.stderr
+    assert not any("caps_source" in ln for ln in world.log_lines)
+    assert len(world.launches()) == 1
+
+
+def test_g_an_invalid_overrides_runs_on_defaults_and_alerts_once(world: World) -> None:
+    """R70 (TJ P8 = A): defaults, a refusal line, two rows and one marker; a second run is quiet."""
+    with_seat_config(world, INVALID_OVERRIDES)
+    first = world.run(apply=True)
+    assert first.returncode == 0, first.stderr
+    assert len(world.launches()) == 1  # it ran on HACF's defaults (150000) and acted on them
+    assert any(
+        "note=caps_source=defaults (seat config refused: overrides.yml: seats.execute.modle" in ln
+        for ln in world.log_lines
+    ), world.log_lines
+    creates = alert_creates(world)
+    assert [c[c.index("--destination") + 1] for c in creates] == [
+        f"orch-lead@{RIG}",
+        "operator-agent@kernel",
+    ]
+    for call in creates:
+        summary = call[call.index("--summary") + 1]
+        assert summary == (
+            "context-guard: overrides.yml invalid (overrides.yml: seats.execute.modle);"
+            " running on HACF defaults"
+        )
+    assert len(markers(world)) == 1
+    world.put("ps.json", json.dumps([lead(), seat()]))
+    second = world.run(apply=True)
+    assert second.returncode == 0
+    assert len(alert_creates(world)) == 2 and len(markers(world)) == 1
+
+
+def test_g_a_failed_alert_makes_no_marker_and_retries(world: World) -> None:
+    """A failing `rig queue create` is no alert: no marker, and the next tick tries again."""
+    with_seat_config(world, INVALID_OVERRIDES)
+    world.put("queue-create.exit", "1")
+    assert world.run(apply=True).returncode == 0
+    assert len(alert_creates(world)) == 2 and markers(world) == []
+    (world.fake / "queue-create.exit").unlink()
+    assert world.run(apply=True).returncode == 0
+    assert len(alert_creates(world)) == 4 and len(markers(world)) == 1
+
+
+def test_g_dry_run_alerts_nobody(world: World) -> None:
+    """Without --apply the guard prints the would-alert line and writes nothing."""
+    with_seat_config(world, INVALID_OVERRIDES)
+    result = world.run()
+    assert result.returncode == 0, result.stderr
+    assert alert_creates(world) == [] and markers(world) == []
+    assert any(
+        "note=would alert: context-guard: overrides.yml invalid" in ln for ln in world.log_lines
+    )
+
+
+def test_g_a_different_refusal_alerts_again(world: World) -> None:
+    """The marker is the sha256 of the full refusal text: a new error is a new alert."""
+    with_seat_config(world, INVALID_OVERRIDES)
+    world.run(apply=True)
+    (world.caps.parent / "overrides.yml").write_text("seats:\n  execute:\n    effort: loud\n")
+    world.put("ps.json", json.dumps([lead(), seat()]))
+    world.run(apply=True)
+    assert len(alert_creates(world)) == 4 and len(markers(world)) == 2

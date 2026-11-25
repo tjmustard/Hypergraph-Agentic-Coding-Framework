@@ -580,3 +580,54 @@ def test_temp_indexes_are_removed(world: World, tmp_path: Path) -> None:
     env = {**os.environ, "TMPDIR": str(tmpdir)}
     created(build(world, "0.1.0", world.profile(), env=env))
     assert list(tmpdir.iterdir()) == []
+
+
+def test_overrides_yml_is_never_exported(world: World) -> None:
+    """R88 (OPR.99.0.11.6): a source tree holding openrig/hacf/overrides.yml refuses the build."""
+    # a commit on top of the 0.1.0 source holding the file, made with plumbing so the world's
+    # working-tree edits stay untouched
+    index = world.tmp / "overrides-index"
+    env = clean_env(GIT_INDEX_FILE=str(index))
+    g(world.src, "read-tree", world.sources["0.1.0"], env=env)
+    blob = subprocess.run(
+        ["git", "-C", str(world.src), "hash-object", "-w", "--stdin"],
+        input="seats:\n  scribe:\n    model: x\n",
+        capture_output=True,
+        text=True,
+        env=clean_env(),
+        check=True,
+    ).stdout.strip()
+    g(
+        world.src,
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        f"100644,{blob},openrig/hacf/overrides.yml",
+        env=env,
+    )
+    tree = g(world.src, "write-tree", env=env)
+    ident = clean_env(
+        GIT_AUTHOR_NAME="Dev",
+        GIT_AUTHOR_EMAIL="dev@example.org",
+        GIT_COMMITTER_NAME="Dev",
+        GIT_COMMITTER_EMAIL="dev@example.org",
+        GIT_AUTHOR_DATE=DATES["0.1.0"][0],
+        GIT_COMMITTER_DATE=DATES["0.1.0"][1],
+    )
+    with_overrides = g(
+        world.src,
+        "commit-tree",
+        tree,
+        "-p",
+        world.sources["0.1.0"],
+        "-m",
+        "tracked overrides",
+        env=ident,
+    )
+    releases = yaml.safe_load(world.profile().read_text())["releases"]
+    releases[0]["source"] = with_overrides
+    proc = build(world, "0.1.0", world.profile(releases=releases))
+    refused(proc, "openrig/hacf/overrides.yml")
+    assert g(world.src, "tag", "-l", "v0.1.0") == ""
+    # the same tree without it still builds
+    created(build(world, "0.1.0", world.profile()))

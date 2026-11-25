@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -295,10 +297,16 @@ def test_failed_copy_leaves_no_dest(
     if failure == "unwritable-parent":
         parent.chmod(stat.S_IRUSR | stat.S_IXUSR)
     else:
-        prefix = tmp_path / "failing-mv"
+        # lead ruling P37: the final move is a python3 os.rename now (K10), not `mv`; a python3
+        # stand-in fails only that call and runs the real python3 for everything else
+        prefix = tmp_path / "failing-rename"
         prefix.mkdir()
-        (prefix / "mv").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-        (prefix / "mv").chmod(0o755)
+        real = shutil.which("python3") or sys.executable
+        (prefix / "python3").write_text(
+            f'#!/bin/sh\ncase "$2" in *os.rename*) exit 1 ;; esac\nexec {real} "$@"\n',
+            encoding="utf-8",
+        )
+        (prefix / "python3").chmod(0o755)
     try:
         run = run_unwrapped(
             scratch,
@@ -312,6 +320,9 @@ def test_failed_copy_leaves_no_dest(
     finally:
         parent.chmod(0o755)
     assert run.returncode == 1, run.output
-    assert "could not" in run.output and "rig spec" in run.output
+    if failure == "rename-fails":
+        assert f"--rig: {dest} appeared during install; nothing written there" in run.output
+    else:
+        assert "could not" in run.output and "rig spec" in run.output
     assert not dest.exists() and not dest.is_symlink()
     assert [p.name for p in parent.iterdir()] == []

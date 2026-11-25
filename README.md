@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-    <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/releases/latest"><img src="https://img.shields.io/badge/release-v0.6.5-blue" alt="Latest Release"/></a>
+    <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/releases/latest"><img src="https://img.shields.io/badge/release-v0.6.6-blue" alt="Latest Release"/></a>
     <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/stargazers"><img src="https://img.shields.io/github/stars/tjmustard/Hypergraph-Agentic-Coding-Framework?style=social" alt="GitHub stars"/></a>
     <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/blob/main/LICENSE"><img src="https://img.shields.io/github/license/tjmustard/Hypergraph-Agentic-Coding-Framework" alt="License"/></a>
 </p>
@@ -222,7 +222,7 @@ bash HACF-uninstall.sh             # interactive
 bash HACF-uninstall.sh -y          # no questions; consents to nothing else
 ```
 
-The v0.6.0 uninstaller deletes only files listed in `.agents/hacf-manifest.json` whose content is unchanged (without a manifest, only files whose hash is a known HACF release file), and removes the HACF blocks, rules, hooks and MCP entries, the lore merge-driver git config (and `info/attributes` when nothing else is left in it) and HACF's `__pycache__` bytecode. It never touches `SPEC.md`, `project.yaml`, `workspace.yaml`, `lore/`, `missions/`, `spec/`, `tests/` or your own root files. `--delete-code-graph` consents to deleting the project's codebase-memory-mcp index.
+The v0.6.0 uninstaller deletes only files listed in `.agents/hacf-manifest.json` whose content is unchanged (without a manifest, only files whose hash is a known HACF release file), plus the v0.5.x leftovers described below, and removes the HACF blocks, rules, hooks and MCP entries, the lore merge-driver git config (and `info/attributes` when nothing else is left in it) and HACF's `__pycache__` bytecode. It never touches `SPEC.md`, `project.yaml`, `workspace.yaml`, `lore/`, `missions/`, `spec/`, `tests/` or your own root files. `--delete-code-graph` consents to deleting the project's codebase-memory-mcp index. After a v0.5.x upgrade it also removes the legacy `.claude/commands/hyper-tutorial.md` and `.windsurf/workflows/hyper-tutorial.md` pointers only when their content matches HACF's known copy, and a `<STEM>.hacf-v0.6.0.md` sidecar only when it equals the HACF block still in its instruction file (a finished merge). Anything else at those paths is kept and reported, because it may hold an unfinished merge. In manifest mode it then removes `.agents/state/install/source.json`, the per-machine install record, after the saved installer copy and only when no step failed; if a step failed, the record is kept and a re-run finds the checkout through it.
 
 ## 📚 Core Architecture
 
@@ -476,15 +476,18 @@ The engine caps spending per phase (`autonomy.max_budget_usd_per_phase`) and per
 - **HACF's own development records** (its lore, missions and specs) are kept private; this repository holds the product.
 - **Some tests are left out of the public v0.6.0-v0.6.2 trees**: test files that read HACF's private history, and 3 sets of recorded live-session captures that carry account metadata, with the tests that read them. Left out: v0.6.0, 9 test files with 100 test functions; v0.6.1, 13 files with 126; v0.6.2, 13 files with 127. From v0.6.3, 110 of those 127 are back in the public suite and the recorded captures ship as keep-list-cleaned copies; the 17 that read HACF's private records stay in `dev/tests/private_records/`, the one test directory still left out.
 - **The repository moved** to <https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework>. An existing install keeps its pinned old URL and works through GitHub's redirect; to move it, run `/hyper-update --upstream-url https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git`.
-- **The optional code graph:** HACF's own code-graph runs get a per-project daemon (v0.6.5), but the server Claude Code launches from `.mcp.json` still shares one codebase-memory-mcp daemon per user; an `env` block for that entry is planned for v0.6.6. codebase-memory-mcp caps a project name (derived from the checkout path) at 128 characters: use a shorter checkout path.
+- **The optional code graph:** HACF's own code-graph runs get a per-project daemon (v0.6.5), but the server Claude Code launches from `.mcp.json` still shares one codebase-memory-mcp daemon per user (a host-neutral `env` block for that entry is deferred, unplanned). codebase-memory-mcp caps a project name (derived from the checkout path) at 128 characters: use a shorter checkout path.
 - **A record correction:** the v0.6.0 export commit message says the S04, S08 and S11 recorded fixtures ship unedited; they were left out of v0.6.0-v0.6.2 and ship cleaned from v0.6.3 (see [CHANGELOG.md](CHANGELOG.md)).
 - **Releases are unsigned** in v0.6.x (see [Updating with `/hyper-update`](#updating-with-hyper-update)).
 - **The code graph's index goes stale** after every commit until it is re-indexed (see [The Optional Code Graph](#the-optional-code-graph)); `/hyper-execute` refreshes it with `index --if-stale` before its blast-radius step when a backend is selected.
-- **Scheduled for v0.6.6:** the six v0.6.0 known issues; K9, K10, K11 and D2; `symbol_impact --include-tests`; and the `.mcp.json` `env` block for the code-graph daemon. Shared uv caches are not yet scheduled. See the 0.6.5 Known issues in [CHANGELOG.md](CHANGELOG.md).
+- **Fixed in v0.6.6:** KI-3, K10, D2, KI-6 and K9 (see "Corrections to earlier Known issues" in [CHANGELOG.md](CHANGELOG.md)).
+- **Deferred, unplanned** (no version is promised): KI-1, KI-2, KI-4, KI-5, K11, `symbol_impact --include-tests`, the `.mcp.json` `env` block for the code-graph daemon, and the shared uv caches.
+- **Known limits** (shipped as they are, in [CHANGELOG.md](CHANGELOG.md)): KI-6, a user's save of `.claude/settings.json` in the milliseconds between HACF's write and its hash can skip the backup of that one save during one install (the original file is always backed up first); K9, a legacy `*.hacf-v0.6.0.md` sidecar edited between the uninstall's confirmation and its removal, inside one run, loses that edit.
 - **The OpenRig team's context guard and checkpoint watchdogs** are armed on the rig named `hacf` only. The host line is documented per rig; arming another team is the operator's step at that team's upgrade.
-- **The bare denies of the `claude-in-chrome` and `easel` MCP servers** ship in the role table, but their effect on live seats is unmeasured; no token saving is claimed.
+- **The bare denies of the `claude-in-chrome` and `easel` MCP servers** ship in the role table. Measured on 7 live seats: those tools are gone, `codebase-memory-mcp` stays, and 9 of 9 rules hold; no token saving is claimed.
 - **A rig `env:` key** reaches a running OpenRig team only at a whole-rig `rig down`/`rig up` (`openrig/hacf/OPS.md`).
-- **Live seats' first-turn context** (about 48.7k-50.4k tokens) is above the headless probe's 36.9k-41.9k; not re-measured in v0.6.5.
+- **Per-seat models** (v0.6.6): build-execute (`claude-sonnet-5-5`, medium) and desk-scribe (`claude-haiku-5-5`) ship as tiered defaults because they held in the H5 experiment; every other seat, including orch-lead, stays on `claude-opus-5-5`. The result is directional, in API list-price dollars, not the bill (`dev/telemetry/h5-v066.md`). The shipped model ids age while HACF is parked: override a retired id in `overrides.yml`. A fresh `rig up` runs each seat on the harness default until the commands seat-config-upgrade prints are run, and restoring to v0.6.5 leaves `overrides.yml`, which v0.6.5 does not read.
+- **Live seats' first-turn context** (about 48.7k-50.4k tokens) is above the headless probe's 36.9k-41.9k; not re-measured in v0.6.6.
 
 ## 🗺️ Roadmap
 
@@ -505,7 +508,8 @@ The engine caps spending per phase (`autonomy.max_budget_usd_per_phase`) and per
 - [x] v0.6.3: the left-out tests and normalised recorded fixtures return to the public repository
 - [x] v0.6.4: the OpenRig team's per-role context caps, guard and checkpoints, startup trim, context telemetry, the two-line commit footer, the team view layout, and the confidence and lore-capture lint gates
 - [x] v0.6.5: the upgrade path for an existing team (seat-config plan/apply/restore, the saved installer copy and the kept pin, the `.mcp.json` entry following the recorded install method), a per-project code-graph runtime for HACF's own runs with `index --if-stale`, the working-tree privacy scan, and the upgrade copy test
-- [ ] v0.6.6: the six v0.6.0 known issues, K9, K10, K11 and D2, `symbol_impact --include-tests`, and the `.mcp.json` `env` block for the code-graph daemon
+- [x] v0.6.6: the per-seat config format (`seat-config.yml` defaults, your own `overrides.yml`), seat-config-upgrade printing each seat's model commands with an Opus revert, tiered models for the seats that held, the H5 cost and token telemetry, and the KI-3, K10, D2, KI-6 and K9 fixes
+- [ ] HACF is paused while later versions are planned; deferred items (KI-1, KI-2, KI-4, KI-5, K11, `symbol_impact --include-tests`, the `.mcp.json` `env` block, shared uv caches) are deferred, unplanned
 - [ ] v0.7.0: legacy flat MiniPRDs are no longer read (no earlier than 2027-01-31)
 
 ## 🤝 Support

@@ -6,9 +6,9 @@ R26). The repository is the git work tree of the working directory. This is not 
 boundary: see the limits the report prints.
 
 CLI:
-    render [--ides a,b ...] [--dry-run]   default ids: claude
+    render [--ides a,b ...] [--dry-run] [--written-sha SHA ...]   default ids: claude
     check
-    merge-settings <fragment.json>
+    merge-settings <fragment.json> [--written-sha SHA ...]
 
 Exit codes: 0 ok, 1 drift or findings, 2 usage, 5 refused with nothing written.
 
@@ -36,8 +36,10 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import itertools
 import json
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -296,6 +298,10 @@ def _plan_settings(top: Path, fragment: dict) -> tuple[Path, str | None, str, di
     return path, old, new, owned
 
 
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _backup(top: Path, path: Path) -> None:
     """Copy path under .agents/.backup/<timestamp>/ without overwriting an earlier backup."""
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -308,8 +314,17 @@ def _backup(top: Path, path: Path) -> None:
     shutil.copy2(path, target)
 
 
-def _apply(top: Path, plan: list[tuple[Path, str | None, str]], dry_run: bool) -> None:
-    """Write every changed target atomically, after a backup of each existing one."""
+def _apply(
+    top: Path,
+    plan: list[tuple[Path, str | None, str]],
+    dry_run: bool,
+    written_shas: tuple[str, ...] = (),
+) -> None:
+    """Write every changed target atomically, after a backup of each existing one.
+
+    KI-6: the only backup skipped is one of .claude/settings.json whose current bytes hash to
+    exactly a --written-sha value, i.e. bytes the installer's own earlier write put there.
+    """
     for path, old, new in plan:
         rel = path.relative_to(top)
         if new == old:
@@ -319,7 +334,10 @@ def _apply(top: Path, plan: list[tuple[Path, str | None, str]], dry_run: bool) -
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             if old is not None:
-                _backup(top, path)
+                if rel.as_posix() == SETTINGS_REL and _sha256(path) in written_shas:
+                    print(f"no backup: {rel} (this run wrote these bytes)")
+                else:
+                    _backup(top, path)
             try:
                 hyper_openrig.cas_write(path, old, new)
             except hyper_openrig.Refused as exc:
@@ -342,7 +360,9 @@ def _print_owned(owned: dict) -> None:
     print(f"owned: {json.dumps(owned, sort_keys=True)}")
 
 
-def cmd_render(top: Path, ides: list[str], dry_run: bool) -> int:
+def cmd_render(
+    top: Path, ides: list[str], dry_run: bool, written_shas: tuple[str, ...] = ()
+) -> int:
     """Render the selected targets; refuse with nothing written if any one cannot be written."""
     text = _agentignore(top)
     _, rows, warnings = parse_agentignore(text)
@@ -360,7 +380,7 @@ def cmd_render(top: Path, ides: list[str], dry_run: bool) -> int:
             except hyper_lore.Conflict as exc:
                 raise Refused(f"{path.name}: {exc}") from exc
             plan.append((path, old, new))
-    _apply(top, plan, dry_run)
+    _apply(top, plan, dry_run, written_shas)
     for warning in warnings:
         print(f"warning: {warning}")
     if "claude" in ides:
@@ -378,7 +398,7 @@ def cmd_render(top: Path, ides: list[str], dry_run: bool) -> int:
     return EXIT_OK
 
 
-def cmd_merge_settings(top: Path, fragment_path: str) -> int:
+def cmd_merge_settings(top: Path, fragment_path: str, written_shas: tuple[str, ...] = ()) -> int:
     """Merge a fragment file into .claude/settings.json."""
     text = _read(Path(fragment_path))
     if text is None:
@@ -391,7 +411,7 @@ def cmd_merge_settings(top: Path, fragment_path: str) -> int:
         if not isinstance(entries, list) or not all(_commands(entry) for entry in entries):
             raise Refused(f"{fragment_path}: a hook entry has no command")
     path, old, new, owned = _plan_settings(top, fragment)
-    _apply(top, [(path, old, new)], dry_run=False)
+    _apply(top, [(path, old, new)], dry_run=False, written_shas=written_shas)
     _print_owned(owned)
     return EXIT_OK
 
@@ -459,6 +479,25 @@ def _parse_ides(values: list[str]) -> list[str]:
     return list(dict.fromkeys(ides))
 
 
+def _sha_arg(value: str) -> str:
+    """Accept only a lowercase sha256 hex digest (nothing is written on a malformed value)."""
+    if not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise argparse.ArgumentTypeError(f"{value!r} is not a lowercase sha256 hex digest")
+    return value
+
+
+WRITTEN_SHA = {
+    "action": "append",
+    "type": _sha_arg,
+    "default": [],
+    "metavar": "SHA256",
+    "help": (
+        "sha256 of .claude/settings.json bytes this installer run wrote; repeatable. "
+        "A backup of that file is skipped only when its bytes hash to one of these."
+    ),
+}
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Return the command-line parser."""
     parser = argparse.ArgumentParser(prog="hyper_firewall.py", description=__doc__.split("\n")[0])
@@ -468,9 +507,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--ides", nargs="+", default=["claude"], metavar="ID", help="comma or space"
     )
     render.add_argument("--dry-run", action="store_true", help="report, write nothing")
+    render.add_argument("--written-sha", **WRITTEN_SHA)
     commands.add_parser("check", help="exit 1 on drift; warn about broad allows")
     merge_settings = commands.add_parser("merge-settings", help="merge a settings fragment")
     merge_settings.add_argument("fragment", help="JSON file holding the settings fragment")
+    merge_settings.add_argument("--written-sha", **WRITTEN_SHA)
     return parser
 
 
@@ -485,9 +526,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         top = hyper_openrig.repo_toplevel()
         if ns.command == "render":
-            return cmd_render(top, _parse_ides(ns.ides), ns.dry_run)
+            return cmd_render(top, _parse_ides(ns.ides), ns.dry_run, tuple(ns.written_sha))
         if ns.command == "merge-settings":
-            return cmd_merge_settings(top, ns.fragment)
+            return cmd_merge_settings(top, ns.fragment, tuple(ns.written_sha))
         return cmd_check(top)
     except (ValueError, hyper_openrig.UsageError) as exc:
         print(f"hyper_firewall.py: {exc}", file=sys.stderr)

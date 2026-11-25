@@ -33,6 +33,7 @@ SENTINEL = "SENTINEL-TEXT-7f3a"
 SINCE = "2026-11-01T00:00:00Z"
 UNTIL = "2026-11-02T00:00:00Z"
 ADVISOR = "advisor-lead@kernel"
+H5_SEAT_KEYS = {"models", "mixed", "usage_by_model"}
 KEY_ORDER = ["schema", "rig", "window", "generated_at", "sources", "seats", "slices", "unknowns"]
 
 USAGE_DDL = """
@@ -339,6 +340,15 @@ def test_happy_path_numbers(world: World, capsys: pytest.CaptureFixture) -> None
     assert [s["seat"] for s in card["seats"]] == ["a@hacf", "b@hacf"]
 
     a = seat_slices(card, "a@hacf")
+    # OPR.99.0.11.1 MR 2: the H5 keys are additive; every earlier key is still compared exactly
+    h5 = {k: a["OPR.9.1.1"].pop(k) for k in H5_SEAT_KEYS}
+    assert h5 == {
+        "models": ["m-1"],
+        "mixed": False,
+        "usage_by_model": {
+            "m-1": {"fresh_in": 100, "cache_write": 40, "cache_read": 1000, "output": 10}
+        },
+    }
     assert a["OPR.9.1.1"] == {
         "slice_id": "OPR.9.1.1",
         "fresh_in": 100,
@@ -867,6 +877,13 @@ def test_context_backward_compatible(world: World) -> None:
     for entry in old["slices"]:
         assert set(entry) >= {"escape_parts", "escape_sources"}
         del entry["escape_parts"], entry["escape_sources"]
+    # OPR.99.0.11.1 MR 2 adds models, mixed and usage_by_model to each per-seat slice entry:
+    # additive too, left out here so every earlier value is still compared byte for byte
+    for seat_entry in old["seats"]:
+        for entry in seat_entry["slices"]:
+            assert set(entry) >= H5_SEAT_KEYS
+            for key in H5_SEAT_KEYS:
+                del entry[key]
     assert json.dumps(old, indent=2) + "\n" == golden
 
 
@@ -1196,3 +1213,217 @@ def test_slice_escapes_equals_scorecard(
     assert isinstance(direct, int)
     parts, _sources = cm.slice_escape_parts(repo, sid, sha, [])
     assert parts["blocked"] == row["escape_parts"]["blocked"] == blocked
+
+
+# --------------------------------------------------------------------------- H5 instrument
+# Slice OPR.99.0.11.1: dollars and tokens per slice and per seat, by effective model.
+
+SHIPPED_PRICES = TOOL_DIR / "prices.yml"
+# $1 per fresh token, $2 per cache write, $0.50 per cache read, $10 per output token (rates are per
+# million tokens), so a fixture's dollars are small whole numbers a person can add up by hand
+FIXTURE_PRICES = """\
+schema: hacf.prices/v1
+currency: USD
+unit: per_million_tokens
+source: https://example.invalid/pricing
+retrieved: "2026-11-25"
+models:
+  m-1: {fresh_in: 1000000, cache_write: 2000000, cache_read: 500000, output: 10000000}
+  m-2: {fresh_in: 3000000, cache_write: 6000000, cache_read: 1500000, output: 30000000}
+"""
+
+
+def write_prices(world: World, text: str = FIXTURE_PRICES) -> Path:
+    """Write a price table under the world and return its path."""
+    path = world.tmp / "prices.yml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_h5_mixed_bucket_and_usage_by_model(world: World) -> None:
+    """(a) A bucket served by two models is `mixed`; usage_by_model splits the counts."""
+    build_db(world)
+    _code, card = run_window(world)
+    b = seat_slices(card, "b@hacf")["OPR.9.1.2"]
+    assert b["models"] == ["m-1", "m-2"]
+    assert b["mixed"] is True
+    assert b["usage_by_model"] == {
+        "m-1": {"fresh_in": 10, "cache_write": 0, "cache_read": 0, "output": 2},
+        "m-2": {"fresh_in": 20, "cache_write": 0, "cache_read": 0, "output": 4},
+    }
+    a = seat_slices(card, "a@hacf")["OPR.9.1.1"]
+    assert a["mixed"] is False and a["models"] == ["m-1"]
+
+
+def test_h5_dollars_match_a_hand_computed_value(world: World) -> None:
+    """(b) usd per seat entry, per slice and per_slice summary equal the hand sum to the cent."""
+    build_db(world)
+    prices = write_prices(world)
+    code = cm.main(world.args("--b1", "--window", f"w={SINCE}..{UNTIL}", "--prices", str(prices)))
+    assert code == 0
+    card = json.loads(next(p for p in world.outputs() if p.name.startswith("w-")).read_text())
+    # a, slice 1: 100 fresh + 40 write x2 + 1000 read x0.5 + 10 out x10 = 100+80+500+100
+    assert seat_slices(card, "a@hacf")["OPR.9.1.1"]["usd"] == 780.0
+    # b, slice 2: m-1 10 fresh + 2 out x10 = 30; m-2 20 fresh x3 + 4 out x30 = 180
+    assert seat_slices(card, "b@hacf")["OPR.9.1.2"]["usd"] == 210.0
+    b1 = json.loads((world.out / "B1.json").read_text(encoding="utf-8"))
+    rows = {s["slice_id"]: s for s in b1["slices"]}
+    # the resolve compile's one record (1 fresh + 1 out = 11) is split evenly over both slices
+    assert rows["OPR.9.1.1"]["usd"] == 785.5
+    assert rows["OPR.9.1.2"]["usd"] == 215.5
+    assert rows["OPR.9.1.2"]["mixed"] is True and rows["OPR.9.1.1"]["mixed"] is False
+    assert b1["usd_per_slice"]["n"] == 2
+    assert b1["usd_per_slice"]["median"] == 500.5 and b1["usd_per_slice"]["mean"] == 500.5
+
+
+def test_h5_haiku_long_prompt_rate_above_threshold_only() -> None:
+    """(c) The long-prompt rates apply per record when its prompt is above the threshold."""
+    table = cm.load_prices(SHIPPED_PRICES)
+    haiku = table["claude-haiku-5-5"]
+
+    def record(fresh: int, out: int = 1000) -> dict:
+        return {
+            "input_tokens": fresh,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "output_tokens": out,
+        }
+
+    assert cm.record_usd(record(100_000), haiku) == pytest.approx(
+        100_000 * 0.10 / 1e6 + 1000 * 0.50 / 1e6
+    )
+    assert cm.record_usd(record(100_001), haiku) == pytest.approx(
+        100_001 * 0.50 / 1e6 + 1000 * 2.50 / 1e6
+    )
+    # the prompt counts cache reads and writes too
+    split = {**record(0), "cache_read_input_tokens": 60_000, "cache_creation_input_tokens": 50_000}
+    assert cm.record_usd(split, haiku) == pytest.approx(
+        50_000 * 0.625 / 1e6 + 60_000 * 0.05 / 1e6 + 1000 * 2.50 / 1e6
+    )
+    # a model without long_prompt never switches
+    opus = table["claude-opus-5-5"]
+    assert cm.record_usd(record(500_000), opus) == pytest.approx(
+        500_000 * 4 / 1e6 + 1000 * 20 / 1e6
+    )
+
+
+def test_h5_unknown_model_is_null_with_a_reason(world: World) -> None:
+    """(d) A model the table lacks gives usd null and an unknowns reason, never zero."""
+    build_db(world)
+    only_m1 = FIXTURE_PRICES.split("  m-2:")[0]
+    prices = write_prices(world, only_m1)
+    code = cm.main(world.args("--b1", "--window", f"w={SINCE}..{UNTIL}", "--prices", str(prices)))
+    assert code == 0
+    card = json.loads(next(p for p in world.outputs() if p.name.startswith("w-")).read_text())
+    assert seat_slices(card, "a@hacf")["OPR.9.1.1"]["usd"] == 780.0
+    assert seat_slices(card, "b@hacf")["OPR.9.1.2"]["usd"] is None
+    assert any("usd unknown" in r and "m-2" in r for r in card["unknowns"])
+    b1 = json.loads((world.out / "B1.json").read_text(encoding="utf-8"))
+    rows = {s["slice_id"]: s for s in b1["slices"]}
+    assert rows["OPR.9.1.2"]["usd"] is None
+    assert b1["usd_per_slice"]["unknown"] == 1
+
+
+def test_h5_no_prices_means_no_usd(world: World) -> None:
+    """(e) Without --prices no `usd` key appears anywhere; earlier keys keep their values."""
+    build_db(world)
+    code = cm.main(world.args("--b1", "--window", f"w={SINCE}..{UNTIL}"))
+    assert code == 0
+    for path in world.outputs():
+        assert '"usd' not in path.read_text(encoding="utf-8"), path.name
+    b1 = json.loads((world.out / "B1.json").read_text(encoding="utf-8"))
+    row = {s["slice_id"]: s for s in b1["slices"]}["OPR.9.1.1"]
+    # 1150 of its own + half of the resolve compile's 2 tokens (as in test_b0_two_windows)
+    assert row["total"] == 1151 and row["cost_weighted"] == 303 and row["escapes"] == 3
+    assert row["mixed"] is False
+
+
+@pytest.mark.parametrize(
+    ("edit", "key"),
+    [
+        (("schema: hacf.prices/v1", "schema: other/v1"), "schema"),
+        (("currency: USD", "currency: EUR"), "currency"),
+        (("unit: per_million_tokens", "unit: per_token"), "unit"),
+        (('retrieved: "2026-11-25"\n', ""), "retrieved"),
+        (("cache_read: 500000, ", ""), "models.m-1.cache_read"),
+        (("output: 10000000}", "output: -1}"), "models.m-1.output"),
+        (("fresh_in: 1000000", "fresh_in: {usd: 1}"), "models.m-1.fresh_in"),
+        (("  m-1: {fresh_in", "  m-1: 7\n  m-x: {fresh_in"), "models.m-1"),
+    ],
+)
+def test_h5_malformed_prices_exit_2(world: World, capsys, edit, key: str) -> None:
+    """(f) A malformed table exits 2 with one line naming the key, and writes nothing."""
+    build_db(world)
+    text = FIXTURE_PRICES.replace(*edit)
+    assert text != FIXTURE_PRICES
+    path = write_prices(world, text)
+    code = cm.main(world.args("--since", SINCE, "--until", UNTIL, "--prices", str(path)))
+    err = capsys.readouterr().err
+    assert code == 2
+    assert len(err.strip().splitlines()) == 1 and key in err, err
+    assert world.outputs() == []
+
+
+def test_h5_missing_prices_file_exits_2(world: World, capsys) -> None:
+    """(f) An unreadable --prices file is a usage error too."""
+    code = cm.main(
+        world.args("--since", SINCE, "--until", UNTIL, "--prices", str(world.tmp / "none.yml"))
+    )
+    assert code == 2 and "--prices" in capsys.readouterr().err
+
+
+def test_h5_shipped_prices_parse() -> None:
+    """(g) The shipped table parses, has the three models, a source and a retrieval date."""
+    import yaml
+
+    raw = yaml.safe_load(SHIPPED_PRICES.read_text(encoding="utf-8"))
+    assert raw["source"].startswith("https://") and raw["retrieved"]
+    table = cm.load_prices(SHIPPED_PRICES)
+    assert {"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"} <= set(table)
+    for model in table.values():
+        assert set(model["rates"]) == set(cm.RATE_KEYS)
+    assert table["claude-haiku-5-5"]["long_prompt"]["threshold_tokens"] == 100_000
+    assert table["claude-opus-5-5"]["long_prompt"] is None
+
+
+def test_h5_slice_size_from_numstat(tmp_path: Path) -> None:
+    """MR 4: size is {files, lines} over the slice's commits; unreadable commits give a reason."""
+    repo = tmp_path / "r"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], env=git_env(SINCE), check=True)
+    (repo / "a.txt").write_text("1\n2\n3\n", encoding="utf-8")
+    (repo / "b.txt").write_text("x\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "a.txt", "b.txt"], env=git_env(SINCE), check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "one"], env=git_env(SINCE), check=True
+    )
+    first = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    (repo / "a.txt").write_text("1\n2\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "a.txt"], env=git_env(SINCE), check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "two"], env=git_env(SINCE), check=True
+    )
+    second = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    # commit one adds 3 + 1 lines in 2 files; commit two deletes 1 line of a.txt: 2 distinct files
+    assert cm.slice_size(repo, [first, second]) == ({"files": 2, "lines": 5}, None)
+    size, reason = cm.slice_size(repo, ["0" * 40])
+    assert size is None and "git show failed" in reason
+    assert cm.slice_size(repo, [])[0] is None
+    assert cm.slice_size(None, [first])[0] is None
+
+
+def test_h5_aggregate_size_unknown_is_a_reason(world: World) -> None:
+    """The fixture's boundary commits are empty: size is 0 files, 0 lines, a known value."""
+    build_db(world)
+    cm.main(world.args("--b1", "--window", f"w={SINCE}..{UNTIL}"))
+    b1 = json.loads((world.out / "B1.json").read_text(encoding="utf-8"))
+    assert {s["slice_id"]: s["size"] for s in b1["slices"]}["OPR.9.1.1"] == {
+        "files": 0,
+        "lines": 0,
+    }

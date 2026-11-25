@@ -614,6 +614,71 @@ def cmd_drivers(args):
     return 0
 
 
+POINTERS = (".claude/commands/hyper-tutorial.md", ".windsurf/workflows/hyper-tutorial.md")
+
+
+def cmd_leftovers(args):
+    """leftovers SRC LEGACY_LIST CANDIDATES OUT: K9, `remove|keep<TAB>path<TAB>reason` rows.
+
+    A legacy hyper-tutorial pointer is removable only when it is a regular file whose sha256 is
+    listed for that exact path in the clone's legacy list (never the project's copy). A
+    <STEM>.hacf-v0.6.0.md sidecar is removable only when its bytes equal
+    sidecar_text(<instruction file>, B), B being the whole HACF block (both marker lines) still in
+    that instruction file: the merge is finished. This runs in the plan phase, before any block
+    is removed. Anything else is kept: it may hold a user's unfinished merge.
+    """
+    src, legacy_path, cand_path, out_path = args
+    sys.path.insert(0, os.path.join(src, ".agents", "scripts"))
+    import hyper_blocks
+
+    with open(cand_path, encoding="utf-8") as handle:
+        candidates = set(p for p in handle.read().split("\0") if p)
+    data, _ = load_object(legacy_path)
+    rows = []
+    for rel in POINTERS:
+        if rel in candidates or not os.path.lexists(rel):
+            continue
+        value = (data or {}).get(rel)
+        values = value if isinstance(value, list) else [value]
+        listed = {v for v in values if isinstance(v, str) and len(v) == 64}
+        if os.path.islink(rel) or not os.path.isfile(rel):
+            rows.append(f"keep\t{rel}\tnot a regular file; delete it by hand if unwanted")
+        elif sha_file(rel) in listed:
+            rows.append(f"remove\t{rel}\tHACF legacy file, sha matched")
+        else:
+            rows.append(f"keep\t{rel}\tcontent differs from HACF's; delete it by hand if unwanted")
+    for name in hyper_blocks.INSTRUCTION_FILES:
+        side = str(hyper_blocks.sidecar_path(hyper_blocks.Path(name)))
+        if not os.path.lexists(side) or side in candidates:
+            continue
+        kept = "it may hold an unfinished merge; delete it by hand once merged"
+        finished = False
+        try:
+            usable = all(
+                os.path.isfile(path) and not os.path.islink(path) for path in (name, side)
+            )
+            if usable:
+                with open(name, "rb") as handle:
+                    doc = hyper_blocks.parse_doc(handle.read())
+                block = hyper_blocks.find_block(
+                    hyper_blocks.scan(doc, hyper_blocks.MARKDOWN), hyper_blocks.INSTRUCTION_BLOCK_ID
+                )
+                if block is not None:
+                    whole = b"".join(doc.lines[block.begin : block.end + 1])
+                    with open(side, "rb") as handle:
+                        finished = handle.read() == hyper_blocks.sidecar_text(
+                            hyper_blocks.Path(name), whole
+                        )
+        except (OSError, hyper_blocks.BlocksError):
+            finished = False
+        if finished:
+            rows.append(f"remove\t{side}\tmerge finished: it equals the HACF block still in {name}")
+        else:
+            rows.append(f"keep\t{side}\t{kept}")
+    write_lines(out_path, rows, "\n")
+    return 0
+
+
 def cmd_sha(args):
     """sha PATH: print the file's sha256 (R64's last check before remove_self deletes it)."""
     print(sha_file(args[0]))
@@ -623,6 +688,7 @@ def cmd_sha(args):
 COMMANDS = {
     "plan": cmd_plan,
     "sha": cmd_sha,
+    "leftovers": cmd_leftovers,
     "blocks": cmd_blocks,
     "settings": cmd_settings,
     "mcp": cmd_mcp,
@@ -968,7 +1034,12 @@ plan_files() {
     </dev/null >"$TMP_DIR/blocks"
   # D2: the lore merge-driver git config sections, checked against the clone's DRIVER_CONFIG.
   ux drivers "$SRC" </dev/null >"$TMP_DIR/drivers"
-  local kind rel
+  # K9: legacy pointers and finished-merge sidecars, decided now, before any block is removed.
+  ux leftovers "$SRC" "$SRC/$LEGACY_REL" "$TMP_DIR/candidates" "$TMP_DIR/leftovers" </dev/null
+  local kind rel why
+  while IFS=$'\t' read -r kind rel why; do
+    [ "$kind" = "keep" ] && report "kept $rel ($why)"
+  done <"$TMP_DIR/leftovers"
   while IFS=$'\t' read -r kind rel; do
     case "$kind" in
       modified) report "kept (changed since HACF installed it): $rel" ;;
@@ -1003,12 +1074,20 @@ list_plan() {
     echo "    ✂  HACF block '$id' in $path"
     any=true
   done <"$TMP_DIR/blocks"
-  local kind section
+  local kind section why
   while IFS=$'\t' read -r kind section; do
     [ "$kind" = "remove" ] || continue
     echo "    ✂  git config section $section"
     any=true
   done <"$TMP_DIR/drivers"
+  while IFS=$'\t' read -r kind rel why; do
+    if [ "$kind" = "remove" ]; then
+      echo "    ✗  $rel ($why)"
+      any=true
+    else
+      echo "    ⏸  $rel kept ($why)"
+    fi
+  done <"$TMP_DIR/leftovers"
   $any || echo "    (no file or block to remove)"
   echo ""
 }
@@ -1158,6 +1237,28 @@ delete_files() {
   echo ""
 }
 
+remove_leftovers() {
+  # K9: the rows the plan decided (ux leftovers); nothing is decided or re-decided here.
+  [ -s "$TMP_DIR/leftovers" ] || return 0
+  local kind rel why any=false
+  : >"$TMP_DIR/deleted-leftovers"
+  while IFS=$'\t' read -r kind rel why; do
+    [ "$kind" = "remove" ] || continue
+    if ! $any; then echo "🧹  HACF leftovers (proved to be HACF's):"; any=true; fi
+    if $DRY_RUN; then
+      echo "    [DRY-RUN] would remove $rel ($why)"
+    elif rm -f -- "$rel"; then
+      printf '%s\0' "$rel" >>"$TMP_DIR/deleted-leftovers"
+      echo "    ✗  $rel"
+      report "removed $rel ($why)"
+    else
+      fail "could not delete $rel."
+    fi
+  done <"$TMP_DIR/leftovers"
+  $DRY_RUN || ux prune "$TMP_DIR/deleted-leftovers" </dev/null
+  ! $any || echo ""
+}
+
 # report_rig_specs: one report line per manifest rig_spec entry (R4). A copy made by
 # HACF-install.sh --rig is the user's: it is not in `files`, and it is never deleted.
 report_rig_specs() {
@@ -1205,6 +1306,24 @@ remove_saved_installer() {
     echo "    ✗  $SAVED_INSTALLER_REL"
   else
     report "$SAVED_INSTALLER_REL kept: $FAILURES step(s) failed; fix them and re-run the uninstaller."
+  fi
+}
+
+remove_source_record() {
+  # KI-3 (OPR.99.0.11.3): the per-machine install record (SOURCE_FILE_REL). It is the one named
+  # path carved out of the never-delete .agents/state/, and it goes only when nothing failed,
+  # because a re-run after a failed uninstall reads it to find its source (recorded_source).
+  [ "$MODE" = "manifest" ] || return 0
+  [ -e "$SOURCE_FILE_REL" ] || [ -L "$SOURCE_FILE_REL" ] || return 0
+  if [ ! -f "$SOURCE_FILE_REL" ] || [ -L "$SOURCE_FILE_REL" ]; then
+    report "$SOURCE_FILE_REL kept: it is not a regular file."
+  elif $DRY_RUN; then
+    echo "    [DRY-RUN] would remove $SOURCE_FILE_REL"
+  elif [ "$FAILURES" -eq 0 ]; then
+    rm -f -- "$SOURCE_FILE_REL"
+    echo "    removed $SOURCE_FILE_REL"
+  else
+    report "kept $SOURCE_FILE_REL (uninstall had failures; re-run to finish)"
   fi
 }
 
@@ -1290,8 +1409,10 @@ main() {
   remove_merge_drivers           # D2 (R67)
   edit_settings_and_mcp          # Tasks 17-19
   delete_files                   # Task 20
+  remove_leftovers               # K9: pointers by sha, finished-merge sidecars
   report_rig_specs               # R4: a --rig copy is reported, never deleted
   remove_saved_installer
+  remove_source_record           # KI-3: after the saved installer, only when nothing failed
   remove_manifest
   remove_self                    # R64: the project's own copy, last
 

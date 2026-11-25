@@ -1,0 +1,93 @@
+[
+  {
+    "logicalId": "build.audit",
+    "canonicalSessionName": "build-audit@demo-hacf",
+    "rigName": "demo-hacf",
+    "profile": "audit",
+    "role": null,
+    "model": null,
+    "effort": null,
+    "effortSource": "runtime_default",
+    "modelObservation": {
+      "model": "claude-opus-5-5"
+    }
+  },
+  {
+    "logicalId": "build.execute",
+    "canonicalSessionName": "build-execute@demo-hacf",
+    "rigName": "demo-hacf",
+    "profile": "execute",
+    "role": null,
+    "model": "claude-sonnet-5-5",
+    "effort": "medium",
+    "effortSource": "seat_choice",
+    "modelObservation": {
+      "model": "claude-sonnet-5-5"
+    }
+  },
+  {
+    "logicalId": "desk.scribe",
+    "canonicalSessionName": "desk-scribe@demo-hacf",
+    "rigName": "demo-hacf",
+    "profile": "scribe",
+    "role": null,
+    "model": "claude-haiku-5-5",
+    "effort": null,
+    "effortSource": "runtime_default",
+    "modelObservation": {
+      "model": "claude-haiku-5-5"
+    }
+  },
+  {
+    "logicalId": "orch.lead",
+    "canonicalSessionName": "orch-lead@demo-hacf",
+    "rigName": "demo-hacf",
+    "profile": "lead",
+    "role": null,
+    "model": "claude-sonnet-5-5",
+    "effort": "medium",
+    "effortSource": "seat_choice",
+    "modelObservation": {
+      "model": "claude-sonnet-5-5"
+    }
+  },
+  {
+    "logicalId": "spec.architect",
+    "canonicalSessionName": "spec-architect@demo-hacf",
+    "rigName": "demo-hacf",
+    "profile": "architect",
+    "role": null,
+    "model": null,
+    "effort": null,
+    "effortSource": "runtime_default",
+    "modelObservation": {
+      "model": "claude-opus-5-5"
+    }
+  },
+  {
+    "logicalId": "spec.red-team",
+    "canonicalSessionName": "spec-red-team@demo-hacf",
+    "rigName": "demo-hacf",
+    "profile": "red-team",
+    "role": null,
+    "model": null,
+    "effort": null,
+    "effortSource": "runtime_default",
+    "modelObservation": {
+      "model": "claude-opus-5-5"
+    }
+  },
+  {
+    "logicalId": "spec.resolve",
+    "canonicalSessionName": "spec-resolve@demo-hacf",
+    "rigName": "demo-hacf",
+    "profile": "resolve",
+    "role": null,
+    "model": null,
+    "effort": null,
+    "effortSource": "runtime_default",
+    "modelObservation": {
+      "model": "claude-opus-5-5"
+    }
+  }
+]

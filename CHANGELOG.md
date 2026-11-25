@@ -7,6 +7,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-11-25
+
+### Added
+- The per-seat config format: `openrig/hacf/seat-config.yml` (HACF's defaults, one entry per role;
+  the tiered ones are in the H5 line under Changed), your own `overrides.yml` beside it (never written by HACF, git-ignored here,
+  refused by the release export), `bin/seat-config.py` to validate and resolve default < preset <
+  override, and the context guard taking its caps through it (CLI unchanged; an invalid overrides file
+  means HACF's defaults plus one durable alert).
+- seat-config-upgrade's plan and apply print each seat's model change against its live
+  `rig ps --full` state, with the `set-model`, `set-effort` and fresh-launch commands and an Opus
+  rollback (lead last), list each new default an override hides, keep a locally edited defaults
+  file, print `manual (...)` where the host lacks the verbs, and never copy, back up, restore or
+  checksum your `overrides.yml`.
+- `collect_metrics.py` reports dollars (a dated price table, `dev/telemetry/prices.yml`) and tokens
+  per slice by effective model, flags mixed-model slices, and gives per-slice size.
+
+### Changed
+- Tiered models per seat, from the v0.6.6 H5 experiment (`dev/telemetry/h5-v066.md`): build-execute
+  ships `claude-sonnet-5-5` at medium effort and desk-scribe ships `claude-haiku-5-5`, because each
+  held against rules fixed before the switch; orch-lead did not hold (one finding) and every other
+  seat stays `claude-opus-5-5`. A seat gets a new model only through the printed commands
+  (`seat-config-upgrade.py plan`); OPS.md has the apply and revert-to-Opus recipes.
+
+### Fixed
+- seat-config-upgrade's seat half skipped every seat on a live rig (it read `rig ps` without
+  `--full`); it now reads `profile` from `--full`, and copy-test check 5 fails unless every HACF
+  role is planned.
+- Uninstall left `.agents/state/install/source.json` behind (KI-3): `HACF-uninstall.sh` now removes
+  it as its last cleanup step, only when no step failed, so a failed uninstall stays re-runnable.
+  The rest of `.agents/state/` is kept as before.
+- `HACF-install.sh --rig` ended with GNU-only `mv -T` and failed on macOS (K10); the final move is
+  now one `rename(2)` through python3, which still refuses to move into a directory that appeared
+  during the install.
+- `hyper_migrate.py detect` raised `legacy_field_notes` for any bullet under `## Field Notes (legacy)`,
+  so an edited `activeContext.md` kept reporting a migration that never happened (D2); it now
+  raises it only when Task 13 would move an entry, using the same predicate.
+- An install with Claude Code selected backed up `.claude/settings.json` after its own earlier write
+  (KI-6); the installer now passes `--written-sha` for bytes it wrote itself, so that needless backup
+  is gone, while a user's own file is still backed up exactly once, byte-equal, and no backup is
+  ever deleted.
+- Uninstall left HACF's legacy `hyper-tutorial` pointers and a finished `*.hacf-v0.6.0.md` sidecar behind
+  (K9): it now removes a pointer only when its sha256 is listed for that exact path in its own clone,
+  and a sidecar only when it equals the HACF block still in its instruction file. Anything that may
+  hold an unfinished merge is always kept and reported.
+
+### Corrections to earlier Known issues
+
+Released entries are not edited; these lines settle what the 0.6.5 entry promised for this release.
+- Shipped: KI-3 (`source.json` surviving uninstall; Fixed, above), K10 (`--rig` and GNU `mv -T`),
+  D2 (the `hyper_migrate.py detect` false positive), KI-6 (the double write of
+  `.claude/settings.json`) and K9 (the legacy `hyper-tutorial` leftovers after uninstall).
+- Shipped: the upgrade copy test now checks every HACF seat of a rig and works on an uncommitted tree,
+  and 0.6.5's seat half, which skipped every seat on a live rig, is fixed (Fixed, above).
+- Deferred, unplanned (no version is promised): KI-1 (lock files left in `.git/hacf/locks`), KI-2
+  (`/hyper-update` refusing after a local-source install), KI-4 (narrowing `--ides` leaving files),
+  KI-5 (`/hyper-update` without `--source`), K11 (exact ruff parity for a nested config in a
+  root-excluded tree), `symbol_impact --include-tests`, the `.mcp.json` `env` block for the code-graph
+  daemon, and the shared uv caches.
+- Measured (F20): on the 7 eta seats, the `mcp__claude-in-chrome` and `mcp__easel` tools are gone,
+  `codebase-memory-mcp` stays (17 tools), and 9 of 9 rules hold. This settles 0.6.5's "effect on live
+  seats is unmeasured". No token figure is claimed.
+
+### Known issues
+- Record correction: the v0.6.0 export commit message says the S04, S08 and S11 recorded live-test
+  fixtures ship unedited. They were left out of v0.6.0-v0.6.2; from v0.6.3 they ship as
+  keep-list-cleaned copies (`dev/tests/fixtures/recorded/`). A pushed commit message cannot change.
+  (still open in 0.6.6)
+- The optional code graph (codebase-memory-mcp) shares one daemon per user unless
+  `CBM_RUNTIME_DIR` differs between runs; HACF's own runs are isolated, the daemon Claude Code launches
+  from `.mcp.json` is not. (still open in 0.6.6)
+- codebase-memory-mcp caps a project name at 128 characters, and the name is derived from the
+  checkout path; the workaround is a shorter checkout path. (still open in 0.6.6)
+- The repository moved to `https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework`. An
+  existing install keeps its pinned old URL and works through GitHub's redirect; to move it, run
+  `/hyper-update --upstream-url https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git`.
+  (still open in 0.6.6)
+- Of the 127 test functions left out of the public v0.6.2 tree, 110 are back in the public suite.
+  The 17 that read HACF's private development records stay in `dev/tests/private_records/`, the one
+  test directory still left out of every export. (still open in 0.6.6)
+- A rig `env:` key reaches a running rig only at a whole-rig `rig down`/`rig up`
+  (`openrig/hacf/OPS.md`); OpenRig has no verb that updates a running rig's env. (still open in 0.6.6)
+- Live seats' first-turn context (about 48.7k-50.4k tokens) is above the headless probe's
+  36.9k-41.9k; not re-measured in 0.6.6. (still open in 0.6.6)
+- The hacf OpenRig team's context guard and its checkpoint watchdogs are armed on the rig named
+  `hacf` only; arming another team is the operator's step at that team's own upgrade. (still open in
+  0.6.6)
+- H5 (directional, not a release gate; `dev/telemetry/h5-v066.md`): build-execute (`claude-sonnet-5-5`,
+  medium) and desk-scribe (`claude-haiku-5-5`) held and ship as tiered defaults; orch-lead did not hold
+  (one finding) and stays on `claude-opus-5-5`, like every other seat. At n = 8 non-mixed slices (9
+  measured), median list-price dollars per slice were 3.06 against B2's 6.08 and median tokens
+  14,083,273 against 18,891,038; the -35% to -55% target is not met on this window (median tokens
+  -16.6%, cost-weighted -22.9%, over the 9 slices). Dollars are API list-price equivalents, not what
+  the account is billed; v0.6.6 has no post-release escape window and B2 had one.
+- The shipped model ids (`claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-opus-5-5`) age while HACF is
+  parked; override a retired id in `overrides.yml`.
+- A fresh `rig up` runs each seat on the harness default until the commands seat-config-upgrade
+  prints are run.
+- Restoring to 0.6.5 leaves `overrides.yml` in place, which 0.6.5 does not read.
+- seat-config-upgrade's `set-model`, `set-effort` and `ps --full` verbs were measured on OpenRig 0.7.16
+  and 0.6.13 by the builder; the audit did not re-run that measurement, and no other OpenRig version
+  was tested (the plan probes each verb at run time and prints `manual (...)` where one is missing).
+- Privacy scan of the working tree: 0 of the 10 v0.6.6 audits recorded an `unknown` result (all 10
+  ran it, exit 0).
+
+### Known limits
+- KI-6: after HACF writes `.claude/settings.json`, the installer hashes the file on disk, not the
+  bytes the firewall wrote. If the user saves the file in the milliseconds between that write and the
+  hash, during an install, HACF's next write in the same install can skip the backup of that one
+  save. The user's original file is always backed up first.
+- K9: the uninstaller decides in its plan and removes without hashing again. If a legacy
+  `*.hacf-v0.6.0.md` sidecar is edited between the confirmation and the removal, inside one
+  uninstall run, that edit is lost.
+
 ## [0.6.5] - 2026-11-24
 
 ### Added

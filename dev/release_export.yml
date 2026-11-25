@@ -46,7 +46,7 @@ releases:
   - version: "0.6.4"
     source: 1c63d2cc191d522caa135c36a23aac794a967a65
   - version: "0.6.5"
-    source: 44a1e1845dbafbeb41cf7c01484e74a4d9e78738
+    source: a215447dd24a6e54d13b461e798e842b809b9864
 exclude:
   # HACF's own development records (private).
   - path: lore/

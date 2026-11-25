@@ -91,6 +91,50 @@ def test_fresh_install_noninteractive(project: Path, run_install) -> None:
     assert "fresh install" in run.output
 
 
+def _settings_backups(project: Path) -> list[Path]:
+    root = project / ".agents" / ".backup"
+    return sorted(root.rglob("settings.json")) if root.exists() else []
+
+
+def test_settings_backup_exactly_when_needed(project: Path, run_install) -> None:
+    """KI-6 must never lose the user's only settings backup (a, b, c, h of OPR.99.0.11.9)."""
+    # (a) a fresh install writes settings.json up to three times and backs up nothing.
+    run = run_install(project, "-y", "--ides=claude")
+    assert run.returncode == 0, run.output
+    assert _settings_backups(project) == []
+
+    # (h) a later run carries no sha over: after a user edit that forces a write, it backs up first.
+    path = project / ".claude" / "settings.json"
+    edited = json.loads(path.read_text(encoding="utf-8"))
+    edited["permissions"]["allow"].remove(edited["permissions"]["allow"][0])
+    edited["env"] = {"MINE": "1"}
+    path.write_text(json.dumps(edited, indent=2) + "\n", encoding="utf-8")
+    before = path.read_bytes()
+    run = run_install(project, "-y", "--ides=claude")
+    assert run.returncode == 0, run.output
+    backups = _settings_backups(project)
+    assert len(backups) == 1 and backups[0].read_bytes() == before
+
+
+def test_settings_backup_users_file_with_statusline(tmp_path: Path, run_install) -> None:
+    """(b, c) A pre-existing user file, with and without --statusline, is backed up exactly once."""
+    originals = {}
+    for name, extra in (("plain", ()), ("status", ("--statusline",))):
+        proj = tmp_path / name
+        proj.mkdir()
+        git(["init", "-q", "-b", "main"], proj, git_env(tmp_path / "scratch"))
+        original = json.dumps({"env": {"MY_VAR": "1"}, "model": "sonnet"}).encode()
+        (proj / ".claude").mkdir()
+        (proj / ".claude" / "settings.json").write_bytes(original)
+        run = run_install(proj, "-y", "--ides=claude", *extra)
+        assert run.returncode == 0, run.output
+        originals[name] = original
+        backups = _settings_backups(proj)
+        assert len(backups) == 1 and backups[0].read_bytes() == original, name
+        merged = json.loads((proj / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        assert merged["model"] == "sonnet" and ("statusLine" in merged) == bool(extra)
+
+
 def test_bash_n() -> None:
     """Test 15: `bash -n HACF-install.sh` exits 0."""
     proc = subprocess.run(["bash", "-n", str(INSTALLER)], capture_output=True, check=False)

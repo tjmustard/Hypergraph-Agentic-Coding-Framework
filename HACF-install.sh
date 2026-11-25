@@ -108,7 +108,7 @@ USAGE
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-HACF_VERSION="0.6.5"
+HACF_VERSION="0.6.6"
 DEFAULT_REPO_URL="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git"
 DEFAULT_BRANCH="main"
 CBM_VERSION="0.12.1"
@@ -1690,6 +1690,13 @@ with open(path, "w", encoding="utf-8", newline="") as handle:
 ' "$@" </dev/null
 }
 
+# rig_rename <staged> <target>: one rename(2) through python3, so it has GNU mv's no-target-directory
+# semantics on every POSIX host (macOS's mv lacks that flag): it never moves INTO a directory that appeared late, it
+# fails instead (ENOTEMPTY / ENOTDIR). Only an empty directory is replaced.
+rig_rename() {
+  python3 -c 'import os,sys; os.rename(sys.argv[1], sys.argv[2])' "$1" "$2" </dev/null
+}
+
 # copy_rig_spec: the payload's openrig/hacf/ tree only (never hx sync, never the working tree),
 # into a temp sibling of DEST, its one `name: hacf` line renamed, then one rename. On any
 # failure the temp is removed and DEST does not exist. The copy is the user's from then on.
@@ -1710,10 +1717,13 @@ copy_rig_spec() {
   tmp=$(mktemp -d "$parent/.hacf-rig.XXXXXX") || die "could not create a temp dir in $(q "$parent") for the rig spec copy."
   if ! { cp -R -p -- "$payload/." "$tmp/" \
          && rig_name_copy "$payload" "$tmp" "$name" \
-         && [ ! -e "$RIG_ABS" ] && [ ! -L "$RIG_ABS" ] \
-         && mv -T -- "$tmp" "$RIG_ABS"; }; then
+         && [ ! -e "$RIG_ABS" ] && [ ! -L "$RIG_ABS" ]; }; then
     rm -rf -- "$tmp"
     die "could not copy the rig spec to $(q "$shown"); nothing was left there."
+  fi
+  if ! rig_rename "$tmp" "$RIG_ABS"; then
+    rm -rf -- "$tmp"
+    die "--rig: $(q "$shown") appeared during install; nothing written there"
   fi
   echo "    ✅  $RIG_SRC_REL/ ($n files) -> $(q "$shown"), rig name $name"
   if [ -n "$RIG_REL" ]; then
@@ -1900,6 +1910,24 @@ install_instruction_files() {
   echo ""
 }
 
+# KI-6: sha256 of each .claude/settings.json this run wrote (computed from the bytes just
+# written, never read from the manifest, a backup or an earlier run). They go to later calls as
+# --written-sha so the firewall skips only the backup of bytes this run itself wrote.
+WRITTEN_SHAS=()
+SHA_ARGS=()
+set_sha_args() {
+  local sha
+  SHA_ARGS=()
+  for sha in ${WRITTEN_SHAS[@]+"${WRITTEN_SHAS[@]}"}; do SHA_ARGS+=(--written-sha "$sha"); done
+}
+record_settings_write() {
+  # $1 = the firewall's output; record the file's sha only when this call printed "wrote".
+  if grep -q '^wrote: \.claude/settings\.json$' <<<"$1"; then
+    WRITTEN_SHAS+=("$(py_sha .claude/settings.json)")
+  fi
+  return 0
+}
+
 merge_settings() {
   # FLOW 9: merge the fragment (allows, SessionStart hook, gate hook); never replace the file
   # and never touch .claude/settings.local.json.
@@ -1914,7 +1942,9 @@ merge_settings() {
     return 0
   fi
   local rc=0 out
-  out=$(python3 .agents/scripts/hyper_firewall.py merge-settings "$FRAGMENT_REL" </dev/null 2>&1) || rc=$?
+  set_sha_args
+  out=$(python3 .agents/scripts/hyper_firewall.py merge-settings "$FRAGMENT_REL" ${SHA_ARGS[@]+"${SHA_ARGS[@]}"} </dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ]; then record_settings_write "$out"; fi
   grep -v '^owned: ' <<<"$out" | sed 's/^/    /' || true
   grep '^owned: ' <<<"$out" | sed 's/^owned: //' >>"$TMP_DIR/owned.jsonl" || true
   [ "$rc" -eq 0 ] || report ".claude/settings.json: merge refused (exit $rc); nothing written to it."
@@ -1923,7 +1953,9 @@ merge_settings() {
     local frag="$TMP_DIR/statusline.fragment.json"
     printf '{\n  "statusLine": {\n    "type": "command",\n    "command": "%s"\n  }\n}\n' "$STATUSLINE_COMMAND" >"$frag"
     rc=0
-    out=$(python3 .agents/scripts/hyper_firewall.py merge-settings "$frag" </dev/null 2>&1) || rc=$?
+    set_sha_args
+    out=$(python3 .agents/scripts/hyper_firewall.py merge-settings "$frag" ${SHA_ARGS[@]+"${SHA_ARGS[@]}"} </dev/null 2>&1) || rc=$?
+    if [ "$rc" -eq 0 ]; then record_settings_write "$out"; fi
     grep -v '^owned: ' <<<"$out" | sed 's/^/    /' || true
     [ "$rc" -eq 0 ] && report "statusLine added: $STATUSLINE_COMMAND (an existing statusLine is never replaced)."
   fi
@@ -2109,7 +2141,8 @@ render_firewall() {
     return 0
   fi
   local rc=0 out
-  out=$(python3 .agents/scripts/hyper_firewall.py render --ides "$ids" </dev/null 2>&1) || rc=$?
+  set_sha_args
+  out=$(python3 .agents/scripts/hyper_firewall.py render --ides "$ids" ${SHA_ARGS[@]+"${SHA_ARGS[@]}"} </dev/null 2>&1) || rc=$?
   grep -v '^owned: ' <<<"$out" | sed 's/^/    /' || true
   grep '^owned: ' <<<"$out" | sed 's/^owned: //' >>"$TMP_DIR/owned.jsonl" || true
   [ "$rc" -eq 0 ] || report "Firewall: render refused (exit $rc); nothing written by it."

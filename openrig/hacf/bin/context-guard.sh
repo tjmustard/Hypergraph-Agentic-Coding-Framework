@@ -25,9 +25,21 @@
 #
 #   <UTC ts> rig=<r> mode=<...> note=HACF_CTX_MAX ignored; caps come from --caps   (when it is set)
 #
+# Seat config (v0.6.6, R86): when seat-config.yml sits beside the --caps file, each role's
+# cap_tokens, behaviour and reset_scope come from `bin/seat-config.py resolve --section context`
+# (HACF's caps.yml default < a preset < the user's overrides.yml); the CLI and every decision below
+# are unchanged. Without seat-config.yml the --caps file is read exactly as before. When the
+# resolver refuses (an invalid overrides.yml, R70) the guard runs on the --caps file, which is
+# HACF's defaults, logs `caps_source=defaults (seat config refused: <first line>)` and, with
+# --apply, raises one durable alert per distinct refusal (queue rows to orch-lead@<rig> and
+# operator-agent@kernel, then a marker under ~/.hacf/<rig>/guard-alerts/).
+#
 # Exit 0 when it ran (restart or not), 1 when a launch or the note to orch-lead failed, 2 on usage
 # or a caps file it refuses.
 set -euo pipefail
+
+HACF_GUARD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export HACF_GUARD_DIR
 
 command -v python3 >/dev/null 2>&1 || { echo "context-guard.sh: python3 is not on PATH" >&2; exit 2; }
 
@@ -36,11 +48,13 @@ import argparse
 import datetime
 import errno
 import fcntl
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 
 LEAD_ID = "orch.lead"
 SPEC_PREFIX = "spec."
@@ -140,6 +154,39 @@ def load_caps(path):
     return seats
 
 
+def resolve_seat_config(caps_path, caps):
+    """(caps, caps_source, refusal): caps taken through seat-config.py when seat-config.yml sits
+    beside the --caps file; the file's own caps and a refusal text when the resolver refuses."""
+    directory = os.path.dirname(os.path.abspath(caps_path))
+    if not os.path.isfile(os.path.join(directory, "seat-config.yml")):
+        return caps, "file", None
+    script = os.path.join(os.environ.get("HACF_GUARD_DIR", ""), "seat-config.py")
+    try:
+        r = subprocess.run([sys.executable, script, "resolve", "--section", "context", "--caps",
+                            os.path.abspath(caps_path), "--dir", directory, "--json"],
+                           capture_output=True, text=True, timeout=GIT_TIMEOUT,
+                           stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as e:
+        return caps, "defaults", "seat-config.py: cannot run (%s)" % e
+    if r.returncode != 0:
+        text = r.stderr.strip() or "seat-config.py: exited %d" % r.returncode
+        return caps, "defaults", text
+    try:
+        seats = json.loads(r.stdout)["seats"]
+        merged, changed = {}, []
+        for role, entry in caps.items():
+            row = dict(entry)
+            for key in ("cap_tokens", "behaviour", "reset_scope"):
+                cell = seats[role][key]
+                row[key] = cell["value"]
+                if cell["source"] != "default":
+                    changed.append("%s.%s=%s" % (role, key, cell["source"]))
+            merged[role] = row
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return caps, "defaults", "seat-config.py: unreadable output"
+    return merged, "resolved", changed
+
+
 def parse_sampled_at(text):
     """The epoch seconds of an ISO-8601 sampledAt with a zone, or None."""
     if not isinstance(text, str):
@@ -179,7 +226,10 @@ def parse_args(argv):
 
 
 class Guard:
-    def __init__(self, args, caps):
+    def __init__(self, args, caps, caps_source="file", refusal=None, changed=None):
+        self.caps_source = caps_source
+        self.refusal = refusal
+        self.changed = changed or []
         self.rig = args.rig
         self.apply = args.apply
         self.mode = "apply" if args.apply else "dry-run"
@@ -452,9 +502,54 @@ class Guard:
                 self.log(session, tokens, "arm", "registered at %d" % cap, cap)
         return rc
 
+    def alert_refusal(self):
+        """Raise the durable alert for a refused seat config, once per distinct refusal text."""
+        first = self.refusal.splitlines()[0]
+        digest = hashlib.sha256(self.refusal.encode("utf-8")).hexdigest()
+        marker_dir = os.path.join(self.state_dir, "guard-alerts")
+        marker = os.path.join(marker_dir, digest)
+        if os.path.exists(marker):
+            return
+        parts = first.split(": ", 2)
+        where = "%s: %s" % (parts[0], parts[1]) if len(parts) == 3 else first
+        summary = "context-guard: overrides.yml invalid (%s); running on HACF defaults" % where
+        if not self.apply:
+            self.write("note=would alert: %s" % summary)
+            return
+        body = ("The context guard refused the seat config and is running on HACF's defaults:\n\n"
+                "%s\n\nFix: correct or remove the line; the guard keeps running on defaults "
+                "until then.\n" % self.refusal)
+        os.makedirs(marker_dir, mode=0o700, exist_ok=True)
+        fd, body_path = tempfile.mkstemp(prefix="alert-", suffix=".md", dir=self.state_dir)
+        with os.fdopen(fd, "w") as f:
+            f.write(body)
+        try:
+            ok = True
+            for dest in ("orch-lead@%s" % self.rig, "operator-agent@kernel"):
+                code, _ = self.run(["rig", "queue", "create", "--source", "context-guard@%s" % self.rig,
+                                    "--destination", dest, "--summary", summary,
+                                    "--body-file", body_path])
+                if code != 0:
+                    self.write("note=alert to %s failed (queue create exited %s); retrying next tick"
+                               % (dest, code))
+                    ok = False
+            if ok:
+                fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                os.close(fd)
+                self.write("note=alert raised for %s" % digest[:12])
+        finally:
+            os.unlink(body_path)
+
     def tick(self):
         if "HACF_CTX_MAX" in os.environ:
             self.write("note=HACF_CTX_MAX ignored; caps come from --caps")
+        if self.caps_source == "resolved":
+            self.write("note=caps_source=resolved%s" % (
+                " non-default: " + ",".join(self.changed) if self.changed else ""))
+        elif self.caps_source == "defaults":
+            self.write("note=caps_source=defaults (seat config refused: %s)"
+                       % self.refusal.splitlines()[0])
+            self.alert_refusal()
         nodes = self.read_ps()
         if nodes is None:
             self.log(None, None, "skip", "unknown: ps unreadable")
@@ -546,7 +641,11 @@ def main(argv):
     except CapsError as e:
         print("context-guard.sh: --caps %s: %s" % (args.caps, e), file=sys.stderr)
         return 2
-    g = Guard(args, caps)
+    caps, caps_source, extra = resolve_seat_config(args.caps, caps)
+    if caps_source == "defaults":
+        g = Guard(args, caps, caps_source, refusal=extra)
+    else:
+        g = Guard(args, caps, caps_source, changed=extra or [])
     os.makedirs(g.state_dir, mode=0o700, exist_ok=True)
     log_dir = os.path.dirname(os.path.abspath(g.log_path))
     os.makedirs(log_dir, mode=0o700, exist_ok=True)

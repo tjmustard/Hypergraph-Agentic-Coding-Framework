@@ -85,14 +85,15 @@ def test_recorded_source_uninstall(tmp_path: Path, scratch: Path, upstream, sour
     assert not (project / MANIFEST_REL).exists()
 
     # "As before": the same payload installed from the remote and uninstalled through its clone
-    # leaves the same tree; source.json is the one extra leftover (.agents/state/ is NEVER_COPY).
+    # leaves the same tree; the emptied .agents/state/install/ is the one extra leftover
+    # (.agents/state/ is NEVER_COPY; the uninstaller removes source.json itself, KI-3).
     control = new_project(tmp_path / "remote-flow", scratch, "project")  # same name: SPEC.md
     run = run_installer(scratch, upstream.url, control, "-y", "--ides=claude,cursor")
     assert run.returncode == 0, run.output
     run = run_uninstall_script(scratch, upstream.url, control, "-y")
     assert run.returncode == 0, run.output
     local, remote = leftovers(project), leftovers(control)
-    extra = {SOURCE_REL, ".agents/state/install/"}  # the file and its directory
+    extra = {".agents/state/install/"}  # lead ruling P36: only the directory; the file is gone
     assert set(local) - set(remote) == extra
     assert {rel: value for rel, value in local.items() if rel not in extra} == remote
 

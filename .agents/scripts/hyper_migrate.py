@@ -985,6 +985,56 @@ def _user_memory(top: Path, rel: str) -> bool:
     )
 
 
+def _field_note_bullets(lines: list[str]) -> list[tuple[int, str]]:
+    """Return (index, line) for each `- ` bullet under `## Field Notes (legacy)` outside fences."""
+    flags = _fence_flags(lines)
+    found: list[tuple[int, str]] = []
+    inside = False
+    for index, (line, fenced) in enumerate(zip(lines, flags)):
+        bare = line.rstrip("\r")
+        if not fenced and bare.startswith("## "):
+            inside = bare.rstrip() == FIELD_NOTES_HEADING
+            continue
+        if inside and not fenced and bare.startswith("- "):
+            found.append((index, bare))
+    return found
+
+
+def _classify_field_note(
+    top: Path | None, bare: str, legacy_map: dict[str, str]
+) -> tuple[re.Match[str] | None, str | None, str | None, str | None]:
+    """Return (entry match, mapped spec, slice id, why not movable) for one bullet.
+
+    `top` None skips the slice-id lookup (detect runs before any slice exists).
+    """
+    match = LEGACY_NOTE_RE.match(bare)
+    spec = legacy_map.get(match.group(4)) if match else None
+    if match is None:
+        return None, None, None, "not a note line"
+    if spec is None:
+        return match, None, None, f"no migrated slice for {match.group(4)}"
+    slice_id = _slice_id(top, spec) if top is not None else None
+    if top is not None and slice_id is None:
+        return match, spec, None, f"no migrated slice for {match.group(4)}"
+    return match, spec, slice_id, None
+
+
+def movable_field_notes(
+    text: str, legacy_map: dict[str, str], top: Path | None = None
+) -> list[tuple[int, str, re.Match[str], str, str | None]]:
+    """The entries Task 13 moves: (line index, line, match, spec, slice id).
+
+    An entry is movable when it matches LEGACY_NOTE_RE and its source is in `legacy_map` (and,
+    when `top` is given, resolves to a migrated slice). Detect and Task 13 both use this.
+    """
+    movable = []
+    for index, bare in _field_note_bullets(text.split("\n")):
+        match, spec, slice_id, why = _classify_field_note(top, bare, legacy_map)
+        if why is None and match is not None and spec is not None:
+            movable.append((index, bare, match, spec, slice_id))
+    return movable
+
+
 def has_legacy_notes(top: Path) -> bool:
     """True when activeContext.md has an entry under `## Field Notes (legacy)`."""
     path = top / ACTIVE_CONTEXT_REL
@@ -1345,10 +1395,10 @@ def detect(top: Path) -> list[tuple[str, str]]:
         signals.append(("missing_firewall_rules", ".agentignore"))
     active = top / ".agents" / "memory" / "activeContext.md"
     if active.is_file():
-        _, _, sections = split_sections(_read_text(active))
-        for heading, body in sections:
-            if heading == FIELD_NOTES_HEADING and any(line.startswith("- ") for line in body):
-                signals.append(("legacy_field_notes", ".agents/memory/activeContext.md"))
+        # The sources Task 13 can map once the plan is applied: every flat MiniPRD found above.
+        mapped = {p for unit in units.values() for p in (unit.compiled, unit.archived) if p}
+        if movable_field_notes(_read_text(active), dict.fromkeys(mapped, "")):
+            signals.append(("legacy_field_notes", ".agents/memory/activeContext.md"))
     return signals
 
 
@@ -2036,25 +2086,17 @@ def _legacy_notes(top, action, scratch, journal, interactive) -> dict[str, Any]:
     path = top / action["source"]
     text = _read_text(path)
     lines = text.split("\n")
-    flags = _fence_flags(lines)
     moved: list[int] = []
     notes: list[dict[str, str]] = []
     kept: list[str] = []
-    inside = False
-    for index, (line, fenced) in enumerate(zip(lines, flags)):
-        bare = line.rstrip("\r")
-        if not fenced and bare.startswith("## "):
-            inside = bare.rstrip() == FIELD_NOTES_HEADING
-            continue
-        if not inside or fenced or not bare.startswith("- "):
-            continue
-        match = LEGACY_NOTE_RE.match(bare)
-        spec = journal["legacy_map"].get(match.group(4)) if match else None
-        slice_id = _slice_id(top, spec) if spec else None
-        if match is None or spec is None or slice_id is None:
-            why = "not a note line" if match is None else f"no migrated slice for {match.group(4)}"
+    # The same predicate detect uses (D2): `movable_field_notes`; the rest are kept and reported.
+    movable = {m[0]: m for m in movable_field_notes(text, journal["legacy_map"], top)}
+    for index, bare in _field_note_bullets(lines):
+        if index not in movable:
+            why = _classify_field_note(top, bare, journal["legacy_map"])[3]
             kept.append(_report(f"{action['source']}: kept the legacy note ({why}): {bare}"))
             continue
+        _, _, match, spec, slice_id = movable[index]
         date, kind, agent, _, note, anchors = match.groups()
         mission = Path(spec).parents[2].as_posix()
         args = {

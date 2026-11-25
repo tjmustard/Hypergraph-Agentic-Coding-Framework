@@ -32,6 +32,9 @@ bash HACF-install.sh --rig=<dir>      # or copy it to another folder, e.g. ~/.op
 - The installer never writes over an existing path. If the destination exists in any form, or lies
   inside `.git`, inside the `--source` checkout or under a folder that holds a `rig.yaml`, it stops
   with `Nothing was written.` A second `--rig` after a copy is refused too: re-run without `--rig`.
+- If the destination appears while the copy is being made, the copy is discarded and the install
+  stops with `--rig: <dest> appeared during install; nothing written there`. The final step is a
+  single rename through `python3`, so it behaves the same on macOS, which has no `mv -T`.
 - The copy's rig is named `<slug>-hacf`. `<slug>` is your project folder's name, lowercased, with
   every run of other characters turned into `-` (`My Project` becomes `my-project-hacf`). The copy
   differs from HACF's spec only in that one `name:` line.

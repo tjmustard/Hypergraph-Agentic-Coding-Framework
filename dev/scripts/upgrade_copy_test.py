@@ -12,7 +12,12 @@ Dev only, not shipped. Both modes run checks 1-9 on throwaway copies and never w
   3 `HACF-install.sh --source <this checkout> --ref <HEAD sha> -y` on the project copy: exit 0
   4 the copy's .mcp.json is byte-identical after that install and after a second one (no
     exception in v0.6.5: lead ruling P31 built no env block)
-  5 per spec copy: seat-config-upgrade.py plan exits 0 or 1 and prints its plan; apply exits 0
+  5 per spec copy: seat-config-upgrade.py plan exits 0 or 1 and prints its plan, which lists
+    every roles.yml role and every HACF node of the rig, with none skipped (v0.6.6: a plan of
+    zero seats no longer passes); for each HACF seat whose resolved model (HACF's seat-config.yml
+    and the copy's overrides.yml) differs from its `rig ps --nodes --full` model, the plan prints
+    that seat's `model <role> <seat>:` line with its set-model (or `manual`) and rollback lines,
+    the lead's block last (v0.6.6); apply exits 0
   6 `rig spec validate` passes on the applied copy, its `cwd:` lines are unchanged, and caps.yml
     and roles.yml are present
   7 seat-config-upgrade.py restore makes the copy byte-identical to the pre-apply copy (sha256)
@@ -31,7 +36,7 @@ stand-in specs. A fake `rig` stands in for OpenRig and records `specs ls`; faili
 (curl, wget, pip, uv, uvx, npx, npm) come first on PATH.
 
 live: the lead's run (SAFE condition (b)) on the real project and specs. Checks 1-2 and the
-OpenRig daemon reads (`specs ls`, `ps --nodes`, `seat status`) run outside; checks 3-7 run
+OpenRig daemon reads (`specs ls`, `ps --nodes --full`, `seat status`) run outside; checks 3-7 run
 inside bwrap with --unshare-net, a private /tmp and the originals, this checkout and the OpenRig
 home bound read-only. There a `rig` wrapper serves the recorded daemon reads and passes only
 `spec validate` (local) to the real rig. Checks 8-9 run outside after bwrap exits. Evidence
@@ -63,6 +68,13 @@ SEAT_CONFIG = REPO_ROOT / "openrig" / "hacf" / "bin" / "seat-config-upgrade.py"
 FIXTURE_SPECS_DIR = REPO_ROOT / "dev" / "tests" / "fixtures" / "seat_config"
 FIXTURE_SPECS = ("eta-like", "cleanroom-like")
 FIXTURE_RIG = "demo-hacf"  # a stand-in rig name
+RECORDED_PS = FIXTURE_SPECS_DIR / "rig-ps-full-0.7.21.json"  # a real 0.7.21 record, normalised
+HACF_DIR = REPO_ROOT / "openrig" / "hacf"
+ROLES_YML = HACF_DIR / "roles.yml"
+SEAT_RESOLVER = HACF_DIR / "bin" / "seat-config.py"
+MODEL_HEAD_RE = re.compile(r"^  model (\S+) (\S+): ", re.M)
+PLAN_SEAT_RE = re.compile(r"^  (\S+) \(([^)]+)\):$", re.M)
+PLAN_SKIP_RE = re.compile(r"^  (\S+): skipped \((.*)\)$", re.M)
 SHIMS = ("curl", "wget", "pip", "pip3", "uv", "uvx", "npx", "npm")
 BARE_ENTRY = {"type": "stdio", "command": "codebase-memory-mcp", "args": []}
 CHECKS = {
@@ -70,7 +82,7 @@ CHECKS = {
     2: "copies made",
     3: "install --source --ref on the project copy",
     4: ".mcp.json byte-identical after install and re-install",
-    5: "seat-config plan and apply",
+    5: "seat-config plan and apply; the plan covers every HACF role and seat",
     6: "rig spec validate, cwd unchanged, caps.yml and roles.yml present",
     7: "restore byte-identical to the pre-apply copy",
     8: "originals unchanged",
@@ -86,13 +98,24 @@ argv = sys.argv[1:]
 with open(os.path.join(d, "argv.log"), "a") as f:
     f.write(json.dumps(argv) + "\n")
 if argv[:1] == ["ps"]:
-    print(open(os.path.join(d, "ps.json")).read())
+    nodes = json.load(open(os.path.join(d, "ps.json")))
+    if "--full" not in argv:  # the real 0.7.21 CLI leaves these out without --full
+        for n in nodes:
+            for key in ("profile", "role", "model", "effort", "effortSource"):
+                n.pop(key, None)
+    print(json.dumps(nodes))
     sys.exit(0)
 if argv[:2] == ["seat", "status"] and len(argv) > 2:
     path = os.path.join(d, "status-%s.json" % argv[2])
     if not os.path.exists(path):
         sys.exit(1)
     print(open(path).read())
+    sys.exit(0)
+if argv[:2] in (["seat", "set-model"], ["seat", "set-effort"]) and "--help" in argv:
+    print("Usage: rig seat %s [options] <seat>" % argv[1])  # the host probe: the fake has the verbs
+    sys.exit(0)
+if argv == ["--version"]:
+    print("0.7.21 (fake)")
     sys.exit(0)
 if argv[:2] == ["spec", "validate"]:
     code = os.path.join(d, "validate.exit")
@@ -126,6 +149,20 @@ if answer is None:
 sys.stdout.write(answer["stdout"])
 sys.exit(answer["rc"])
 """
+
+
+def role_is_lead(role: str | None, session: str) -> bool:
+    """Whether a planned seat is the lead's (its role, or the orch-lead@<rig> session name)."""
+    return role == "lead" or session.startswith("orch-lead@")
+
+
+def hacf_role(node: dict) -> str | None:
+    """A node's role as seat-config-upgrade.py takes it: `profile`, else the logicalId's tail."""
+    profile = node.get("profile")
+    if isinstance(profile, str) and profile:
+        return profile
+    logical = node.get("logicalId")
+    return logical.rsplit(".", 1)[-1] if isinstance(logical, str) and logical else None
 
 
 class Usage(Exception):
@@ -363,11 +400,114 @@ class CopyTest:
         env = dict(self.env, HOME=str(home))
         return run([sys.executable, str(SEAT_CONFIG), *args], env)
 
+    def resolved_models(self, copy: Path | None) -> dict[str, str] | str:
+        """{role: model} from HACF defaults and the copy's overrides.yml; a reason if refused."""
+        with tempfile.TemporaryDirectory(prefix="resolve-", dir=self.work) as tmp:
+            work = Path(tmp)
+            for name in ("seat-config.yml", "roles.yml", "caps.yml"):
+                shutil.copyfile(HACF_DIR / name, work / name)
+            if copy is not None and (copy / "overrides.yml").is_file():
+                shutil.copyfile(copy / "overrides.yml", work / "overrides.yml")
+            r = run([sys.executable, str(SEAT_RESOLVER), "resolve", "--dir", str(work),
+                     "--section", "seats", "--json"], self.env)  # fmt: skip
+            if r.returncode != 0:
+                tail = r.stdout.strip().splitlines()
+                return tail[-1] if tail else "the resolver failed"
+            seats = json.loads(r.stdout)["seats"]
+        return {role: row["model"]["value"] for role, row in seats.items() if "model" in row}
+
+    def model_failures(self, plan_text: str, nodes: list, copy: Path | None) -> list[str]:
+        """Check 5's model half (v0.6.6): each seat whose model must change has its lines.
+
+        For a HACF seat whose resolved model differs from the live one (`model` absent reads as
+        different), the plan has its `model <role> <seat>: ... -> ...` line, a set-model line (or
+        the `manual` line a host without the verb gets) and a rollback line, and the lead's block
+        is the last one. Each failure names the seat.
+        """
+        resolved = self.resolved_models(copy)
+        if not isinstance(resolved, dict):
+            return [f"cannot resolve the seat models ({resolved})"]
+        section = plan_text.split("\nmodels (", 1)[-1].split("\nhost lines", 1)[0]
+        heads = [(m.group(1), m.group(2), m.start()) for m in MODEL_HEAD_RE.finditer(section)]
+        order = [session for _role, session, _at in heads]
+        failures: list[str] = []
+        due: list[tuple[str, str]] = []
+        for node in nodes:
+            role = hacf_role(node) if isinstance(node, dict) else None
+            session = node.get("canonicalSessionName") if isinstance(node, dict) else None
+            if not session or node.get("rigName", self.rig) != self.rig or role not in resolved:
+                continue
+            if "model" in node and node["model"] == resolved[role]:
+                continue
+            due.append((role, session))
+            at = next((i for i, (_r, name, _a) in enumerate(heads) if name == session), None)
+            if at is None:
+                failures.append(f"no model line for seat {session} ({role})")
+                continue
+            end = heads[at + 1][2] if at + 1 < len(heads) else len(section)
+            block = section[heads[at][2] : end]
+            if " -> " not in block.splitlines()[0]:
+                failures.append(f"model line of seat {session} shows no change")
+            elif f"rig seat set-model {session} " in block:
+                if f"rollback: rig seat set-model {session} " not in block:
+                    failures.append(f"no rollback line for seat {session}")
+            elif "model: manual (" not in block:
+                failures.append(f"no set-model line for seat {session}")
+        for role, session in due:
+            if role_is_lead(role, session) and session in order:
+                if order.index(session) != len(order) - 1:
+                    failures.append(f"the lead's block ({session}) is not last")
+        return failures
+
+    def coverage_failures(self, plan_text: str, copy: Path | None = None) -> list[str]:
+        """Check 5's coverage conditions (v0.6.6); each line names the role or the seat.
+
+        Fails when (i) the plan lists zero seats, (ii) a roles.yml role has no planned seat,
+        (iii) the planned seats are not the rig's HACF nodes in number, (iv) a seat is skipped.
+        """
+        roles = sorted(yaml.safe_load(ROLES_YML.read_text(encoding="utf-8"))["roles"])
+        planned = PLAN_SEAT_RE.findall(plan_text)
+        skipped = PLAN_SKIP_RE.findall(plan_text)
+        failures = []
+        if not planned:
+            failures.append("the plan lists zero seats")
+        have = {role for _session, role in planned}
+        failures += [f"no planned seat for role {role}" for role in roles if role not in have]
+        failures += [f"seat {session} skipped ({why})" for session, why in skipped]
+        ps = run(["rig", "ps", "--nodes", "--rig", self.rig, "--full", "--json"], self.env)
+        try:
+            nodes = json.loads(ps.stdout) if ps.returncode == 0 else None
+        except ValueError:
+            nodes = None
+        if not isinstance(nodes, list):
+            failures.append("cannot read the rig's nodes (rig ps --nodes --full --json)")
+            return failures
+        hacf = [
+            n["canonicalSessionName"]
+            for n in nodes
+            if isinstance(n, dict)
+            and n.get("rigName", self.rig) == self.rig
+            and n.get("canonicalSessionName")
+            and hacf_role(n) in roles
+        ]
+        if len(planned) != len(hacf):
+            seen = {session for session, _role in planned}
+            missing = ", ".join(sorted(set(hacf) - seen)) or "none by name"
+            failures.append(
+                f"planned {len(planned)} seats, the rig has {len(hacf)} HACF nodes "
+                f"(unplanned: {missing})"
+            )
+        return failures + self.model_failures(plan_text, nodes, copy)
+
     def plan_apply(self, i: int, copy: Path, home: Path) -> Path | None:
         """Check 5 for one spec copy: plan, then apply; the backup dir apply printed."""
         plan = self.seat_config(home, "plan", "--live-spec", str(copy), "--rig", self.rig)
         self.save(f"plan-{copy.name}.txt", plan.stdout)
         planned = plan.returncode in (0, 1) and bool(plan.stdout.strip())
+        gaps = self.coverage_failures(plan.stdout, copy)
+        if gaps:
+            self.spec_notes[5].append(f"{copy.name}: " + "; ".join(gaps))
+            self.spec_fail.add(5)
         apply = self.seat_config(home, "apply", "--live-spec", str(copy), "--rig", self.rig)
         self.save(f"apply-{copy.name}.txt", apply.stdout)
         match = re.search(r"^applied; backup: (.+)$", apply.stdout, re.M)
@@ -498,13 +638,9 @@ class FixtureTest(CopyTest):
         """Make the originals: an installed project and the stand-in specs; the fake rig."""
         self.fake.mkdir()
         write_exe(self.work / "bin" / "rig", f"#!{sys.executable}\n{FAKE_RIG}")
-        lead, execute = f"orch-lead@{self.rig}", f"build-execute@{self.rig}"
-        nodes = [
-            {"rigName": self.rig, "canonicalSessionName": lead, "profile": "lead"},
-            {"rigName": self.rig, "canonicalSessionName": execute, "profile": "execute"},
-        ]
+        nodes = json.loads(RECORDED_PS.read_text(encoding="utf-8"))
         (self.fake / "ps.json").write_text(json.dumps(nodes))
-        for session in (lead, execute):
+        for session in (n["canonicalSessionName"] for n in nodes):
             record = {"seat_ref": session, "permissions": {"selectionState": "inherit"}}
             (self.fake / f"status-{session}.json").write_text(json.dumps(record))
         (self.fake / "library").write_text(str(self.specs[0].parent))
@@ -586,7 +722,7 @@ class LiveTest(CopyTest):
         return self.outer
 
     def record_daemon_reads(self) -> None:
-        """Record `specs ls`, `ps --nodes` and each seat's `seat status` for the rig wrapper."""
+        """Record `specs ls`, `ps --nodes --full` and each `seat status` for the rig wrapper."""
         rec = self.work / "rigrec"
         rec.mkdir()
         answers = {}
@@ -597,7 +733,7 @@ class LiveTest(CopyTest):
             answers[json.dumps(argv)] = {"rc": r.returncode, "stdout": r.stdout}
             return r
 
-        ps = read(["ps", "--nodes", "--rig", self.rig, "--json"])
+        ps = read(["ps", "--nodes", "--rig", self.rig, "--full", "--json"])
         try:
             nodes = json.loads(ps.stdout) if ps.returncode == 0 else []
         except ValueError:
@@ -607,6 +743,12 @@ class LiveTest(CopyTest):
                 session = node.get("canonicalSessionName")
                 if session:
                     read(["seat", "status", session, "--json"])
+        for argv in (
+            ["seat", "set-model", "--help"],
+            ["seat", "set-effort", "--help"],
+            ["--version"],
+        ):  # the plan's host probe (R76): read-only help and version
+            read(argv)  # fmt: skip
         (rec / "recorded.json").write_text(json.dumps(answers))
         write_exe(self.work / "bin" / "rig", f"#!{sys.executable}\n{LIVE_RIG}")
 

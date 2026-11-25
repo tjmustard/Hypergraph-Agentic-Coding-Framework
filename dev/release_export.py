@@ -769,8 +769,27 @@ def changelog_section(repo: Path, source: str, version: str) -> str:
     return "\n".join(section)
 
 
+OVERRIDES_PREFIX = "openrig/hacf/"
+OVERRIDES_NAME = "overrides.yml"
+
+
+def refuse_overrides(version: str, paths: list[str]) -> None:
+    """R88: a user's seat overrides never leave the repository; refuse an export that holds one."""
+    hit = next(
+        (
+            p
+            for p in paths
+            if p.startswith(OVERRIDES_PREFIX) and p.rsplit("/", 1)[-1] == OVERRIDES_NAME
+        ),
+        None,
+    )
+    if hit is not None:
+        raise Refusal(f"{version}: the export would contain {hit} (a user's seat overrides)")
+
+
 def export_tree(repo: Path, profile: Profile, release: Release) -> str:
     """Write the export tree from a temporary index outside every repository; return its sha."""
+    refuse_overrides(release.version, export_paths(repo, profile, release))
     tmp = tempfile.mkdtemp(prefix="hacf-export-index-")
     try:
         env = {"GIT_INDEX_FILE": os.path.join(tmp, "index")}

@@ -303,6 +303,40 @@ The worked example, for the rig `hacf` working in HACF's own repository:
 Adding a line for another rig arms that rig's checkpoints too, so it is the operator's step under
 the standing policy; this spec turns nothing on by itself.
 
+## Seat config
+
+Three files hold the per-seat model, effort and context limits (v0.6.6):
+
+- `seat-config.yml` is HACF's defaults: the model of each of the seven roles (every seat on
+  `claude-opus-5-5` today), the sections it reads (`caps.yml` for the context keys) and the keys
+  reserved for later. An upgrade replaces it.
+- `overrides.yml`, beside it, is yours. In TJ's words: "The shipped config holds HACF's defaults.
+  The user's own changes live in a separate overrides file. Upgrades never touch it." No HACF tool
+  writes, creates or deletes it, and it is git-ignored in HACF's own repository; a release export
+  refuses one. Its `schema:` line is optional (`hacf.seat-overrides/v1`). Example, the one-line
+  revert of a seat to Opus:
+  `seats: {scribe: {model: claude-opus-5-5}}`.
+- `presets/<name>.yml` (`hacf.seat-preset/v1`) is read only when `seat-config.yml` names it with
+  `preset:`. v0.6.6 ships none, and an override naming a missing preset is refused.
+
+Precedence is default < preset < override, per role and per key; an override replaces one key's
+value and never merges inside it. `bin/seat-config.py validate` refuses an unknown role or key, a
+reserved key, a bad `effort`, `cap_tokens`, `behaviour` or `reset_scope`, a missing preset and a
+wrong schema, one line each (`<file>: <key path>: <reason>`). `bin/seat-config.py resolve --json`
+prints every value with its source (`default`, `preset:<name>` or `override`).
+
+The context guard takes its caps through `resolve` whenever `seat-config.yml` sits beside the
+`--caps` file; its command line and its decisions are unchanged, and without `seat-config.yml` it
+reads the caps file as before. If the seat config is refused (an invalid `overrides.yml`), the
+guard keeps running on HACF's defaults, logs `caps_source=defaults (seat config refused: ...)` and,
+with `--apply`, raises one durable alert per distinct error: a queue row to `orch-lead@<rig>` and
+one to `operator-agent@kernel`, then a marker under `~/.hacf/<rig>/guard-alerts/`. A failed row is
+retried on the next tick.
+
+A model reaches a running seat only through the commands that `bin/seat-config-upgrade.py` prints
+(`rig seat set-model` / `set-effort`, then a fresh launch); editing these files changes no live
+seat.
+
 ## Permissions
 
 Every seat launches with Claude Code's permission prompts off
@@ -355,6 +389,8 @@ startup/protocol.md             seat addresses, the handoff recipe, how to ask t
 startup/lead-first-move.md      what the lead does before it dispatches anything
 roles.yml                       the role table (roles v2): each role's tools, denies, MCP need and skills
 caps.yml                        the per-role context caps bin/context-guard.sh reads (--caps)
+seat-config.yml                 HACF's per-seat defaults (model); your changes go in overrides.yml beside it
+bin/seat-config.py              validates and resolves seat-config.yml, presets and overrides.yml
 OPS.md                          applying roles.yml to a running rig per seat: probe, rollback
 bin/brief.sh                    the execute/audit brief, from the running rig's own run record
 bin/context-guard.sh            restarts one idle seat over the context cap at a durable point

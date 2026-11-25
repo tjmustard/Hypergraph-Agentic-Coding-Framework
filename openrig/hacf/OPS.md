@@ -134,8 +134,8 @@ python3 openrig/hacf/bin/seat-config-upgrade.py apply --live-spec <live spec dir
 python3 openrig/hacf/bin/seat-config-upgrade.py restore <backup dir>
 ```
 
-- **plan** writes nothing and shows every change: the always-HACF files (roles.yml, caps.yml,
-  OPS.md, bin/*), the adapted files (agents/**, startup/**, CULTURE.md, README.md, HARDENING.md;
+- **plan** writes nothing and shows every change: the always-HACF files (OPS.md, bin/*), the
+  defaults files (roles.yml, caps.yml, seat-config.yml; see the next subsection), the adapted files (agents/**, startup/**, CULTURE.md, README.md, HARDENING.md;
   one that is unmodified HACF text is replaced, a locally edited one is kept and its diff shown,
   `--take-hacf <rel>` replaces it), the one rig.yaml key (`env.ENABLE_CLAUDEAI_MCP_SERVERS`, or
   `rig.yaml: manual (<reason>)` for a shape it does not recognise), each seat's
@@ -153,6 +153,54 @@ python3 openrig/hacf/bin/seat-config-upgrade.py restore <backup dir>
 - **The seat half:** apply never runs `rig seat set-permissions`. Run the printed commands one
   seat at a time as in "Apply, one seat at a time" above. Live seats change at their next fresh
   launch at a durable point, orch-lead last, never by a mass restart (never `rig up`/`rig down`).
+
+### The model lines, hidden defaults and overrides.yml (v0.6.6)
+
+`plan` and `apply` also print, after the seat half, one block per seat saying whether its **model**
+(and effort, when the defaults set one) must change. The "before" is the seat's **live** state from
+`rig ps --nodes --full`, never a file version; the "after" is `bin/seat-config.py` over HACF's
+`seat-config.yml` and your `overrides.yml`.
+
+- **Model lines.** `model <role> <seat>: <live> -> <resolved> (source: default|preset:<n>|override)`,
+  then the `rig seat set-model` (and `set-effort`) command, `rig seat launch <seat> --fresh --stop`,
+  and `rollback: ...` (`set-model <seat> --model claude-opus-5-5`, then the same launch). The lead's
+  block is last and its launch is a planned handover by the operator. A seat already on the resolved
+  value reads `(unchanged)`. An unset model reads `unset (harness default)`; a record with no
+  `model` key reads `live unknown`, with `verify with: rig seat effort <seat>`. Plan and apply print
+  the same lines and run none of them: you run each seat's commands, one seat at a time.
+- **`manual (...)`.** If `rig seat set-model --help` (or `set-effort`) fails on this host, or only
+  prints `rig seat`'s own usage, that command line becomes `model: manual (rig seat set-model not
+  available on <rig --version>)` and the rest still prints.
+- **Hidden defaults.** Where HACF's new default for a role key differs from your live
+  `seat-config.yml` (or is new) and your `overrides.yml` sets that key, plan prints `hidden by your
+  override: <role>.<key> default <old> -> <new>; yours: <value> (overrides.yml); to adopt it, delete
+  that line`, or `override now equals the default: <role>.<key>`. Every default no override hides
+  applies with the upgrade.
+- **overrides.yml is yours.** It is in no copy, backup, restore or checksum, and these tools never
+  write, create or delete it; it stays as you left it through plan, apply, restore and an
+  auto-restore. A locally edited `caps.yml`, `seat-config.yml` or `roles.yml` is kept, with
+  `proposed override: <role>: {<key>: <value>}` lines (the diff for roles.yml); move the change into
+  overrides.yml, then `--take-hacf <rel>` replaces the file. `bin/*` and OPS.md are always replaced.
+
+### Applying and reverting a model (v0.6.6)
+
+The seats that ship a tiered default, and why, are in `dev/telemetry/h5-v066.md`; every other seat
+ships `claude-opus-5-5`. Plan and apply only print the commands; these recipes say what to do with
+them.
+
+- **Apply** (an upgraded or a new team): run `seat-config-upgrade.py plan`, then run the printed
+  `rig seat set-model` (and `set-effort`) commands seat by seat, each at an idle point, then its
+  `rig seat launch <seat> --fresh --stop` line; orch-lead last, by planned handover. Verify each
+  seat with `rig seat effort <seat>` and the whole rig with `rig ps --nodes --full --json`.
+  `rig up` never sets a model: each seat runs on the harness default until the printed commands run.
+- **Revert one seat to Opus:** add `<role>: {model: claude-opus-5-5}` under `seats:` in
+  `overrides.yml`, run `plan`, and run the printed commands for that seat. There is no unset: the
+  revert pins Opus, and a later HACF default for that role stays hidden (plan lists it) until you
+  delete the line.
+- **Revert the whole upgrade:** `seat-config-upgrade.py restore <backup dir>`. It prints each seat's
+  rollback commands and never touches `overrides.yml`.
+- The shipped model ids age while HACF is parked; when an id is retired, override it with the
+  current one.
 
 ## Rig env keys take effect at `rig down`/`rig up` (never a seat's step)
 

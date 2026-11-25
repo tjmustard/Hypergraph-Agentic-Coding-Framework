@@ -36,6 +36,14 @@ Every scorecard also carries `context` (v0.6.4, OPR.99.0.8.3): per seat, per occ
 id), the turns and the peak resident context of the seat's MAIN transcript, where one assistant
 record's context is input_tokens + cache_read_input_tokens + cache_creation_input_tokens.
 `--context-series` also writes `<label>.context.json`, each turn's [ts, context], to --out-dir.
+
+v0.6.6 (OPR.99.0.11.1), additive: every per-seat, per-slice entry carries `models`, `mixed` and
+`usage_by_model` (the four token counts split by the model id that served them), and each
+aggregate slice row carries `mixed` and `size` ({files, lines} of the slice's own commits, read
+with `git show --numstat`). With `--prices <file>` (a `hacf.prices/v1` YAML, see
+dev/telemetry/prices.yml; read with PyYAML, the one non-stdlib import, taken only then) the
+entries also carry `usd` and the aggregate `usd_per_slice`. A model the table lacks gives
+`usd: null` and a reason, never zero.
 """
 
 from __future__ import annotations
@@ -57,6 +65,8 @@ from pathlib import Path
 SCHEMA = "hacf.telemetry/v1"
 AGGREGATE_SCHEMA = "hacf.telemetry.aggregate/v1"
 VERDICT_SCHEMA = "hacf.telemetry.verdict/v1"
+PRICES_SCHEMA = "hacf.prices/v1"
+RATE_KEYS = ("fresh_in", "cache_write", "cache_read", "output")
 UNATTRIBUTED = "unattributed"
 UNKNOWN = "unknown"
 DEFAULT_ADVISOR = "advisor-lead@kernel"
@@ -611,17 +621,108 @@ def loop_fails(loops_dir: Path, slice_id: str, unknowns: list[str]) -> int | Non
     return max(count - 1, 0) if verdict_.group(1).upper() == "PASS" else count
 
 
+# --------------------------------------------------------------------------- prices (H5)
+
+
+def _rate(value: object, where: str) -> float:
+    """Return one rate: a non-negative number, or {usd: <number>, derived: <rule>}.
+
+    Raises:
+        UsageError: naming the key when the rate is malformed.
+    """
+    if isinstance(value, dict):
+        if not isinstance(value.get("derived"), str) or not value["derived"]:
+            raise UsageError(f"malformed --prices: {where} needs a derived: rule")
+        value = value.get("usd")
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        raise UsageError(f"malformed --prices: {where} is not a non-negative number")
+    return float(value)
+
+
+def load_prices(path: Path) -> dict[str, dict]:
+    """Read and validate a `hacf.prices/v1` table; return {model: {rates, long_prompt}}.
+
+    Raises:
+        UsageError: with one line naming the bad key when the file is missing or malformed.
+    """
+    try:
+        import yaml  # dev tooling dependency (pyproject dev group); only --prices needs it
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, ImportError, ValueError) as exc:
+        raise UsageError(f"cannot read --prices {path}: {exc}") from None
+    except Exception as exc:  # yaml.YAMLError
+        raise UsageError(f"malformed --prices: not valid YAML ({type(exc).__name__})") from None
+    if not isinstance(data, dict):
+        raise UsageError("malformed --prices: top level is not a mapping")
+    if data.get("schema") != PRICES_SCHEMA:
+        raise UsageError(f"malformed --prices: schema must be {PRICES_SCHEMA}")
+    for key, want in (("currency", "USD"), ("unit", "per_million_tokens")):
+        if data.get(key) != want:
+            raise UsageError(f"malformed --prices: {key} must be {want}")
+    for key in ("source", "retrieved"):
+        if not data.get(key):
+            raise UsageError(f"malformed --prices: {key} is missing")
+    models = data.get("models")
+    if not isinstance(models, dict) or not models:
+        raise UsageError("malformed --prices: models is missing")
+    table: dict[str, dict] = {}
+    for model, entry in models.items():
+        if not isinstance(entry, dict):
+            raise UsageError(f"malformed --prices: models.{model} is not a mapping")
+        rates = {k: _rate(entry.get(k), f"models.{model}.{k}") for k in RATE_KEYS}
+        long_prompt = None
+        raw = entry.get("long_prompt")
+        if raw is not None:
+            threshold = raw.get("threshold_tokens") if isinstance(raw, dict) else None
+            if not isinstance(threshold, int) or isinstance(threshold, bool) or threshold <= 0:
+                raise UsageError(f"malformed --prices: models.{model}.long_prompt.threshold_tokens")
+            long_prompt = {"threshold_tokens": threshold}
+            for k in RATE_KEYS:
+                if k in raw:
+                    long_prompt[k] = _rate(raw[k], f"models.{model}.long_prompt.{k}")
+                elif k in ("fresh_in", "output"):
+                    raise UsageError(f"malformed --prices: models.{model}.long_prompt.{k}")
+                else:
+                    long_prompt[k] = rates[k]
+        table[str(model)] = {"rates": rates, "long_prompt": long_prompt}
+    return table
+
+
+def record_usd(record: dict, model_prices: dict) -> float:
+    """Return one record's dollars at a model's rates (long-prompt rates above the threshold)."""
+    rates = model_prices["rates"]
+    long_prompt = model_prices["long_prompt"]
+    if long_prompt is not None and turn_context(record) > long_prompt["threshold_tokens"]:
+        rates = long_prompt
+    return (
+        record["input_tokens"] * rates["fresh_in"]
+        + record["cache_creation_input_tokens"] * rates["cache_write"]
+        + record["cache_read_input_tokens"] * rates["cache_read"]
+        + record["output_tokens"] * rates["output"]
+    ) / 1_000_000
+
+
 # --------------------------------------------------------------------------- scorecard
 
 
-def seat_numbers(records: list[dict]) -> dict:
-    """Return the per-seat, per-slice numbers of Mini-requirement 6 for a list of records."""
+def seat_numbers(
+    records: list[dict],
+    prices: dict[str, dict] | None = None,
+    reasons: list[str] | None = None,
+    where: str = "",
+) -> dict:
+    """Return the per-seat, per-slice numbers of Mini-requirement 6 for a list of records.
+
+    The H5 keys (`models`, `mixed`, `usage_by_model`, and `usd` with a price table) come last;
+    a record with no model id is counted under the model "unknown".
+    """
     fresh = sum(r["input_tokens"] for r in records)
     cache_read = sum(r["cache_read_input_tokens"] for r in records)
     cache_write = sum(r["cache_creation_input_tokens"] for r in records)
     output = sum(r["output_tokens"] for r in records)
     times = [r["ts"] for r in records]
-    return {
+    entry = {
         "fresh_in": fresh,
         "cache_read": cache_read,
         "cache_write": cache_write,
@@ -635,6 +736,30 @@ def seat_numbers(records: list[dict]) -> dict:
         ),
         "wall_s": round((max(times) - min(times)).total_seconds(), 3),
     }
+    by_model: dict[str, dict] = {}
+    for r in records:
+        slot = by_model.setdefault(
+            r["model"] or UNKNOWN, {"fresh_in": 0, "cache_write": 0, "cache_read": 0, "output": 0}
+        )
+        slot["fresh_in"] += r["input_tokens"]
+        slot["cache_write"] += r["cache_creation_input_tokens"]
+        slot["cache_read"] += r["cache_read_input_tokens"]
+        slot["output"] += r["output_tokens"]
+    models = sorted({r["model"] for r in records if r["model"]})
+    entry["models"] = models
+    entry["mixed"] = len(models) > 1
+    entry["usage_by_model"] = dict(sorted(by_model.items()))
+    if prices is not None:
+        missing = sorted({(r["model"] or UNKNOWN) for r in records} - set(prices))
+        if missing:
+            entry["usd"] = None
+            if reasons is not None:
+                reasons.append(f"{where}: usd unknown: no price for {', '.join(missing)}")
+        else:
+            entry["usd"] = round(
+                sum(record_usd(r, prices[r["model"] or UNKNOWN]) for r in records), 6
+            )
+    return entry
 
 
 def cost_weighted(fresh: int, cache_write: int, cache_read: int, output: int) -> float | int:
@@ -668,6 +793,7 @@ def build_scorecard(
     advisor: str,
     out_dir: Path,
     loops_dir: Path | None = None,
+    prices: dict[str, dict] | None = None,
 ) -> tuple[dict, dict]:
     """Build one hacf.telemetry/v1 scorecard and the side facts the B0/B1 aggregate needs.
 
@@ -754,12 +880,22 @@ def build_scorecard(
     slice_ids = order + ([UNATTRIBUTED] if has_unattributed else [])
 
     seats_out = []
+    slice_extra: dict[str, dict] = {}
     for seat in view.seats:
         seat_slices = []
         for slice_id in slice_ids:
             records = buckets.get(seat, {}).get(slice_id)
             if records:
-                seat_slices.append({"slice_id": slice_id, **seat_numbers(records)})
+                entry = seat_numbers(records, prices, unknowns, f"{seat}: {slice_id}")
+                seat_slices.append({"slice_id": slice_id, **entry})
+                extra = slice_extra.setdefault(slice_id, {"mixed": False, "usd": 0.0})
+                extra["mixed"] = extra["mixed"] or entry["mixed"]
+                if prices is not None:
+                    extra["usd"] = (
+                        None
+                        if extra["usd"] is None or entry["usd"] is None
+                        else extra["usd"] + entry["usd"]
+                    )
         seats_out.append({"seat": seat, "slices": seat_slices})
 
     first_boundary = {}
@@ -821,6 +957,8 @@ def build_scorecard(
         "models": models,
         "sessions": sessions_used,
         "context_series": context_series,
+        "slice_extra": slice_extra,
+        "boundary_shas": {sid: [b.sha for b in boundaries if b.slice_id == sid] for sid in order},
     }
     return scorecard, side
 
@@ -918,11 +1056,72 @@ def guard_restarts(rig: str, windows: list[tuple[str, datetime, datetime]]) -> i
     return count
 
 
+def slice_size(repo: Path | None, shas: list[str]) -> tuple[dict | None, str | None]:
+    """Return a slice's {files, lines} from `git show --numstat` of its commits, or a reason.
+
+    files counts distinct paths; lines is added + deleted (a binary file adds 0 lines).
+    """
+    if repo is None or not shas:
+        return None, "no slice commits to read"
+    paths: set[str] = set()
+    lines = 0
+    for sha in shas:
+        try:
+            out = git(repo, "show", "--numstat", "--format=", sha)
+        except (OSError, subprocess.CalledProcessError):
+            return None, f"git show failed for {sha[:12]}"
+        for row in out.splitlines():
+            added, _tab, rest = row.partition("\t")
+            deleted, _tab, path = rest.partition("\t")
+            if not path:
+                continue
+            paths.add(path)
+            lines += (int(added) if added.isdigit() else 0) + (
+                int(deleted) if deleted.isdigit() else 0
+            )
+    return {"files": len(paths), "lines": lines}, None
+
+
+def slice_row(sid: str, s: dict, priced: bool, size: dict | None) -> dict:
+    """Return one aggregate slice row; `usd` only with a price table, `size` always."""
+    row = {
+        "slice_id": sid,
+        "total": round_num(s["total"]),
+        "cost_weighted": round_num(s["cost_weighted"]),
+        "escapes": s["escapes"],
+        "mixed": s["mixed"],
+        "size": size,
+    }
+    if priced:
+        row["usd"] = None if s["usd"] is None else round(s["usd"], 6)
+    return row
+
+
+def usd_summary(slices: dict[str, dict], priced: bool) -> dict:
+    """Return {usd_per_slice: {n, median, mean, unknown}} over the priced slices, or nothing."""
+    if not priced:
+        return {}
+    values = [s["usd"] for s in slices.values() if s["usd"] is not None]
+    unknown = len(slices) - len(values)
+    if not values:
+        return {"usd_per_slice": {"n": 0, "median": None, "mean": None, "unknown": unknown}}
+    return {
+        "usd_per_slice": {
+            "n": len(values),
+            "median": round(statistics.median(values), 6),
+            "mean": round(statistics.mean(values), 6),
+            "unknown": unknown,
+        }
+    }
+
+
 def aggregate(
     kind: str,
     rig: str,
     windows: list[tuple[str, datetime, datetime]],
     cards: list[tuple[dict, dict, str]],
+    repo: Path | None = None,
+    priced: bool = False,
 ) -> dict:
     """Build the §8 aggregate (B0 or B1) over a run's scorecards.
 
@@ -935,8 +1134,24 @@ def aggregate(
     resolves: list[tuple[str, dict]] = []
     unattributed = {"total": 0, "cost_weighted": 0.0}
     escapes_unknown = False
+    shas: dict[str, list[str]] = {}
+    resolve_side: dict[str, dict] = {}
+
+    def new_slot() -> dict:
+        return {"total": 0, "cost_weighted": 0.0, "escapes": 0, "mixed": False, "usd": 0.0}
+
+    def add_extra(slot: dict, side: dict, sid: str, share: int) -> None:
+        extra = side.get("slice_extra", {}).get(sid, {})
+        slot["mixed"] = slot["mixed"] or bool(extra.get("mixed"))
+        if priced:
+            usd = extra.get("usd")
+            slot["usd"] = None if slot["usd"] is None or usd is None else slot["usd"] + usd / share
+
     for card, side, _name in cards:
         tokens_of.update(side["subject_token"])
+        for sid, found in side.get("boundary_shas", {}).items():
+            known = shas.setdefault(sid, [])
+            known.extend(sha for sha in found if sha not in known)
         for entry in card["slices"]:
             sid = entry["slice_id"]
             if entry["total"] == UNKNOWN:
@@ -947,10 +1162,12 @@ def aggregate(
                 unattributed["cost_weighted"] += entry["cost_weighted"]
             elif sid.endswith("/resolve"):
                 resolves.append((sid, entry))
+                resolve_side[sid] = side
             else:
-                slot = slices.setdefault(sid, {"total": 0, "cost_weighted": 0.0, "escapes": 0})
+                slot = slices.setdefault(sid, new_slot())
                 slot["total"] += entry["total"]
                 slot["cost_weighted"] += entry["cost_weighted"]
+                add_extra(slot, side, sid, 1)
                 slot["escapes"] = max(slot["escapes"], entry["escapes"])
                 parts = entry.get("escape_parts")
                 if isinstance(parts, dict) and any(v is None for v in parts.values()):
@@ -966,6 +1183,14 @@ def aggregate(
         for target in targets:
             slices[target]["total"] += entry["total"] / len(targets)
             slices[target]["cost_weighted"] += entry["cost_weighted"] / len(targets)
+            add_extra(slices[target], resolve_side[sid], sid, len(targets))
+
+    def size_of(sid: str) -> dict | None:
+        size, reason = slice_size(repo, shas.get(sid, []))
+        if reason:
+            unknowns.append(f"{sid}: size unknown: {reason}")
+        return size
+
     totals = [s["total"] for s in slices.values()]
     weighted = [s["cost_weighted"] for s in slices.values()]
     escapes = [s["escapes"] for s in slices.values()]
@@ -990,16 +1215,9 @@ def aggregate(
         "total": summary(totals),
         "cost_weighted": summary(weighted),
         "escapes_per_slice": round_num(statistics.mean(escapes)) if escapes else None,
+        **usd_summary(slices, priced),
         "escapes_unknown": escapes_unknown,
-        "slices": [
-            {
-                "slice_id": sid,
-                "total": round_num(s["total"]),
-                "cost_weighted": round_num(s["cost_weighted"]),
-                "escapes": s["escapes"],
-            }
-            for sid, s in slices.items()
-        ],
+        "slices": [slice_row(sid, s, priced, size_of(sid)) for sid, s in slices.items()],
         "unattributed": {
             "total": round_num(unattributed["total"]),
             "cost_weighted": round_num(unattributed["cost_weighted"]),
@@ -1126,6 +1344,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-dir")
     parser.add_argument("--context-series", action="store_true")
     parser.add_argument("--loops-dir")
+    parser.add_argument("--prices")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--b0", action="store_true")
     mode.add_argument("--b1", action="store_true")
@@ -1201,11 +1420,25 @@ def run(argv: list[str]) -> int:
     if loops_dir is not None and not loops_dir.is_dir():
         raise UsageError(f"--loops-dir {args.loops_dir} is not a directory")
 
+    prices = None
+    if args.prices:
+        prices = load_prices(Path(args.prices))
+
     cards = []
     for name, since, until in windows:
         label = name if (args.b0 or args.b1) else args.label
         card, side = build_scorecard(
-            rig, since, until, label, db, projects, repo, args.advisor_session, out_dir, loops_dir
+            rig,
+            since,
+            until,
+            label,
+            db,
+            projects,
+            repo,
+            args.advisor_session,
+            out_dir,
+            loops_dir,
+            prices,
         )
         path = write_json(out_dir, unique_name(out_dir, label or "window"), card)
         print(path)
@@ -1214,7 +1447,7 @@ def run(argv: list[str]) -> int:
         cards.append((card, side, path.name))
     if args.b0 or args.b1:
         kind = "B0" if args.b0 else "B1"
-        result = aggregate(kind, rig, windows, cards)
+        result = aggregate(kind, rig, windows, cards, repo, prices is not None)
         print(write_json(out_dir, f"{kind}.json", result))
     return 0
 

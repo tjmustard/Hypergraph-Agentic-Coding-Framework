@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import pwd
+import re
 import shutil
 import signal
 import subprocess
@@ -35,14 +36,18 @@ SCRIBE = "agents/hacf/guidance/scribe.md"
 ALWAYS = (
     "roles.yml",
     "caps.yml",
+    "seat-config.yml",
     "OPS.md",
     "bin/context-guard.sh",
     "bin/seat-rules.py",
     "bin/brief.sh",
     "bin/view-layout.sh",
     "bin/seat-config-upgrade.py",
+    "bin/seat-config.py",
 )
 LEAD, EXEC = f"orch-lead@{RIG}", f"build-execute@{RIG}"
+RECORDED = FIXTURES / "rig-ps-full-0.7.21.json"  # a real 0.7.21 record, normalised (R79)
+NO_PROFILE = FIXTURES / "rig-ps-full-no-profile.json"
 
 FAKE_RIG = r"""#!/usr/bin/env python3
 import json, os, sys, time
@@ -51,7 +56,12 @@ argv = sys.argv[1:]
 with open(os.path.join(d, "argv.log"), "a") as f:
     f.write(json.dumps(argv) + "\n")
 if argv[:1] == ["ps"]:
-    print(open(os.path.join(d, "ps.json")).read())
+    nodes = json.load(open(os.path.join(d, "ps.json")))
+    if "--full" not in argv:  # the real 0.7.21 CLI leaves these out without --full
+        for n in nodes:
+            for key in ("profile", "role", "model", "effort", "effortSource"):
+                n.pop(key, None)
+    print(json.dumps(nodes))
     sys.exit(0)
 if argv[:2] == ["seat", "status"]:
     path = os.path.join(d, "status-%s.json" % argv[2])
@@ -66,6 +76,18 @@ if argv[:2] == ["spec", "validate"]:
         time.sleep(float(open(nap).read()))
     print("validate: stand-in output")
     sys.exit(int(open(code).read()) if os.path.exists(code) else 0)
+if argv[:2] in (["seat", "set-model"], ["seat", "set-effort"]):
+    if "--help" in argv:  # the host probe (MR 5); `help-<verb>.exit` makes it fail
+        code = os.path.join(d, "help-%s.exit" % argv[1])
+        if os.path.exists(os.path.join(d, "help-%s.parent" % argv[1])):
+            print("Usage: rig seat [options] [command]")  # an unknown verb falls back to this
+            sys.exit(0)
+        print("Usage: rig seat %s [options] <seat>" % argv[1])
+        sys.exit(int(open(code).read()) if os.path.exists(code) else 0)
+    sys.exit(98)  # a write verb must never reach the fake: the tests assert it did not
+if argv == ["--version"]:
+    print("0.7.21 (fake)")
+    sys.exit(0)
 sys.exit(97)
 """
 
@@ -83,6 +105,23 @@ def _git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, env=env)
 
 
+def _pin_opus(path: Path) -> None:
+    """Test-local pin (lead ruling P40): these tests assert against all-Opus defaults.
+
+    The shipped seat-config.yml may carry tiered values (OPR.99.0.11.8); only the copy changes.
+    """
+    out, in_seats = [], False
+    for line in path.read_text().splitlines(keepends=True):
+        if line.startswith("seats:"):
+            in_seats = True
+        elif in_seats and line.strip() and not line.startswith(" "):
+            in_seats = False
+        if in_seats:
+            line = re.sub(r"^(  [\w-]+:\s+)\{[^}]*\}", r"\1{model: claude-opus-5-5}", line)
+        out.append(line)
+    path.write_text("".join(out))
+
+
 class World:
     """A temp source checkout, a fake rig, a HOME and a spec library holding one live spec."""
 
@@ -91,13 +130,20 @@ class World:
         self.tmp = tmp
         src = tmp / "src"
         shutil.copytree(HACF, src / "openrig" / "hacf")
+        _pin_opus(src / "openrig" / "hacf" / "seat-config.yml")
         _git(src, "init", "-q")
         real_scribe = (src / "openrig/hacf" / SCRIBE).read_bytes()
+        real = {rel: (src / "openrig/hacf" / rel).read_bytes() for rel in ("roles.yml", "caps.yml")}
         shutil.copyfile(FIXTURES / "old-scribe.md", src / "openrig/hacf" / SCRIBE)
+        for rel in real:  # a fixture's old defaults files are HACF text of the old tag (R87)
+            if (FIXTURES / fixture / rel).is_file():
+                shutil.copyfile(FIXTURES / fixture / rel, src / "openrig/hacf" / rel)
         _git(src, "add", "-A")
         _git(src, "commit", "-qm", "old")
         _git(src, "tag", "v0.0.1")
         (src / "openrig/hacf" / SCRIBE).write_bytes(real_scribe)
+        for rel, data in real.items():
+            (src / "openrig/hacf" / rel).write_bytes(data)
         _git(src, "commit", "-qam", "head")
         self.src = src / "openrig" / "hacf"
         self.script = self.src / "bin" / "seat-config-upgrade.py"
@@ -112,11 +158,10 @@ class World:
         bin_dir.mkdir()
         (bin_dir / "rig").write_text(FAKE_RIG)
         (bin_dir / "rig").chmod(0o755)
-        nodes = [
-            {"rigName": RIG, "canonicalSessionName": LEAD, "profile": "lead"},
-            {"rigName": RIG, "canonicalSessionName": EXEC, "profile": "execute"},
-            {"rigName": "other-rig", "canonicalSessionName": "build-audit@other-rig"},
-        ]
+        recorded = {n["logicalId"]: n for n in json.loads(RECORDED.read_text())}
+        other = dict(recorded["build.audit"], rigName="other-rig")
+        other["canonicalSessionName"] = "build-audit@other-rig"
+        nodes = [recorded["orch.lead"], recorded["build.execute"], other]
         (self.fake / "ps.json").write_text(json.dumps(nodes))
         (self.fake / f"status-{LEAD}.json").write_text(
             json.dumps({"seat_ref": LEAD, "permissions": {"selectionState": "inherit"}})
@@ -340,9 +385,13 @@ def test_g_take_hacf_replaces_a_kept_file(eta: World) -> None:
     assert f"  replace (--take-hacf): {path}" in r.stdout
 
 
-@pytest.mark.parametrize("rel", ["roles.yml", "rig.yaml", "startup/nope.md", "../x"])
+@pytest.mark.parametrize("rel", ["bin/brief.sh", "rig.yaml", "startup/nope.md", "../x"])
 def test_g_take_hacf_outside_the_adapted_set_exits_2(eta: World, rel: str) -> None:
-    """(g) a --take-hacf path outside the adapted set is a usage error."""
+    """(g) a --take-hacf path outside the adapted and defaults sets is a usage error.
+
+    roles.yml moved out of this list: it is a defaults file now (R87), so --take-hacf takes it;
+    bin/brief.sh (always replaced, never kept) stands in as the refused always-set file.
+    """
     original = tree(eta.live)
     assert eta.plan("--take-hacf", rel).returncode == 2
     assert tree(eta.live) == original
@@ -362,10 +411,13 @@ def test_h_no_claude_mcp_and_no_set_permissions(tmp_path: Path, fixture: str) ->
         assert "claude_mcp:" not in path.read_text(), path
     assert w.argv() and not [a for a in w.argv() if "set-permissions" in a]
     assert {a[0] for a in w.argv()} <= {"ps", "seat", "spec"}
-    assert [a for a in w.argv() if a[0] == "seat"] == [
-        ["seat", "status", LEAD, "--json"],
-        ["seat", "status", EXEC, "--json"],
-    ]
+    # the host probes (`seat set-model|set-effort --help`, MR 5) are the only other seat calls
+    seat_calls = [a for a in w.argv() if a[0] == "seat" and "--help" not in a]
+    assert seat_calls == [["seat", "status", LEAD, "--json"], ["seat", "status", EXEC, "--json"]]
+    assert {tuple(a) for a in w.argv() if "--help" in a} == {
+        ("seat", "set-model", "--help"),
+        ("seat", "set-effort", "--help"),
+    }
 
 
 # --- the seat half: orch-lead last (audit iteration 1, MR 6 / OPS.md) ---------------------------
@@ -383,9 +435,8 @@ SEVEN = [  # rig ps lists them by name, so the lead is 4th
 
 def _seven(w: World) -> list[str]:
     """Give the fake rig the seven real seat names (stand-in rig); return them, lead last."""
-    nodes = [
-        {"rigName": RIG, "canonicalSessionName": f"{m}@{RIG}", "profile": role} for m, role in SEVEN
-    ]
+    nodes = json.loads(RECORDED.read_text())
+    assert {(n["canonicalSessionName"].split("@")[0], n["profile"]) for n in nodes} == set(SEVEN)
     (w.fake / "ps.json").write_text(json.dumps(nodes))
     for m, _ in SEVEN:
         status = {"seat_ref": f"{m}@{RIG}", "permissions": {"allow": [], "deny": []}}
@@ -687,3 +738,470 @@ def test_script_is_executable_and_has_no_host_literals() -> None:
     script = HACF / "bin" / "seat-config-upgrade.py"
     assert script.stat().st_mode & 0o111
     assert "/" + "home/" not in script.read_text()
+
+
+# --- OPR.99.0.11.2: the seat half reads `rig ps --full` and takes the role from `profile` -------
+
+ROLES = sorted(role for _m, role in SEVEN)
+RAW_KEYS = {"profile", "role", "model", "effort", "effortSource"}  # `ps` omits these without --full
+
+
+def _planned_roles(text: str) -> list[str]:
+    """The roles a plan's seat half lists, from its `  <session> (<role>):` lines."""
+    found = []
+    for line in text.splitlines():
+        if line.startswith("  ") and line.rstrip().endswith("):") and "@" in line:
+            found.append(line.rsplit("(", 1)[1][:-2])
+    return sorted(found)
+
+
+def _load_script():
+    """Import seat-config-upgrade.py (a hyphenated file) as a module."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "seat_config_upgrade", HACF / "bin" / "seat-config-upgrade.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_recorded_fixture_plans_all_seven_roles(eta: World) -> None:
+    """(a) With the recorded 0.7.21 record, the plan lists all 7 roles and skips none."""
+    _seven(eta)
+    r = eta.plan()
+    assert r.returncode == 1, r.stderr
+    assert _planned_roles(r.stdout) == ROLES
+    assert ": skipped (" not in r.stdout
+    assert ["ps", "--nodes", "--rig", RIG, "--full", "--json"] in eta.argv()
+
+
+def test_b_no_profile_falls_back_to_the_logical_id(eta: World) -> None:
+    """(b) Without `profile`, the member id of the logicalId (last dot) maps all 7."""
+    nodes = json.loads(NO_PROFILE.read_text())
+    assert all("profile" not in n for n in nodes)
+    (eta.fake / "ps.json").write_text(json.dumps(nodes))
+    for m, _role in SEVEN:
+        (eta.fake / f"status-{m}@{RIG}.json").write_text(json.dumps({"permissions": {}}))
+    r = eta.plan()
+    assert r.returncode == 1, r.stderr
+    assert _planned_roles(r.stdout) == ROLES
+    assert ": skipped (" not in r.stdout
+
+
+def test_profile_wins_over_the_logical_id() -> None:
+    """The role is `profile` whenever it is present; the logicalId is only the fallback."""
+    mod = _load_script()
+    assert mod.node_role({"profile": "execute", "logicalId": "build.audit"}) == "execute"
+    assert mod.node_role({"profile": "", "logicalId": "build.execute"}) == "execute"
+    assert mod.node_role({"profile": None, "logicalId": "a.b.red-team"}) == "red-team"
+    assert mod.node_role({"logicalId": "lead"}) == "lead"
+    assert mod.node_role({}) is None
+
+
+def test_the_seat_keeps_model_effort_and_source(eta: World, monkeypatch) -> None:
+    """MR 1: each seat dict carries model, effort and effortSource as the record gave them."""
+    _seven(eta)
+    mod = _load_script()
+    monkeypatch.setenv("PATH", f"{eta.fake.parent / 'bin'}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("FAKE_RIG_DIR", str(eta.fake))
+    out = {s["session"]: s for s in mod.seats(RIG, eta.src)}
+    execute = out[EXEC]
+    assert (execute["model"], execute["effort"], execute["effortSource"]) == (
+        "claude-sonnet-5-5",
+        "medium",
+        "seat_choice",
+    )
+    audit = out[f"build-audit@{RIG}"]
+    assert (audit["model"], audit["effort"], audit["effortSource"]) == (
+        None,
+        None,
+        "runtime_default",
+    )
+
+
+def test_e_unknown_profile_is_skipped_and_reported(eta: World) -> None:
+    """(e) A node whose profile is not in roles.yml is skipped, and the plan says so."""
+    nodes = json.loads(RECORDED.read_text())
+    nodes[0]["profile"] = "bogus"
+    (eta.fake / "ps.json").write_text(json.dumps(nodes))
+    for m, _role in SEVEN:
+        (eta.fake / f"status-{m}@{RIG}.json").write_text(json.dumps({"permissions": {}}))
+    r = eta.plan()
+    assert f"{nodes[0]['canonicalSessionName']}: skipped (no role 'bogus' in roles.yml)" in r.stdout
+    assert len(_planned_roles(r.stdout)) == 6
+
+
+def test_f_the_fake_serves_only_the_recorded_shape(eta: World) -> None:
+    """(f) Every node the fake serves has the key set of the recorded fixture's nodes."""
+    want = {frozenset(n) for n in json.loads(RECORDED.read_text())}
+    assert len(want) == 1
+    (shape,) = want
+    served = json.loads((eta.fake / "ps.json").read_text())
+    assert served and all(set(n) == shape for n in served)
+    assert {frozenset(n) for n in json.loads(NO_PROFILE.read_text())} == {shape - {"profile"}}
+    # without --full the fake answers as the real CLI does: those five keys are gone
+    bin_rig = eta.fake.parent / "bin" / "rig"
+    env = {"FAKE_RIG_DIR": str(eta.fake), "PATH": os.environ["PATH"]}
+    plain = subprocess.run(
+        [str(bin_rig), "ps", "--nodes", "--rig", RIG, "--json"],
+        env=env, capture_output=True, text=True, check=True,
+    )  # fmt: skip
+    assert all(set(n) == shape - RAW_KEYS for n in json.loads(plain.stdout))
+
+
+def test_g_the_normaliser_keeps_only_the_keep_list() -> None:
+    """(g) No key outside the keep-list; a synthetic host name is gone from every string."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "normalise_rig_ps", FIXTURES / "normalise_rig_ps.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    host = "zzhost-7f3a"
+    raw = [
+        {
+            "nodeId": "01SECRETID",
+            "rigName": host,
+            "logicalId": "pod.member",
+            "canonicalSessionName": f"pod-member@{host}",
+            "profile": "execute",
+            "role": None,
+            "model": "m-1",
+            "effort": "low",
+            "effortSource": "seat_choice",
+            "cwd": f"/srv/{host}/proj",
+            "resumeToken": f"tok-{host}",
+            "tmuxAttachCommand": f"tmux attach -t pod-member@{host}",
+            "modelObservation": {
+                "model": "m-1",
+                "observedAt": "2026-01-01T00:00:00Z",
+                "generation": host,
+            },
+        },
+        {"rigName": host, "logicalId": "a.b", "canonicalSessionName": f"a-b@{host}"},
+    ]
+    out = mod.normalise(raw)
+    assert [n["logicalId"] for n in out] == ["a.b", "pod.member"]
+    assert all(set(n) == set(mod.OUT_KEYS) for n in out)
+    assert host not in json.dumps(out)
+    assert (
+        out[1]["canonicalSessionName"] == "pod-member@demo-hacf"
+        and out[1]["rigName"] == "demo-hacf"
+    )
+    assert out[1]["modelObservation"] == {"model": "m-1"}
+    assert "profile" not in mod.normalise(raw, drop_profile=True)[0]
+    # the committed fixtures obey the same rule
+    for path in (RECORDED, NO_PROFILE):
+        for node in json.loads(path.read_text()):
+            assert set(node) <= set(mod.OUT_KEYS)
+            assert node["rigName"] == "demo-hacf" and node["canonicalSessionName"].endswith(
+                "@demo-hacf"
+            )
+
+
+# --- the model half (OPR.99.0.11.7): live state against the resolved defaults and overrides -------
+
+OPUS, SONNET, HAIKU = "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"
+ROLE_OF = {f"{m}@{RIG}": r for m, r in SEVEN}
+
+
+def _live(w: World, models: dict | None = None, drop_model: bool = False) -> list[str]:
+    """Seven seats on the fake rig; `models` maps role -> (model, effort), the rest are on Opus."""
+    want = _seven(w)
+    nodes = json.loads((w.fake / "ps.json").read_text())
+    for n in nodes:
+        if drop_model:
+            n.pop("model", None)
+            n.pop("effort", None)
+        else:
+            n["model"], n["effort"] = (models or {}).get(n["profile"], (OPUS, None))
+    (w.fake / "ps.json").write_text(json.dumps(nodes))
+    return want
+
+
+def _models(out: str) -> list[str]:
+    """The model section of a plan or apply output (stripped), up to the host lines."""
+    lines = out.splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("models ("))
+    end = next(i for i, ln in enumerate(lines) if ln.startswith("host lines"))
+    return [ln.strip() for ln in lines[start + 1 : end]]
+
+
+def _block(lines: list[str], seat: str) -> list[str]:
+    """The lines of one seat's block: its `model <role> <seat>:` line and the commands under it."""
+    start = next(i for i, ln in enumerate(lines) if f" {seat}:" in ln and ln.startswith("model "))
+    out = [lines[start]]
+    for ln in lines[start + 1 :]:
+        if ln.startswith("model "):
+            break
+        out.append(ln)
+    return out
+
+
+def _no_writes(w: World) -> None:
+    """No `rig seat` verb that writes a seat ever reached the fake: only --help probes ran."""
+    for a in w.argv():
+        assert not (a[:2] in (["seat", "set-model"], ["seat", "set-effort"]) and "--help" not in a)
+        assert a[:2] != ["seat", "launch"] and "set-permissions" not in a
+
+
+def test_m_a_a_new_team_prints_every_seat_with_the_lead_last(eta: World) -> None:
+    """(a) live models all unset, shipped defaults: each seat prints commands; the lead is last."""
+    want = _live(eta, {r: (None, None) for _, r in SEVEN})
+    r = eta.plan()
+    assert r.returncode == 1, r.stderr
+    out = _models(r.stdout)
+    for seat in want:
+        role = ROLE_OF[seat]
+        block = _block(out, seat)
+        assert block[0] == (
+            f"model {role} {seat}: unset (harness default) -> {OPUS} (source: default)"
+        )
+        assert f'rig seat set-model {seat} --model {OPUS} --reason "hacf seat-config v0.6.6"' in (
+            block
+        )
+        if seat != LEAD:
+            assert (
+                f"rig seat launch {seat} --fresh --stop   (at an idle point, never mid-MiniPRD)"
+            ) in block
+        assert (
+            f'rollback: rig seat set-model {seat} --model {OPUS} --reason "hacf seat-config '
+            'rollback", then the same launch line'
+        ) in block
+        assert not [ln for ln in block if "set-effort" in ln]  # no effort is set by default
+    assert _order("\n".join(out), "rig seat set-model ") == want and want[-1] == LEAD
+    assert (
+        f"rig seat launch {LEAD} --fresh --stop   "
+        "(planned handover by the operator; not by the lead itself)"
+    ) in _block(out, LEAD)
+    # apply prints the same model lines and runs none of them
+    a = eta.apply()
+    assert a.returncode == 0, a.stdout + a.stderr
+    assert _models(a.stdout) == out
+    _no_writes(eta)
+
+
+def test_m_b_an_override_reverts_a_seat_to_opus(eta: World) -> None:
+    """(b) execute is live on Sonnet, overrides.yml says Opus: Sonnet -> Opus (override)."""
+    _live(eta, {"execute": (SONNET, "medium")})
+    (eta.live / "overrides.yml").write_text(f"seats:\n  execute: {{model: {OPUS}}}\n")
+    out = _models(eta.plan().stdout)
+    block = _block(out, EXEC)
+    assert block[0] == f"model execute {EXEC}: {SONNET} -> {OPUS} (source: override)"
+    assert f'rig seat set-model {EXEC} --model {OPUS} --reason "hacf seat-config v0.6.6"' in block
+    assert len(out) == len(block) + 6  # the six seats on Opus read `(unchanged)`
+    assert sum(ln.endswith("(unchanged)") for ln in out) == 6
+
+
+def test_m_c_a_half_run_prints_only_what_is_left_and_replans_idempotently(eta: World) -> None:
+    """(c) two of the three changed seats already match: only the third prints; then none do."""
+    _live(eta, {"lead": (SONNET, "medium")})  # execute and scribe already on Opus
+    out = _models(eta.plan().stdout)
+    assert [ln for ln in out if ln.startswith("model ") and "->" in ln] == [
+        f"model lead {LEAD}: {SONNET} -> {OPUS} (source: default)"
+    ]
+    assert sum(ln.endswith("(unchanged)") for ln in out) == 6
+    _live(eta)  # the third now matches
+    again = _models(eta.plan().stdout)
+    assert again and all(ln.endswith("(unchanged)") for ln in again)
+    assert not [ln for ln in again if "rig seat" in ln]
+
+
+def test_m_d_hacf_own_rig_set_by_hand_goes_back_to_the_default(eta: World) -> None:
+    """(d) execute was set to Sonnet by hand, the defaults say Opus: Sonnet -> Opus (default)."""
+    _live(eta, {"execute": (SONNET, "medium")})
+    block = _block(_models(eta.plan().stdout), EXEC)
+    assert block[0] == f"model execute {EXEC}: {SONNET} -> {OPUS} (source: default)"
+    assert not [ln for ln in block if "set-effort" in ln]  # no effort in the defaults
+
+
+def _new_default(w: World) -> None:
+    """The live spec holds HACF's seat-config.yml (tagged v0.0.2), then the source moves execute."""
+    shutil.copyfile(w.src / "seat-config.yml", w.live / "seat-config.yml")
+    root = w.src.parents[1]
+    _git(root, "tag", "v0.0.2")
+    path = w.src / "seat-config.yml"
+    old = f"execute:   {{model: {OPUS}}}"
+    assert old in path.read_text()
+    path.write_text(path.read_text().replace(old, f"execute:   {{model: {SONNET}}}"))
+    _git(root, "commit", "-qam", "execute moves")
+
+
+def test_m_e_a_new_default_hidden_by_an_override_is_listed(eta: World) -> None:
+    """(e) the source default for execute.model moves; the override hides it, or now equals it."""
+    _live(eta)
+    _new_default(eta)
+    (eta.live / "overrides.yml").write_text(f"seats:\n  execute: {{model: {HAIKU}}}\n")
+    r = eta.plan()
+    assert (
+        f"  hidden by your override: execute.model default {OPUS} -> {SONNET}; yours: {HAIKU} "
+        "(overrides.yml); to adopt it, delete that line"
+    ) in r.stdout
+    assert "override now equals the default" not in r.stdout
+    assert f"model execute {EXEC}: {OPUS} -> {HAIKU} (source: override)" in _models(r.stdout)
+    (eta.live / "overrides.yml").write_text(f"seats:\n  execute: {{model: {SONNET}}}\n")
+    r = eta.plan()
+    assert "  override now equals the default: execute.model" in r.stdout
+    assert "hidden by your override:" not in r.stdout
+    (eta.live / "overrides.yml").unlink()  # no override: the new default simply applies
+    r = eta.plan()
+    assert "hidden by your override" not in r.stdout and "override now equals" not in r.stdout
+    assert f"model execute {EXEC}: {OPUS} -> {SONNET} (source: default)" in _models(r.stdout)
+
+
+def test_m_f_overrides_yml_is_never_copied_backed_up_restored_or_checksummed(eta: World) -> None:
+    """(f) its bytes survive plan, apply, restore and an auto-restore; it is in no backup or sum."""
+    _live(eta, {"execute": (SONNET, "medium")})
+    path = eta.live / "overrides.yml"
+    mine = f"# mine\nseats:\n  execute: {{model: {OPUS}}}\n".encode()
+    path.write_bytes(mine)
+    mtime = path.stat().st_mtime_ns
+    assert eta.plan().returncode == 1 and path.read_bytes() == mine
+    # an auto-restore after a failed validate
+    (eta.fake / "validate.exit").write_text("1")
+    assert eta.apply().returncode == 1
+    assert path.read_bytes() == mine and path.stat().st_mtime_ns == mtime
+    for backup in eta.backups():
+        shutil.rmtree(backup)
+    (eta.fake / "validate.exit").unlink()
+    # a good apply, then the file is edited, then restore
+    time.sleep(1.1)  # backups are named to the second
+    assert eta.apply().returncode == 0
+    assert path.read_bytes() == mine
+    (backup,) = eta.backups()
+    assert not (backup / "spec" / "overrides.yml").exists()
+    assert "overrides.yml" not in (backup / "SHA256SUMS").read_text()
+    assert "overrides.yml" not in (backup / MANIFEST).read_text()
+    edited = mine + b"# edited between apply and restore\n"
+    path.write_bytes(edited)
+    r = eta.run("restore", str(backup))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert path.read_bytes() == edited
+    # removing the file between apply and restore is fine too, and restore does not recreate it
+    time.sleep(1.1)
+    assert eta.apply().returncode == 0
+    path.unlink()
+    r = eta.run("restore", str(eta.backups()[-1]))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not path.exists()
+
+
+MANIFEST = "added.json"
+
+
+def test_m_g_a_locally_edited_defaults_file_is_kept(eta: World) -> None:
+    """(g) an edited caps.yml is kept with a proposed override; --take-hacf replaces it."""
+    _live(eta)
+    caps = (eta.src / "caps.yml").read_text()
+    edited = caps.replace("cap_tokens: 330000", "cap_tokens: 123456")
+    assert edited != caps
+    (eta.live / "caps.yml").write_text(edited)
+    guard = eta.live / "bin" / "context-guard.sh"
+    guard.parent.mkdir()
+    guard.write_text("#!/bin/sh\n# a local edit\n")
+    guard.chmod(0o755)
+    r = eta.plan()
+    assert (
+        "  keep (locally edited defaults; move your changes to overrides.yml, then "
+        "--take-hacf caps.yml): caps.yml"
+    ) in r.stdout
+    assert "  proposed override: execute: {cap_tokens: 123456}" in r.stdout
+    assert "  replace: bin/context-guard.sh" in r.stdout  # an always-HACF file is still replaced
+    assert eta.apply().returncode == 0
+    assert (eta.live / "caps.yml").read_text() == edited
+    assert guard.read_bytes() == (eta.src / "bin/context-guard.sh").read_bytes()
+    time.sleep(1.1)  # backups are named to the second
+    r = eta.apply("--take-hacf", "caps.yml")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "  replace (--take-hacf): caps.yml" in r.stdout
+    assert (eta.live / "caps.yml").read_text() == caps
+
+
+def test_m_g_an_edited_roles_yml_is_kept_with_its_diff_and_a_seat_config_one_is_proposed(
+    eta: World,
+) -> None:
+    """(g) roles.yml keeps with the unified diff; a seat-config.yml edit proposes its key."""
+    _live(eta)
+    (eta.live / "roles.yml").write_text("roles: {}  # mine\n")
+    (eta.live / "seat-config.yml").write_text(
+        (eta.src / "seat-config.yml")
+        .read_text()
+        .replace(f"execute:   {{model: {OPUS}}}", f"execute:   {{model: {HAIKU}}}")
+    )
+    r = eta.plan()
+    assert "--take-hacf roles.yml): roles.yml" in r.stdout
+    assert "+++ HEAD/roles.yml" in r.stdout
+    assert f"  proposed override: execute: {{model: {HAIKU}}}" in r.stdout
+    assert eta.apply().returncode == 0
+    assert (eta.live / "roles.yml").read_text() == "roles: {}  # mine\n"
+
+
+# --- the host's verbs and a record without a model (MR 5) ---------------------------------------
+
+
+def test_m_h_a_host_without_set_model_prints_manual_and_the_rest_still_prints(eta: World) -> None:
+    """(h) `rig seat set-model --help` exits 1: a manual line replaces the command, nothing else."""
+    _live(eta, {"execute": (SONNET, "medium")})
+    (eta.fake / "help-set-model.exit").write_text("1")
+    r = eta.plan()
+    block = _block(_models(r.stdout), EXEC)
+    assert block[0] == f"model execute {EXEC}: {SONNET} -> {OPUS} (source: default)"
+    assert "model: manual (rig seat set-model not available on 0.7.21 (fake))" in block
+    assert not [ln for ln in block if ln.startswith("rig seat set-model")]
+    assert f"rig seat launch {EXEC} --fresh --stop   (at an idle point, never mid-MiniPRD)" in block
+    assert "rig seat set-permissions" in r.stdout and "host lines" in r.stdout  # the rest prints
+    assert ["--version"] in eta.argv()
+
+
+def test_m_h_a_record_without_a_model_key_reads_live_unknown(eta: World) -> None:
+    """(h) no `model` key at all: every seat reads `live unknown`, with how to verify it."""
+    want = _live(eta, drop_model=True)
+    out = _models(eta.plan().stdout)
+    for seat in want:
+        block = _block(out, seat)
+        assert block[0] == f"model {ROLE_OF[seat]} {seat}: live unknown -> {OPUS} (source: default)"
+        assert f"verify with: rig seat effort {seat}" in block
+    _no_writes(eta)
+
+
+def test_m_h_an_effort_default_prints_its_own_command(eta: World) -> None:
+    """A source default that sets effort adds the effort line and its set-effort command."""
+    _live(eta, {"execute": (OPUS, "low")})
+    path = eta.src / "seat-config.yml"
+    path.write_text(
+        path.read_text().replace(
+            f"execute:   {{model: {OPUS}}}", f"execute:   {{model: {OPUS}, effort: medium}}"
+        )
+    )
+    _git(eta.src.parents[1], "commit", "-qam", "effort")
+    block = _block(_models(eta.plan().stdout), EXEC)
+    assert block[0] == f"model execute {EXEC}: {OPUS} (unchanged)"
+    assert f"effort execute {EXEC}: low -> medium (source: default)" in block
+    assert f'rig seat set-effort {EXEC} --effort medium --reason "hacf seat-config v0.6.6"' in block
+    assert not [ln for ln in block if ln.startswith("rig seat set-model")]
+
+
+def test_m_an_invalid_overrides_file_is_reported_not_crashed(eta: World) -> None:
+    """A malformed overrides.yml gives one manual line for the model half; the plan still ends."""
+    _live(eta)
+    (eta.live / "overrides.yml").write_text("seats: [not, a, mapping]\n")
+    r = eta.plan()
+    assert r.returncode == 1, r.stderr
+    (line,) = _models(r.stdout)
+    assert line.startswith("model: manual (seat-config resolve refused: overrides.yml")
+
+
+def test_m_h_an_unknown_verb_whose_help_falls_back_to_the_parent_usage_is_manual(
+    eta: World,
+) -> None:
+    """The real rig exits 0 for `seat <unknown> --help` and prints `rig seat`'s usage: manual."""
+    _live(eta, {"execute": (SONNET, "medium")})
+    (eta.fake / "help-set-model.parent").write_text("")
+    block = _block(_models(eta.plan().stdout), EXEC)
+    assert "model: manual (rig seat set-model not available on 0.7.21 (fake))" in block
+    assert not [ln for ln in block if ln.startswith("rig seat set-model")]

@@ -38,6 +38,7 @@ tmp/
 .agents/hacf-manifest.json
 /exhaust/
 /.openrig/
+openrig/hacf/overrides.yml
 
 # BEGIN HACF MANAGED BLOCK: gitignore
 .agents/state/

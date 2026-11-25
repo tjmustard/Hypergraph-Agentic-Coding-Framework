@@ -82,8 +82,9 @@ ALLOWED_FILES = {
     "tests/fixtures/.gitkeep",
     "tests/integration/.gitkeep",
 }
-# R65 (known issue K1): a fresh install backs up the settings.json it just wrote. Test 1 allows
-# exactly one such file, not .agents/.backup/**; Tests 2 and 3 still scan it.
+# R65 (known issue K1, removed by KI-6): a fresh install used to back up the settings.json it had
+# just written. It no longer does, so Test 1 allows no such file; Tests 2 and 3 still scan
+# .agents/.backup/**.
 K1_BACKUP = re.compile(r"^\.agents/\.backup/[0-9]{8}T[0-9]{6}Z/\.claude/settings\.json$")
 LORE_FILES = {
     "MAP.md",
@@ -239,10 +240,10 @@ def install(source: Path, target: Path, scratch: Path, env: dict[str, str]) -> I
 
 
 def check_allowlist(done: Installed) -> None:
-    """Test 1: every installed path is on the independent allowlist (plus the one K1 backup)."""
+    """Test 1: every installed path is on the independent allowlist; there is no K1 backup."""
     rels = [rel for rel in files_under(done.target) if rel != "README.md"]
     backups = [rel for rel in rels if K1_BACKUP.match(rel)]
-    assert len(backups) == 1, f"expected exactly one K1 settings.json backup: {backups}"
+    assert len(backups) == 0, f"KI-6 removed the needless settings.json backup: {backups}"
     stray = [rel for rel in rels if not on_allowlist(rel) and rel not in backups]
     assert stray == [], f"installed paths outside the allowlist: {stray}"
 
@@ -360,7 +361,8 @@ def check_round_trip(done: Installed, control_dir: Path) -> None:
     assert not (done.target / ".agents/hacf-manifest.json").exists()
     assert not (done.target / "HACF-uninstall.sh").exists()
     remote = remote_leftovers(done.source, done.head, control_dir, env)
-    extra = {SOURCE_REL, ".agents/state/install/"}
+    # lead ruling P36: the uninstaller removes source.json itself (KI-3); only its directory stays
+    extra = {".agents/state/install/"}
     assert set(after) - set(remote) == extra
     assert {rel: value for rel, value in after.items() if rel not in extra} == remote
 
