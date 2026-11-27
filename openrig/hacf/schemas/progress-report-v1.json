@@ -1,0 +1,385 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hacf.progress-report/v1",
+  "title": "HACF progress report (progress.json)",
+  "description": "Written by openrig/hacf/bin/progress-report.py. Every metric is a value with its source, or null with 'not recorded' and a reason.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "hacf.progress-report/v1"
+    },
+    "generated_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/project"
+      }
+    },
+    "host": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/host"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "generated_at",
+    "projects",
+    "host"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "metric": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": [
+                "number",
+                "string",
+                "object"
+              ]
+            },
+            "source": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "value",
+            "source"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "null"
+            },
+            "status": {
+              "const": "not recorded"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "value",
+            "status",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "headline": {
+      "type": "object",
+      "properties": {
+        "releases": {
+          "$ref": "#/$defs/metric"
+        },
+        "span_days": {
+          "$ref": "#/$defs/metric"
+        },
+        "source_lines_net": {
+          "$ref": "#/$defs/metric"
+        },
+        "test_lines_net": {
+          "$ref": "#/$defs/metric"
+        },
+        "tests": {
+          "$ref": "#/$defs/metric"
+        },
+        "features_shipped": {
+          "$ref": "#/$defs/metric"
+        },
+        "slices": {
+          "$ref": "#/$defs/metric"
+        },
+        "human_decisions": {
+          "$ref": "#/$defs/metric"
+        }
+      },
+      "required": [
+        "releases",
+        "span_days",
+        "source_lines_net",
+        "test_lines_net",
+        "tests",
+        "features_shipped",
+        "slices",
+        "human_decisions"
+      ],
+      "additionalProperties": false
+    },
+    "per_release": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "$ref": "#/$defs/metric"
+        },
+        "days": {
+          "$ref": "#/$defs/metric"
+        },
+        "commits": {
+          "$ref": "#/$defs/metric"
+        },
+        "source_lines": {
+          "$ref": "#/$defs/metric"
+        },
+        "test_lines": {
+          "$ref": "#/$defs/metric"
+        },
+        "unit": {
+          "$ref": "#/$defs/metric"
+        },
+        "integration": {
+          "$ref": "#/$defs/metric"
+        },
+        "e2e": {
+          "$ref": "#/$defs/metric"
+        },
+        "features": {
+          "$ref": "#/$defs/metric"
+        },
+        "slices": {
+          "$ref": "#/$defs/metric"
+        },
+        "first_pass_audit_pct": {
+          "$ref": "#/$defs/metric"
+        },
+        "adrs_stories": {
+          "$ref": "#/$defs/metric"
+        },
+        "tokens_cost": {
+          "$ref": "#/$defs/metric"
+        }
+      },
+      "required": [
+        "date",
+        "days",
+        "commits",
+        "source_lines",
+        "test_lines",
+        "unit",
+        "integration",
+        "e2e",
+        "features",
+        "slices",
+        "first_pass_audit_pct",
+        "adrs_stories",
+        "tokens_cost"
+      ],
+      "additionalProperties": false
+    },
+    "quality": {
+      "type": "object",
+      "properties": {
+        "tests_passing_collected": {
+          "$ref": "#/$defs/metric"
+        },
+        "lint_format_types": {
+          "$ref": "#/$defs/metric"
+        },
+        "licence_check": {
+          "$ref": "#/$defs/metric"
+        },
+        "red_team_findings": {
+          "$ref": "#/$defs/metric"
+        },
+        "audit_rework_rounds": {
+          "$ref": "#/$defs/metric"
+        },
+        "regressions_caught": {
+          "$ref": "#/$defs/metric"
+        },
+        "known_issues_carried": {
+          "$ref": "#/$defs/metric"
+        }
+      },
+      "required": [
+        "tests_passing_collected",
+        "lint_format_types",
+        "licence_check",
+        "red_team_findings",
+        "audit_rework_rounds",
+        "regressions_caught",
+        "known_issues_carried"
+      ],
+      "additionalProperties": false
+    },
+    "human": {
+      "type": "object",
+      "properties": {
+        "questions": {
+          "$ref": "#/$defs/metric"
+        },
+        "decisions": {
+          "$ref": "#/$defs/metric"
+        },
+        "phase3_gates": {
+          "$ref": "#/$defs/metric"
+        },
+        "lore": {
+          "$ref": "#/$defs/metric"
+        }
+      },
+      "required": [
+        "questions",
+        "decisions",
+        "phase3_gates",
+        "lore"
+      ],
+      "additionalProperties": false
+    },
+    "release": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "tag": {
+          "type": "string",
+          "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "commit": {
+          "type": "string"
+        },
+        "window": {
+          "type": "object",
+          "properties": {
+            "since": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "until": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "since",
+            "until"
+          ],
+          "additionalProperties": false
+        },
+        "telemetry_hint": {
+          "type": "string"
+        },
+        "per_release": {
+          "$ref": "#/$defs/per_release"
+        },
+        "quality": {
+          "$ref": "#/$defs/quality"
+        },
+        "human": {
+          "$ref": "#/$defs/human"
+        }
+      },
+      "required": [
+        "version",
+        "tag",
+        "commit",
+        "window",
+        "per_release",
+        "quality",
+        "human"
+      ],
+      "additionalProperties": false
+    },
+    "project": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "rig": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "head": {
+          "type": "string"
+        },
+        "headline": {
+          "$ref": "#/$defs/headline"
+        },
+        "releases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/release"
+          }
+        },
+        "after_latest_tag": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gates_unmapped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totals": {
+          "type": "object",
+          "properties": {
+            "per_release": {
+              "$ref": "#/$defs/per_release"
+            },
+            "quality": {
+              "$ref": "#/$defs/quality"
+            },
+            "human": {
+              "$ref": "#/$defs/human"
+            }
+          },
+          "required": [
+            "per_release",
+            "quality",
+            "human"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "name",
+        "rig",
+        "head",
+        "headline",
+        "releases",
+        "totals"
+      ],
+      "additionalProperties": false
+    },
+    "host": {
+      "type": "object",
+      "properties": {
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "headline": {
+          "$ref": "#/$defs/headline"
+        }
+      },
+      "required": [
+        "projects",
+        "headline"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

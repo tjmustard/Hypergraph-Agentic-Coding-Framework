@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "rig",
+    "--version"
+  ],
+  "exit_code": 0,
+  "git_status_after": [],
+  "stderr": "",
+  "stdout": "0.7.23 (484cbffb)\n",
+  "step": "rig-version"
+}

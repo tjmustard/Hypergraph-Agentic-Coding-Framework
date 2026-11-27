@@ -1,0 +1,6 @@
+# eta's local roles.yml edit as overrides (OPS.md, "Moving a local roles.yml edit into overrides.yml")
+schema: hacf.seat-overrides/v2
+seats:
+  execute: {tools: {remove_deny: [Monitor, TaskStop]}}
+  audit: {tools: {remove_deny: [Monitor, TaskStop]}}
+  lead: {tools: {remove_deny: [Monitor, TaskStop]}}

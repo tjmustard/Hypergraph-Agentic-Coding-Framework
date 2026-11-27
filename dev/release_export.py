@@ -67,6 +67,11 @@ PROFILE_MAX_BYTES = 256 * 1024
 ZERO_SHA = "0" * 40
 PUBLIC_MAIN = "refs/heads/public/main"
 
+# The first release whose row declares `openrig_accepted` (OPR.99.0.14.1, R167), and the shipped
+# contract the gate's `openrig-contract` step reads from the export.
+OPENRIG_ACCEPTED_FROM = "0.6.7"
+CONTRACT_REL = ".agents/config/openrig_contract.yml"
+
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROFILE = Path(__file__).resolve().with_name("release_export.yml")
 
@@ -240,11 +245,16 @@ class Overlay:
 
 @dataclass(frozen=True)
 class Release:
-    """One profile release: its version, private source commit and optional overlay."""
+    """One profile release: its version, private source commit and optional overlay.
+
+    `openrig_accepted` is the release's declared person set of OpenRig versions, which the gate's
+    `openrig-contract` step compares with the exported contract; rows below 0.6.7 have none.
+    """
 
     version: str
     source: str
     overlay: Overlay | None
+    openrig_accepted: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -556,7 +566,7 @@ def load_profile(path: Path) -> Profile:
     releases = []
     for i, row in enumerate(_list("releases", doc["releases"])):
         where = f"releases[{i}]"
-        _keys(where, row, {"version", "source"}, frozenset({"overlay"}))
+        _keys(where, row, {"version", "source"}, frozenset({"overlay", "openrig_accepted"}))
         version = _str(f"{where}.version", row["version"])
         if not VERSION_RE.match(version):
             raise Refusal(f"{where}.version: {version!r} is not MAJOR.MINOR.PATCH")
@@ -573,7 +583,9 @@ def load_profile(path: Path) -> Profile:
             if not paths or len(set(paths)) != len(paths):
                 raise Refusal(f"{where}.overlay.paths: empty or duplicated")
             overlay = Overlay(commit, paths)
-        releases.append(Release(version, _sha(f"{where}.source", row["source"]), overlay))
+        accepted = _openrig_accepted(where, version, row)
+        source = _sha(f"{where}.source", row["source"])
+        releases.append(Release(version, source, overlay, accepted))
     if not releases:
         raise Refusal("releases: the profile has no release")
 
@@ -616,6 +628,26 @@ def load_profile(path: Path) -> Profile:
         allowlist,
         required,
     )
+
+
+def _openrig_accepted(where: str, version: str, row: dict) -> tuple[str, ...] | None:
+    """A release row's `openrig_accepted`: required from 0.6.7, refused below it."""
+    if vkey(version) < vkey(OPENRIG_ACCEPTED_FROM):
+        if "openrig_accepted" in row:
+            first = OPENRIG_ACCEPTED_FROM
+            raise Refusal(f"{where}.openrig_accepted: only rows from {first} carry it")
+        return None
+    if "openrig_accepted" not in row:
+        raise Refusal(f"{where}: missing key 'openrig_accepted'")
+    values = row["openrig_accepted"]
+    if (
+        not isinstance(values, list)
+        or not values
+        or not all(isinstance(v, str) and VERSION_RE.match(v) for v in values)
+        or len(set(values)) != len(values)
+    ):
+        raise Refusal(f"{where}.openrig_accepted: not a non-empty list of unique M.m.p strings")
+    return tuple(values)
 
 
 def strict_hits(value: str) -> bool:
@@ -2425,6 +2457,51 @@ def step_codegraph_live(run: GateRun, out: StepOutcome) -> None:
     out.note = "; ".join(problems) or f"exit {code}; 1 passed; this run's verdict file says 'pass'"
 
 
+def exported_contract(repo: Path, export: str) -> list[tuple[str, Any]] | None:
+    """The `(version, accepted_by)` entries of the export's OpenRig contract; None if unreadable."""
+    shown = git(repo, "show", f"{export}:{CONTRACT_REL}", check=False)
+    if shown.returncode != 0 or yaml is None:
+        return None
+    try:
+        doc = yaml.safe_load(shown.stdout)
+    except (yaml.YAMLError, ValueError, RecursionError):
+        return None
+    entries = doc.get("accepted") if isinstance(doc, dict) else None
+    if not isinstance(entries, list):
+        return None
+    pairs = []
+    for entry in entries:
+        version = entry.get("version") if isinstance(entry, dict) else None
+        if not isinstance(version, str) or not VERSION_RE.match(version):
+            return None
+        pairs.append((version, entry.get("accepted_by")))
+    return pairs
+
+
+def step_openrig_contract(run: GateRun, out: StepOutcome) -> None:
+    """Step 11: the exported contract accepts exactly the row's declared set, by a person (R167)."""
+    declared = run.release.openrig_accepted
+    if declared is None:
+        out.verdict, out.note = "PASS", "not checked (no openrig_accepted on this row)"
+        return
+    entries = exported_contract(run.repo, run.export)
+    if entries is None:
+        out.verdict, out.note = "FAIL", "no readable contract in the export"
+        return
+    out.log += [f"{CONTRACT_REL}: {version} accepted_by {by}" for version, by in entries]
+    others = [version for version, by in entries if by != "person"]
+    if others:
+        out.verdict, out.note = "FAIL", f"watcher entry {', '.join(others)} in the export"
+        return
+    # Sorted lists, not sets: a version the export lists twice must fail.
+    have = ", ".join(sorted((version for version, _ in entries), key=vkey))
+    want = ", ".join(sorted(declared, key=vkey))
+    if have != want:
+        out.verdict, out.note = "FAIL", f"accepted {have} != declared {want}"
+        return
+    out.verdict, out.note = "PASS", f"accepted = declared: {have}"
+
+
 STEPS: list[tuple[str, Callable[[GateRun, StepOutcome], None]]] = [
     ("scan", step_scan),
     ("shape", step_shape),
@@ -2436,6 +2513,7 @@ STEPS: list[tuple[str, Callable[[GateRun, StepOutcome], None]]] = [
     ("install-plain", step_install_plain),
     ("install-codegraph", step_install_codegraph),
     ("codegraph-live", step_codegraph_live),
+    ("openrig-contract", step_openrig_contract),
 ]
 
 

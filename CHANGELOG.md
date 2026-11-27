@@ -7,6 +7,140 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-11-27
+
+### Added
+- `progress-report.py` fills its cost, human, test and gate cells. `--telemetry <dir>` gives tokens
+  and cost, each a list-price equivalent, from the release's own `collect_metrics.py` scorecard
+  (each release's `telemetry_hint` holds the arguments that make it). `--queue rig` (read-only) or
+  `--queue-export <file>` gives questions, answers and decisions by the `hacf:question` /
+  `hacf:answer` tags and their legacy names `question-for-tj` / `tj-answer`.
+  `--junit <X.Y.Z>=<file>` gives tests passing and collected, and `--gates-file <file>` the Phase 3
+  gates; those two take exactly one `--project`.
+- `openrig/hacf/bin/progress-report.py --project <root> [--project <root>]... [--host] --out-dir
+  <dir>`: a read-only, zero-token progress report. It writes `progress.json`
+  (`hacf.progress-report/v1`), `progress.md` and `progress.html` with four sections (headline, per
+  release, quality and safety, human in the loop) and a Total row on each per-release table, per
+  project and, with `--host`, as a roll-up. Every cell without a source reads "not recorded";
+  nothing is estimated, and no model or network is used. `--collect-cases` is opt-in and counts
+  pytest cases per release inside `bwrap`. `--validate` checks a `progress.json`.
+  `seat-config-upgrade.py` carries the tool into a live spec.
+- `openrig/hacf/bin/herdr-view.py --rig <rig> [--fix-size-only] [--dry-run]`: one command for a
+  team's Herdr view. It sets the seats' tmux windows to `window-size latest`, reopens a missing or
+  detached view, lays the seats out from the rig spec (the lead on top, then rows of three), closes
+  only idle shells, restores the focus and writes to no other space. `seat-config-upgrade.py`
+  carries it into a live spec.
+- Question and update routing is config: `seat-config.py resolve --section routing --json`, which
+  every seat now runs before asking (`startup/protocol.md`). The shipped default is the same
+  discovery rule as before; `overrides.yml` may name a fixed session. Question, update and
+  relayed-answer rows carry `hacf:question`, `hacf:update` or `hacf:answer`.
+- Six seat presets in `openrig/hacf/presets/` (`claude-opus-5-5`, `claude-sonnet-5-5`,
+  `claude-haiku-5-5`, `tiered`, `codex`, `agy`), none selected by default. Each states what was
+  tested in a `tested:` line, which `seat-config.py validate` now requires of every preset.
+  `seat-config-upgrade.py` carries `presets/` into a live spec like the other adapted files.
+- `seat-config-upgrade.py` prints an apply line with its effect time for each seat config v2 key
+  (`tools`, `skills`, `instructions`, `harness`, `routing`), renders the resolved `skills` and
+  `instructions` into the live `agents/hacf/agent.yaml` at apply (recorded in
+  `seat-config.rendered.json`), lists default vs override for the new keys, takes
+  `--project-root`, and never copies or writes `agents/hacf/local/`. OPS.md has the recipe that
+  moves a local `roles.yml` edit into `overrides.yml`.
+- Seat config v2 (`hacf.seat-config/v2`, `-overrides/v2`, `-preset/v2`): `tools`, `skills`,
+  `instructions` and `harness` per seat and a top-level `routing` are real keys. Unset routing is
+  the shipped discovery rule. The floor is checked: `AskUserQuestion` stays denied and
+  `codebase-memory-mcp` is never denied. v1 files are still read. A harness other than
+  `claude-code`, `codex` or `pi` is accepted but deferred, and not applied.
+- `seat-rules.py` prints each role's denies with the `tools` edits of `overrides.yml` applied.
+- OpenRig 0.7.23 is in the shipped contract, accepted by the person on a compat REVIEW against 0.7.21
+  (only the slice.yaml template differs: it gained an optional `execution.depends_on` block). Its
+  committed baseline holds the `agy` harness files.
+- The release export gate has an eleventh step, `openrig-contract`: each release row from 0.6.7
+  declares `openrig_accepted`, and the gate fails when the exported contract's versions differ from
+  it or hold a watcher acceptance.
+- The daily OpenRig watcher self-tests HACF's checker on the installed OpenRig against an expectation
+  keyed by that version, and for an accepted patch above the installed version raises one verifiable
+  upgrade request to a configured operator, which it withdraws, supersedes or expires when the facts
+  change. FYI rows tell the row destination before and after. The watcher never upgrades anything.
+- The daily OpenRig watcher keeps an outbox: a queue row is written to disk before it is sent and
+  re-sent with its request id until it lands. `openrig_watch.sh --row-check` sends one verified row,
+  and the installer runs it under the unit's environment when `--row-destination` is given. New
+  install options: `--upgrade-destination`, `--harness` (repeatable) and `--failure-notify-cmd`, a
+  notifier the unit's `OnFailure=` runs when a watcher run fails (a desktop notification is visible
+  only while you are logged in). Each run has a time budget the unit's timeout covers.
+- The OpenRig compat run has a `harness` step (default `agy`, `--harness <name>` repeatable): the
+  candidate's own preset parser loads each community harness's example presets in isolation, the
+  launcher and runner are syntax-checked, the launcher's four cases run against a stub (no real
+  `agy`, model or key), and the example files are compared byte for byte with the baselines. A
+  changed, unreferenced or absent harness is REVIEW and can never be accepted, a broken one is
+  FAIL, and a checker inability is SETUP-ERROR.
+
+### Fixed
+- The progress report shows replans, first-pass audit % and rework rounds as 'not recorded' for a
+  release built before HACF recorded them (v0.6.4), and a CHANGELOG section without an Added heading
+  uses the audited-slice fallback.
+- The progress report shows the collected cases a project's pytest configuration deselects,
+  lists every partly-unknown cell's reason, explains its human-decision and lore columns, and
+  reports a missing Known issues heading as 'not recorded'.
+- A seat's cost no longer reads unknown because of Claude Code's zero-token `<synthetic>` records; a
+  record with zero tokens costs $0 whatever its model.
+- Escape tracking also reads the JSON form of the `escape_tracking: v1` marker.
+- The progress report showed `$0.00` for a release whose seats OpenRig had not sampled;
+  `collect_metrics.py` now also reads seat sessions from OpenRig's `sessions` table, and a release
+  with no telemetry record is 'not recorded'.
+- `dev/telemetry/collect_metrics.py` no longer reports OpenRig's rate-limit-window samples as
+  "samples without a session id", and counts the real ones in a new `samples` key.
+- `seat-config-upgrade.py` replaces a live `roles.yml` that differs from HACF's only in comments
+  or layout (no setting differs), and plan prints its diff; it used to refuse it.
+- A project skill whose `SKILL.md` lacks a `description` or a body is no longer rendered into a
+  seat's skills (OpenRig 0.7.23 would not take it); `seat-config.py` names what is missing.
+- A wildcard `add_deny` that could deny `codebase-memory-mcp` is refused, and so is an
+  `instructions` entry when `agents/hacf/local` itself is a symlink.
+- A skill found only in `<project>/.agents/skills` is no longer rendered for a `claude-code` seat,
+  which OpenRig 0.7.23 would not find.
+- The daily OpenRig watcher stayed silent for a day on a setup error, and an alert whose queue row
+  failed ended in `history.log` only. The first setup error of a stream is now a "checker broke" row
+  (the old latch is cleared on migration), a failed row is retried by later runs, and the steps
+  after the new-version step run after every outcome.
+- Since v0.6.2, an OpenRig compat run on a clean tree (every daily watcher run) ended SETUP-ERROR at
+  the tree step, so OpenRig 0.7.22 and 0.7.23 were never judged. The tree step now commits a clean
+  tree (`--allow-empty`), and the harness provisions the clone's ledger from its own lore anchors,
+  so such a run reaches `delegate-verify` instead of a false FAIL. A watcher picks the fix up only
+  when its worktree is advanced.
+- A compat run on an unlisted in-range OpenRig failed HACF's own oracle tests, which assumed the
+  contract lists exactly the shipped versions (those tests now derive an unlisted version, and the
+  exact contract check outside harness runs tolerates only the watcher entries a harness marker
+  names). A watched template renamed in OpenRig (0.7.23's `sliceManifest`) or missing from the
+  package was a SETUP-ERROR and is now REVIEW; a harness inability is still a SETUP-ERROR, and a
+  seed run stays strict.
+
+### Changed
+- `progress-report.py` reads lore status from `lore_hypergraph.yml` at each tag; each lore file's
+  Status line is used only for a tag without the graph.
+- Every role denies `mcp__treg`, an external paid tool service (TJ).
+- `seat-config-upgrade.py` now **refuses** a locally edited `roles.yml` (it used to keep it): the
+  plan prints the diff and the `overrides.yml` lines that carry the edit, and apply writes nothing.
+  `--take-hacf roles.yml` still replaces it.
+
+### Deprecated
+- `openrig/hacf/bin/view-layout.sh`: use `herdr-view.py`. Its flags, moves and exit codes are
+  unchanged; it now also prints `view-layout.sh is deprecated; use herdr-view.py` on stderr.
+
+### Known issues
+- `harness` values other than `claude-code`, `codex` and `pi` are validated and reported but not
+  applied in v0.6.7.
+- OpenRig 0.7.23 stores a rig's `env:` only when the rig is created (`rigspec-instantiator.js:522`,
+  `:1377`); restore, fresh launch and handover read that stored value, so
+  `ENABLE_CLAUDEAI_MCP_SERVERS` reaches only the seats of rigs created with it. A draft for an
+  upstream report is with TJ, not filed.
+- `harness: agy` (or any community harness) in a seat config is validated and reported but not
+  applied: OpenRig 0.7.23 has no per-seat path for a community harness, so `seat-config-upgrade.py`
+  prints it as deferred.
+- The progress report leaves some cells 'not recorded' by design: Lint / format / types and Licence
+  check (no per-release record exists), Regressions caught (the template defines no source) and the
+  recommended / not split of Decisions (the queue records no chosen option, OpenRig 0.7.23).
+- The progress report's "tracked" rule skips an audited slice that has no `PROGRESS.md` at the tag,
+  so the other slices alone can make its release tracked; for a release with no such file at all,
+  the 'not recorded' reason can name the wrong cause. Both are left for a later release.
+
 ## [0.6.6] - 2026-11-25
 
 ### Added

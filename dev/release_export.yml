@@ -47,6 +47,11 @@ releases:
     source: 1c63d2cc191d522caa135c36a23aac794a967a65
   - version: "0.6.5"
     source: a215447dd24a6e54d13b461e798e842b809b9864
+  - version: "0.6.6"
+    source: 164a428d830881a63e6bb9ecbcfe8b97cb9246f5
+  - version: "0.6.7"
+    source: 11ebf40a12f034a252dab133197ee247fffefc56
+    openrig_accepted: ["0.6.13", "0.7.16", "0.7.21", "0.7.23"]
 exclude:
   # HACF's own development records (private).
   - path: lore/

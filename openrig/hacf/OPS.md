@@ -178,9 +178,10 @@ python3 openrig/hacf/bin/seat-config-upgrade.py restore <backup dir>
   applies with the upgrade.
 - **overrides.yml is yours.** It is in no copy, backup, restore or checksum, and these tools never
   write, create or delete it; it stays as you left it through plan, apply, restore and an
-  auto-restore. A locally edited `caps.yml`, `seat-config.yml` or `roles.yml` is kept, with
-  `proposed override: <role>: {<key>: <value>}` lines (the diff for roles.yml); move the change into
-  overrides.yml, then `--take-hacf <rel>` replaces the file. `bin/*` and OPS.md are always replaced.
+  auto-restore. A locally edited `caps.yml` or `seat-config.yml` is kept, with
+  `proposed override: <role>: {<key>: <value>}` lines; move the change into overrides.yml, then
+  `--take-hacf <rel>` replaces the file. A locally edited `roles.yml` is refused (v0.6.7, below).
+  `bin/*` and OPS.md are always replaced.
 
 ### Applying and reverting a model (v0.6.6)
 
@@ -202,15 +203,116 @@ them.
 - The shipped model ids age while HACF is parked; when an id is retired, override it with the
   current one.
 
-## Rig env keys take effect at `rig down`/`rig up` (never a seat's step)
+### Moving a local roles.yml edit into overrides.yml (v0.6.7)
 
-A rig-level or member `env:` key in the live spec reaches a seat only when the whole rig is
-brought down and up again (KI-opsa-1). `rig seat launch --fresh` does not re-read it (OPS-A,
-KI-opsa-1), so a fresh launch of one seat does not apply a changed key.
-That restart is a whole-rig action at an idle point, and it is the operator's or the
-person's call: a seat never runs `rig down` or `rig up` itself.
+Since v0.6.7, `plan` and `apply` **refuse** a locally edited `roles.yml`: keeping it would hide
+HACF's new defaults, and replacing it would deny your tools again at the next fresh launch. The
+edit moves into `overrides.yml`, which is yours and which no HACF tool writes. A `roles.yml` that
+differs from HACF's only in comments or layout is not refused: it is replaced, with its diff shown.
+The example is a rig that allows `Monitor` and `TaskStop` on execute, audit and lead.
+
+1. Write `overrides.yml` in the live spec **first**:
+
+   ```yaml
+   schema: hacf.seat-overrides/v2
+   seats:
+     execute: {tools: {remove_deny: [Monitor, TaskStop]}}
+     audit: {tools: {remove_deny: [Monitor, TaskStop]}}
+     lead: {tools: {remove_deny: [Monitor, TaskStop]}}
+   ```
+
+2. Run `plan`. It refuses (exit 1) and prints the diff, the `overrides.yml` lines that carry your
+   `tools_deny` edit and `next: overrides.yml already carries these`. If it names anything
+   `not expressible in overrides.yml`, decide about that by hand before the next step: HACF's file
+   replaces it.
+3. Run `plan --take-hacf roles.yml`, read it, then `apply --take-hacf roles.yml`.
+4. Run each seat's printed `rig seat set-permissions` line, then its fresh launch at an idle point
+   (`rig seat launch <seat> --fresh --stop`), one seat at a time, orch-lead last.
+5. Verify each seat with `rig seat status <seat> --json`: its rules lack `Monitor` and `TaskStop`.
+
+### Seat config v2: when each key takes effect (v0.6.7)
+
+Pass `--project-root <project>` to `plan` and `apply` so the project's own skills count as known.
+After the model lines, the `keys (...)` section prints what is still owed. This script runs none of
+it.
+
+| Key | Apply path | Takes effect |
+|---|---|---|
+| `tools` | the seat's `rig seat set-permissions` line | at the next fresh launch |
+| `skills` | `apply` renders the role's `uses.skills` in the live `agents/hacf/agent.yaml` | at the next fresh launch |
+| `instructions` | `apply` renders the role's `startup.files` entries after its guidance file | at the next fresh launch |
+| `harness` (`claude-code`, `codex`, `pi`) | the printed `rig seat set-runtime` line | when the successor confirms the handover |
+| `routing` | none: each seat reads it through `seat-config.py resolve --section routing` | read live |
+
+- Any other `harness` value, such as a community harness, is **deferred in v0.6.7** (OpenRig 0.7.23
+  has no per-seat path for it): plan names it and nothing applies it.
+- If `agent.yaml` has a shape the render does not recognise, plan prints
+  `<key> <role>: manual (<reason>)`; that role is not rendered and the rest applies.
+- `seat-config.rendered.json` in the live spec records what apply rendered, so a later upgrade
+  replaces and re-renders that file instead of keeping it as your edit.
+- A config `seat-config.py` refuses gives `manual` lines in place of the rules and keys; an
+  `agent.yaml` an earlier apply rendered is then left as it is.
+- `agents/hacf/local/` holds your instruction files. Like `overrides.yml`, it is in no copy,
+  backup, restore or checksum, and no HACF tool writes it.
+
+## Rig env keys are stored when a rig is created (never a seat's step)
+
+A rig-level or member `env:` key reaches a seat from the copy OpenRig stores when it creates the rig
+from its spec. Editing the live spec of an existing rig changes nothing for it (OPR.99.0.14.6,
+OpenRig 0.7.23). `rig seat launch --fresh` does not re-read it, so a fresh launch of one seat does
+not apply a changed key. Restoring the same rig does not re-read it either.
+Only a new team created from the spec stores the new value: it starts without the old conversations,
+and the old rig is archived. That is the operator's or the person's call: never a seat's step, and
+a seat never runs `rig down` or `rig up` itself.
 Until then, roles v2's bare denies cover the claude.ai connectors.
 Never take the rig down and up to apply a seat rule; seat rules take a fresh launch per seat.
+
+## The Herdr team view (herdr-view.py)
+
+`bin/herdr-view.py` puts one team's Herdr view in order. Run it after each of these, and
+after a resume:
+
+- a launch with `rig up`, which the tool never runs;
+- a return with `rig up <name> --existing`, which the tool never runs.
+
+```sh
+python3 <hacf checkout>/openrig/hacf/bin/herdr-view.py --rig <rig> --dry-run   # the plan; writes nothing
+python3 <hacf checkout>/openrig/hacf/bin/herdr-view.py --rig <rig>
+```
+
+In order, it:
+
+1. sets each seat's tmux window to `window-size latest` where it is anything else;
+2. opens the team's Herdr space with `rig terminal open` when none is labelled `<rig>`, or closes
+   and reopens one whose panes show `detached (from session` (only when every pane in it is a seat
+   pane or an idle shell);
+3. lays the seats out from the rig's spec: the lead full width on top, then rows of three (pods
+   `orch`, `build`, `desk`, `spec`, then any other pod). A view already in the rows is not moved;
+4. closes idle shells, and gives the focus back to the space that had it.
+
+It writes to no other space, never swaps panes, and types nothing into a pane.
+
+**Dotted filler on the right of every pane** means the seat's tmux window was left at
+`window-size manual`, 80x24. To fix only that, with no Herdr call:
+
+```sh
+python3 <hacf checkout>/openrig/hacf/bin/herdr-view.py --rig <rig> --fix-size-only
+```
+
+**The idle-shell rule.** A pane is closed only when all of these hold: its label is not a seat's;
+Herdr reports no agent for it; its one foreground process is its own shell, named `bash`, `zsh`,
+`sh`, `fish` or `dash`; and that shell has no child process. Any other pane in the lead's tab moves
+to a tab of its own.
+
+`--dry-run` lists every close and move, in order. For a space that would be reopened it stops at the
+reopen, since the new panes do not exist yet.
+
+Exit 0: arranged, already arranged, or nothing to do (one line says which). Exit 1: a `rig`, `tmux`
+or `herdr` call failed, the final layout is not the planned one, focus was not restored, or the
+space was left alone (two spaces with the label, or a detached one holding other panes). Exit 2:
+usage.
+
+`bin/view-layout.sh` is deprecated. It behaves as before and now says so on stderr.
 
 ## OPS-A: rig hacf's live spec only
 

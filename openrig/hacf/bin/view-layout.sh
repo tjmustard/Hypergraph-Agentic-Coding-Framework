@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # usage: view-layout.sh --rig <name> [--provider herdr|tmux] [--dry-run]
+# Deprecated: use herdr-view.py (OPS.md, "The Herdr team view").
 #
 # Arranges a HACF OpenRig team's Herdr view into the recommended rows:
 #
@@ -28,6 +29,7 @@
 # view found, or the provider is not installed (one line says which). Exit 1: `rig ps` or a Herdr call failed, or the result is
 # not the layout. Exit 2: usage.
 set -u
+echo "view-layout.sh is deprecated; use herdr-view.py" >&2
 exec python3 -I - "$@" <<'PY'
 import argparse
 import json

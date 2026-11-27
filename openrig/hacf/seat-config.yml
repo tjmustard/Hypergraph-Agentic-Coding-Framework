@@ -4,32 +4,64 @@
 # it, which no HACF tool ever writes, creates, edits or deletes, and which an upgrade never
 # touches. Precedence, per role and per key: this file's default < the named preset < overrides.yml.
 # bin/seat-config.py validate checks all of it; bin/seat-config.py resolve prints the result with
-# the source of each value (default, preset:<name> or override).
+# the source of each value (default, preset:<name> or override; tools and skills join the layers
+# that changed the list, e.g. default+override).
 #
-# sections: the files this config reads for the keys it does not hold itself.
-#   context  caps.yml  : cap_tokens, behaviour and reset_scope per role (the context guard reads
-#                        them through bin/seat-config.py; caps.yml stays the tripwire's source)
-#   tools    roles.yml : tools allow/deny per role. It is resolved from roles.yml only from the
-#                        version after v0.6.6; v0.6.6 reads no tool key from here.
-# keys of a seat entry in this file: model, effort (low|medium|high|xhigh|max). overrides.yml and
-#   presets may also set the context keys cap_tokens, behaviour and reset_scope.
+# Keys of a seat, where each may be set, and its default:
+#   model         here, overrides.yml, a preset.   Default: this file.
+#   effort        here, overrides.yml, a preset (low|medium|high|xhigh|max). Default: this file.
+#   tools         overrides.yml, a preset: {add_deny: [tool], remove_deny: [tool]}. Default: the
+#                 role's tools_deny in roles.yml. bin/seat-rules.py prints the resolved list.
+#   skills        overrides.yml, a preset: {add: [skill], remove: [skill]}. Default: the role's
+#                 uses.skills in agents/hacf/agent.yaml.
+#   instructions  overrides.yml, a preset: [local/<file>], your own guidance files, each a regular
+#                 file up to 64 KiB under agents/hacf/local/. No HACF tool writes that directory.
+#                 Default: none.
+#   harness       overrides.yml, a preset: the runtime. Default: the role's preferences.runtime in
+#                 agents/hacf/agent.yaml. A harness other than claude-code, codex, pi is accepted
+#                 but deferred in v0.6.7: it is reported and not applied.
+#   cap_tokens, behaviour, reset_scope  overrides.yml, a preset. Default: caps.yml.
+#   routing       top level, here and overrides.yml, never a preset: where questions and updates
+#                 go (question.destination, update.destination: {rule: discover} or
+#                 {session: <name>@<rig>}), with tags and format. Per key, this file <
+#                 overrides.yml. An unset destination is the discovery rule. The shipped
+#                 values and what discover does are at the routing: block below.
+# Precedence, per role and per key: default < preset < override. A later layer replaces the value,
+# except tools and skills: each layer's removes, then its adds, edit the default list.
+# The floor: AskUserQuestion is always denied and codebase-memory-mcp is never denied. No key adds
+# an allow rule.
+# sections: the files this config reads for the defaults it does not hold itself.
 # preset: the name of presets/<name>.yml to apply between these defaults and overrides.yml, or
-#   null. v0.6.6 ships no preset. presets/ is HACF's: a later plan adds and replaces shipped
-#   presets, and removes a live preset HACF no longer ships only when its blob is HACF's own text
-#   (otherwise it is kept and reported). An override naming a missing preset is refused.
-# reserved: keys later versions will fill (harness, instructions, skills, tools, mcp). They are
-#   refused anywhere today, so a typo cannot pass for a setting.
+#   null. Naming a missing preset is refused, and so is a preset without a non-empty tested: line.
+#   presets/ is HACF's. bin/seat-config-upgrade.py adds a shipped preset missing from a live spec,
+#   replaces one that is unmodified HACF text, keeps a locally edited one and prints its diff
+#   (--take-hacf presets/<name>.yml replaces it), and keeps and lists a preset only the live spec
+#   holds.
+# reserved: mcp is refused anywhere, so a typo cannot pass for a setting.
+# A file that declares a v1 schema is still read, with v1's keys; the new keys need v2.
 #
 # Models reach a running seat only through the commands that bin/seat-config-upgrade.py prints
 # (rig seat set-model / set-effort, then a fresh launch). Nothing here changes a live seat.
 # The tiered models below are the seats that held in the v0.6.6 H5 experiment; the others stay on
 # Opus. The verdict and its numbers: dev/telemetry/h5-v066.md.
-schema: hacf.seat-config/v1
+schema: hacf.seat-config/v2
 sections:
   context: caps.yml
   tools: roles.yml
+  skills: agents/hacf/agent.yaml
+  harness: agents/hacf/agent.yaml
 preset: null
-reserved: [harness, instructions, skills, tools, mcp]
+reserved: [mcp]
+# Where a seat's questions and updates go (startup/protocol.md, "Asking the person"), read through
+# bin/seat-config.py resolve --section routing. discover is protocol.md's two-step rule: the
+# advisor when one runs, else the person. An overrides.yml sets {session: <address>} under
+# question or update to route to a fixed seat. Presets may not set routing. No address, rig name
+# or path is shipped here.
+routing:
+  question: {destination: {rule: discover}}
+  update:   {destination: {rule: discover}}
+  tags: {question: "hacf:question", update: "hacf:update", answer: "hacf:answer", extra: []}
+  format: {options: "A/B/C", recommended: required}
 seats:
   lead:      {model: claude-opus-5-5}
   architect: {model: claude-opus-5-5}

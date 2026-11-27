@@ -1,0 +1,35 @@
+Usage: rig proof add [options] <slice-path>
+
+Drop a proof artifact: authors the C1 frontmatter from flags, writes
+<slice>/proof/<name>, echoes the parsed header. Contract/self-check/C8 outputs
+are advisories (exit 0) — never gates.
+
+Options:
+  --mission <name>         Hint mission when slice-path is just NN-slug
+  --artifact-type <type>   C1 artifact_type, one of: guard | qa | rev1-r1 |
+                           rev1-r2 | adjudication
+  --verdict <verdict>      C1 verdict, one of: CLEAR | BLOCKING | CONCERNING |
+                           PASS | NOT-CLEAR
+  --candidate-sha <sha>    C1 candidate_sha — the join key (convention C2): the
+                           proven candidate tip this artifact judges
+  --money-evidence <line>  C1 money_evidence — the one line of money evidence
+  --slice-id <dot-id>      C1 slice dot-ID (defaults to the slice frontmatter
+                           id)
+  --file <path>            Artifact body from a file (mutually exclusive with
+                           --body)
+  --body <text>            Artifact body inline (mutually exclusive with --file)
+  --name <filename>        Markdown artifact filename in proof/ (defaults to the
+                           --file stem plus .md, else
+                           <artifact-type>-<verdict>-<UTC>.md)
+  --replace                Explicitly replace an existing Markdown artifact
+  --evidences <refs>       D2 attestation: comma-separated proof-contract item
+                           refs this artifact covers (item text or 1-based
+                           index)
+  --self-check <text>      D2 attestation: the agent's assertion that it LOOKED
+                           at the evidence and confirmed it shows the claim
+  --media <refs>           Corrective §3.4: comma-separated media refs (relative
+                           to the slice proof/ dir) this drop stands behind —
+                           appended to the artifact body as markdown refs so the
+                           composer curates them into delivered.items[].proof
+  --json                   JSON output for agents
+  -h, --help               display help for command

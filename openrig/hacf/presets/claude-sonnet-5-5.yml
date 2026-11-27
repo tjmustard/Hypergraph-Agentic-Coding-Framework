@@ -1,0 +1,14 @@
+# Every seat on Claude Sonnet 5.5. It sets only model, so a default effort (execute: medium) still
+# applies under it.
+# Select it with `preset: claude-sonnet-5-5` in seat-config.yml; none is selected by default. Your
+# overrides.yml still wins over every value here. This file is HACF's: an upgrade replaces it.
+schema: hacf.seat-preset/v2
+tested: "partial: H5 v0.6.6, execute held and lead not held on claude-sonnet-5-5 medium (dev/telemetry/h5-v066.md); the other seats not tested on HACF"
+seats:
+  lead:      {model: claude-sonnet-5-5}
+  architect: {model: claude-sonnet-5-5}
+  red-team:  {model: claude-sonnet-5-5}
+  resolve:   {model: claude-sonnet-5-5}
+  execute:   {model: claude-sonnet-5-5}
+  audit:     {model: claude-sonnet-5-5}
+  scribe:    {model: claude-sonnet-5-5}

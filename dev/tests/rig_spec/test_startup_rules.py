@@ -132,3 +132,24 @@ def test_a_dropped_rule_is_named() -> None:
     assert phrase in text
     assert "no-no-verify" in missing_rules(text.replace(phrase, ""))
     assert "no-no-verify" not in missing_rules(text)
+
+
+def test_protocol_and_guidance_follow_the_routing_config() -> None:
+    """OPR.99.0.14.5: routing resolves first, discovery stays as rule and fallback, rows tag."""
+    raw = (RIG_DIR / "startup" / "protocol.md").read_text(encoding="utf-8")
+    text = squash(raw)
+    for phrase in (
+        'seat-config.py" resolve --section routing --json',
+        "discover",
+        "rig ps --nodes --rig kernel --json",
+        "rig gateway human list --json",
+        "When the command fails or prints no JSON, use the discovery steps",
+        "canonicalSessionName",
+    ):
+        assert phrase in text, phrase
+    blocks = re.findall(r"```sh\n(.*?)```", raw, re.S)
+    creates = [b for b in blocks if "rig queue create" in b]
+    assert len(creates) == 2 and all("--tags " in b for b in creates), creates
+    for name in ("lead.md", "architect.md"):
+        path = RIG_DIR / "agents" / "hacf" / "guidance" / name
+        assert "resolve --section routing" in squash(path.read_text(encoding="utf-8")), name

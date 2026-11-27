@@ -1,0 +1,52 @@
+Usage: rig proof [options] [command]
+
+Capture evidence (add), record an attributed item judgment (judge), and read
+derived readiness (show). Capture, policy acceptance, higher outcome judgment
+and publication are separate.
+
+Options:
+  --workspace <path>            Capture/add only: override workspace root;
+                                show/judge use the selected daemon workspace
+  -h, --help                    display help for command
+
+Commands:
+  show [options] [scope]        Read current attributed proof readiness for a
+                                slice, mission or active project; no status
+                                files are changed. Prefix the scope with
+                                <project>: (or pass --project) to read a catalog
+                                project.
+  judge [options] <scope-item>  Record one attributed item judgment and derive
+                                readiness. Use mission/slices/slice#item (index,
+                                text or ID), optionally prefixed <project>: for
+                                a catalog project. Policy inherits
+                                proofPolicy.judges from owning slice, mission or
+                                project.
+  add [options] <slice-path>    Drop a proof artifact: authors the C1
+                                frontmatter from flags, writes
+                                <slice>/proof/<name>, echoes the parsed header.
+                                Contract/self-check/C8 outputs are advisories
+                                (exit 0) — never gates.
+  help [command]                display help for command
+
+The selected daemon owns show/judge. Scope addresses are mission/slices/slice#item.
+The project owner selects proofPolicy: { judges: [exact-seat-address] } in the
+owning slice.yaml, mission.yaml or project.yaml (nearest wins; no default gate roles).
+By default an item's latest judgment from any listed judge decides it. Add
+everyJudge: true to require every listed judge's own current accept: one judge's
+accept then can't hide another's reject, withdraw, missing judgment or stale
+evidence. Turning it on is a policy change, so earlier judgments must be recorded
+again. rig proof show lists each judge's own latest judgment either way.
+The contract is the authored ## Proof contract. A sole item needs no # selector.
+
+Example (existing evidence, no copied hashes or operation key):
+  rig proof judge trial/slices/01-build#1 --verdict accept --reason 'Observed the promised outcome' --evidence proof/result.md
+  rig proof show trial --json
+  rig proof judge trial/slices/01-build#1 --verdict withdraw --reason 'The result no longer supports acceptance'
+
+Corrections retain prior receipts in proof/judgments/. --replace deliberately
+reaffirms a historical identical judgment after a correction; an ordinary retry
+returns its original receipt plus current readiness and never reinstates old truth.
+Use judge --help for patch-equivalent comparison receipts and advanced identities.
+Legacy proof add artifacts may be referenced directly; queue done and stored
+checkboxes do not accept an item under the selected proof policy.
+

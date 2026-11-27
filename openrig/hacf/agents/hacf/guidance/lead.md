@@ -75,15 +75,16 @@ compaction or a restart.
 The defaults learned running the pipeline are in `protocol.md`, "Defaults learned the hard
 way", and hold on every run unless the person says otherwise: fresh context per stage run, the
 `/clear` mechanics, nudging a just-cleared seat, loop files outside the repository, the test-run
-rule, and escalation to the advisor when one exists. The parts that are yours:
+rule, and escalation to the question destination that protocol.md's routing step resolves. The
+parts that are yours:
 
 - **Clear before you dispatch.** Before every new slice and every audit or fix round:
   `rig send <seat> "/clear" --raw --wait-for-idle 60`, and dispatch only after the output says
   `Sent to`. Then hand off the row, `rig send` the seat a one-line nudge naming it, and check
   `rig queue show <id>` shows it claimed — the wake can fail after a clear ("Recipient binding
   changed").
-- **Escalate** to the advisor when `rig ps --nodes --rig kernel --json` lists a running
-  `advisor.lead` seat, else raise a human row. A relayed answer is quoted verbatim with the row
+- **Escalate** to the question destination that protocol.md's routing step resolves
+  (`seat-config.py resolve --section routing`). A relayed answer is quoted verbatim with the row
   id; only a row the person answered is their word.
 
 **Per-run grants** (`protocol.md`, "Per-run grants") are the person's to give for one run and

@@ -7,7 +7,8 @@ What it reads, and nothing else:
 - a SNAPSHOT COPY of the OpenRig database (`openrig.sqlite` plus `-wal` and `-shm`, copied with
   plain file reads into a private dir, checked with `PRAGMA quick_check`, removed before exit). The
   source path is never passed to sqlite. Only the `usage_samples`, `context_usage` and `queue_items`
-  columns named in REQUIRED_COLUMNS are selected; never a text column such as `queue_items.body`.
+  columns named in REQUIRED_COLUMNS and the `sessions` columns named in SESSION_COLUMNS are
+  selected; never a text column such as `queue_items.body`.
 - from the seats' Claude Code JSONL transcripts: per assistant record only the timestamp, request
   id, message id, model id and the four `usage` token counts. Never message text.
 - `git log` of the repository (commit times, subjects, trailers) and the slices' PROGRESS.md
@@ -16,15 +17,27 @@ What it reads, and nothing else:
   `hacf-loop-<slice id>.md` in that dir, as a backfill for slices whose PROGRESS.md has no
   `audit_failed` line (FAILs = Iteration - 1 after a PASS, else Iteration).
 A slice's `blocked` part is unknown (null) when its PROGRESS.md has neither an `audit_failed` nor a
-`blocked` line, unless an `executing` line's detail carries `escape_tracking: v1`, which the
-builder writes once halts are recorded.
+`blocked` line, unless an `executing` line's detail carries `escape_tracking: v1` (the contract
+text; the JSON form `"escape_tracking":"v1"` is read too), which the builder writes once halts are
+recorded.
 
 A slice's escapes are its audit FAILs, its builder halts (`blocked`) and the later commits that
 repin, block-change or replan it (an `HACF-Repin`, `HACF-Block-Changed` or `HACF-Replan-Of`
 trailer, or a `resolve: replan` subject naming it), one per commit; `escape_parts` gives each part
 (null when its source is missing) and `escapes` their known sum.
 
-A missing table, column or file becomes a reason in `unknowns`, never a crash or a wrong number.
+A seat's session ids come from three sources, as one set: in-window `context` samples,
+`context_usage`, and (v0.6.7, OPR.99.0.15.4) the `sessions` table's `claude_id` rows whose occupancy
+overlaps the window. The occupancy only chooses which transcripts to open: a record counts by its
+own timestamp.
+
+A missing table, column or file becomes a reason in `unknowns`, never a crash or a wrong number;
+only an absent `sessions` table adds none (older OpenRig databases). Seats with no transcript record
+in the window give unknown token totals, never 0.
+
+OpenRig's `provider_window` samples (the rate-limit windows) carry no session and no tokens by
+OpenRig's design, so they are not a gap. A `context` sample without a session is counted in the
+scorecard's `samples` and never attributed to a session by time.
 
 Usage:
   collect_metrics.py --since <ISO> --until <ISO> [--label <name>] [options]   one scorecard
@@ -79,6 +92,8 @@ REQUIRED_COLUMNS = {
     "context_usage": ("session_name", "session_id", "transcript_path"),
     "queue_items": ("qitem_id", "ts_created", "source_session", "destination_session"),
 }
+# optional: a database without the table is read as before
+SESSION_COLUMNS = ("session_name", "resume_type", "resume_token", "created_at", "last_seen_at")
 CONTEXT_KEYS = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 USAGE_KEYS = (
     "input_tokens",
@@ -96,7 +111,10 @@ LOOP_ITERATION_RE = re.compile(r"^- Iteration:\s*(\d+)\b", re.MULTILINE)
 LOOP_VERDICT_RE = re.compile(r"^- Latest verdict:\s*(\S+)", re.MULTILINE)
 NO_HALT_RECORDS = "no halt records before v0.6.4"
 # ruling P22: a builder that records halts writes this into its `executing` Outcomes detail
-TRACKING_MARKER_RE = re.compile(r"^- \S+ executing - .*\bescape_tracking: v1\b", re.MULTILINE)
+# the contract text is `escape_tracking: v1`; a detail file written as JSON says the same
+TRACKING_MARKER_RE = re.compile(
+    r"""^- \S+ executing - .*\bescape_tracking"?\s*:\s*"?v1\b""", re.MULTILINE
+)
 GUARD_LINE_RE = re.compile(r"^(\S+) .*\baction=restart\b")
 
 
@@ -253,6 +271,17 @@ def schema_gaps(conn: sqlite3.Connection) -> dict[str, set[str]]:
     return present
 
 
+def session_columns(conn: sqlite3.Connection) -> set[str] | None:
+    """Return the SESSION_COLUMNS the copy's `sessions` table has, or None without the table."""
+    found = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sessions'"
+    ).fetchone()
+    if found is None:
+        return None
+    have = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    return {column for column in SESSION_COLUMNS if column in have}
+
+
 def like_rig(rig: str) -> str:
     """Return the LIKE pattern `%@<rig>` with backslash, `%` and `_` escaped for ESCAPE."""
     escaped = rig.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -274,6 +303,7 @@ class DbView:
         self.sessions: dict[str, list[str]] = {}
         self.transcripts: dict[str, str] = {}
         self.advisor_times: list[datetime] = []
+        self.samples: dict[str, dict] = {}
 
 
 def read_db(
@@ -305,19 +335,37 @@ def read_db(
         view.seat_source = True
         has_native = "native_session_id" in usage
         native = "native_session_id" if has_native else "NULL"
+        has_lane = "lane" in usage
+        # without a lane column every row is a context row
+        lane_column = "lane" if has_lane else "'context'"
         query = (
-            f"SELECT seat_session, captured_at, {native} FROM usage_samples "
+            f"SELECT seat_session, captured_at, {native}, {lane_column} FROM usage_samples "
             "WHERE seat_session LIKE ? ESCAPE '\\'"
         )
         missing_ids: dict[str, int] = {}
-        for seat, captured, native_id in conn.execute(query, (pattern,)):
+        for seat, captured, native_id, lane in conn.execute(query, (pattern,)):
             when = try_ts(captured)
             if not seat.endswith(suffix) or when is None or not since <= when < until:
                 continue
             seats.add(seat)
+            counts = view.samples.setdefault(
+                seat,
+                {
+                    "context": 0,
+                    "context_without_session": 0 if has_native else None,
+                    "provider_window": 0 if has_lane else None,
+                },
+            )
+            if lane != "context":
+                # the rate-limit windows: no session and no tokens, so never a gap
+                if lane == "provider_window":
+                    counts["provider_window"] += 1
+                continue
+            counts["context"] += 1
             if native_id:
                 sessions.setdefault(seat, set()).add(native_id)
             elif has_native:
+                counts["context_without_session"] += 1
                 missing_ids[seat] = missing_ids.get(seat, 0) + 1
         for seat in sorted(missing_ids):
             unknowns.append(f"{seat}: {missing_ids[seat]} samples without a session id")
@@ -338,6 +386,28 @@ def read_db(
                 sessions.setdefault(seat, set()).add(session_id)
                 if record.get("transcript_path"):
                     view.transcripts[session_id] = record["transcript_path"]
+
+    occupancy = session_columns(conn)
+    if occupancy is not None:
+        gaps = [column for column in SESSION_COLUMNS if column not in occupancy]
+        unknowns.extend(f"sessions.{column} missing" for column in gaps)
+        if not gaps:
+            view.seat_source = True
+            query = (
+                f"SELECT {', '.join(SESSION_COLUMNS)} FROM sessions "
+                "WHERE session_name LIKE ? ESCAPE '\\'"
+            )
+            for seat, kind, token, created, last_seen in conn.execute(query, (pattern,)):
+                if not seat.endswith(suffix) or kind != "claude_id":
+                    continue
+                if not isinstance(token, str) or not token:
+                    continue
+                # an unreadable end of an occupancy keeps the row: opening one more is harmless
+                began, ended = try_ts(created), try_ts(last_seen)
+                if (began is not None and began >= until) or (ended is not None and ended < since):
+                    continue
+                seats.add(seat)
+                sessions.setdefault(seat, set()).add(token)
 
     queue = present["queue_items"]
     if set(REQUIRED_COLUMNS["queue_items"]) <= queue:
@@ -573,7 +643,8 @@ def git_escapes(repo: Path, boundary_sha: str, slice_id: str) -> int:
 def progress_events(repo: Path, slice_id: str) -> tuple[int, int, bool] | None:
     """Count the `audit_failed` and `blocked` Outcomes lines of the slice's PROGRESS.md.
 
-    The third value tells whether an `executing` line carries the `escape_tracking: v1` marker.
+    The third value tells whether an `executing` line carries the marker, as the text
+    `escape_tracking: v1` or as JSON `"escape_tracking":"v1"`.
     None when the slice or its PROGRESS.md is not found.
     """
     for spec in sorted((repo / "missions").glob("*/slices/*/SPEC.md")):
@@ -689,6 +760,11 @@ def load_prices(path: Path) -> dict[str, dict]:
     return table
 
 
+def zero_token(record: dict) -> bool:
+    """Tell whether a record's four priced counts are all 0, so it costs $0 at every rate."""
+    return not any(record[key] for key in USAGE_KEYS)
+
+
 def record_usd(record: dict, model_prices: dict) -> float:
     """Return one record's dollars at a model's rates (long-prompt rates above the threshold)."""
     rates = model_prices["rates"]
@@ -715,7 +791,9 @@ def seat_numbers(
     """Return the per-seat, per-slice numbers of Mini-requirement 6 for a list of records.
 
     The H5 keys (`models`, `mixed`, `usage_by_model`, and `usd` with a price table) come last;
-    a record with no model id is counted under the model "unknown".
+    a record with no model id is counted under the model "unknown". A zero-token record (such as
+    Claude Code's `<synthetic>` limit messages) adds $0 to `usd` and needs no price; any other
+    record whose model has no price makes `usd` None.
     """
     fresh = sum(r["input_tokens"] for r in records)
     cache_read = sum(r["cache_read_input_tokens"] for r in records)
@@ -750,14 +828,15 @@ def seat_numbers(
     entry["mixed"] = len(models) > 1
     entry["usage_by_model"] = dict(sorted(by_model.items()))
     if prices is not None:
-        missing = sorted({(r["model"] or UNKNOWN) for r in records} - set(prices))
+        priced = [r for r in records if not zero_token(r)]
+        missing = sorted({(r["model"] or UNKNOWN) for r in priced} - set(prices))
         if missing:
             entry["usd"] = None
             if reasons is not None:
                 reasons.append(f"{where}: usd unknown: no price for {', '.join(missing)}")
         else:
             entry["usd"] = round(
-                sum(record_usd(r, prices[r["model"] or UNKNOWN]) for r in records), 6
+                sum((record_usd(r, prices[r["model"] or UNKNOWN]) for r in priced), 0.0), 6
             )
     return entry
 
@@ -820,6 +899,7 @@ def build_scorecard(
     boundaries, git_range = read_boundaries(repo, since, until, unknowns)
 
     files_read = 0
+    sessions_read: set[str] = set()
     per_seat: dict[str, list[dict]] = {}
     sessions_used: dict[str, set[str]] = {}
     models: dict[str, set[str]] = {}
@@ -832,6 +912,8 @@ def build_scorecard(
             found = []
             main_records: list[dict] = []
             paths = find_transcripts(seat, session_id, view, projects, unknowns)
+            if paths:
+                sessions_read.add(session_id)
             for index, path in enumerate(paths):
                 files_read += 1
                 read = read_usage(path, since, until, unknowns)
@@ -901,7 +983,9 @@ def build_scorecard(
     first_boundary = {}
     for boundary in boundaries:
         first_boundary.setdefault(boundary.slice_id, boundary)
-    tokens_known = view.available and view.seat_source
+    source_known = view.available and view.seat_source
+    # no record at all is a gap in the sources, never a measured 0
+    tokens_known = source_known and any(per_seat.values())
     slices_out = []
     for slice_id in slice_ids:
         total = 0
@@ -934,8 +1018,13 @@ def build_scorecard(
                 "escape_sources": sources,
             }
         )
-    if not tokens_known:
+    if not source_known:
         unknowns.append("token totals unknown: no seat or session source in the database")
+    elif not tokens_known:
+        unknowns.append(
+            "token totals unknown: no transcript record in the window "
+            f"({len(sessions_read)} sessions read)"
+        )
     if not view.queue_ok:
         unknowns.append("advisor_rows unknown: queue_items unavailable")
 
@@ -952,6 +1041,7 @@ def build_scorecard(
     if label:
         scorecard["label"] = label
     scorecard["context"] = context_out  # v0.6.4, additive: after every v0.6.3 key
+    scorecard["samples"] = dict(sorted(view.samples.items()))  # v0.6.7, additive
     side = {
         "subject_token": {b.slice_id: b.token for b in boundaries},
         "models": models,
@@ -979,8 +1069,8 @@ def slice_escape_parts(
     """Return a slice's escape parts (audit_failed, blocked, git; None when unknown) and sources.
 
     audit_failed comes from PROGRESS.md, or from the loop record under loops_dir when PROGRESS.md
-    has no audit_failed line; blocked is unknown when PROGRESS.md has neither line and no
-    `escape_tracking: v1` marker on an `executing` line (ruling P22).
+    has no audit_failed line; blocked is unknown when PROGRESS.md has neither line and no marker
+    (`escape_tracking: v1`, or JSON `"escape_tracking":"v1"`) on an `executing` line (ruling P22).
     """
     parts: dict = {"audit_failed": None, "blocked": None, "git": None}
     sources: dict = {"audit_failed": None, "blocked": None, "git": None}

@@ -1,0 +1,11 @@
+#!/bin/sh
+# A stub of the Antigravity CLI for the compat harness smoke (OPR.99.0.13.1): it records each call
+# and answers the headless first turn. It never reads the network, a key or a model.
+printf '%s\n' "$*" >>"${STUB_AGY_LOG:?}"
+for arg in "$@"; do
+    if [ "$arg" = "-p" ]; then
+        printf '%s\n' '{"conversation_id":"stubconv-0001","result":"ready"}'
+        break
+    fi
+done
+exit 0

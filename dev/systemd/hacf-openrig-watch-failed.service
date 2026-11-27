@@ -1,0 +1,12 @@
+# hacf-openrig-watch-failed.service: the watcher unit's OnFailure= (OPR.99.0.13.2, R153). It runs the
+# watcher's --failure-notify, which calls HACF_WATCH_FAILURE_NOTIFY_CMD from the env file. A desktop
+# notification is visible only while the user is logged in (linger is off; it needs the session bus).
+# A template: dev/openrig_watch_install.sh copies it to the user's systemd unit dir.
+[Unit]
+Description=Notify the desktop that the HACF OpenRig watcher run failed
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/hacf-openrig-watch/env
+ExecStart=/bin/bash ${HACF_WATCH_WORKTREE}/dev/openrig_watch.sh --failure-notify
+TimeoutStartSec=60

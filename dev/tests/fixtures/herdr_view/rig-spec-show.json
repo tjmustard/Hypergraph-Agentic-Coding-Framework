@@ -1,0 +1,46 @@
+{
+  "name": "demo-hacf",
+  "pods": [
+    {
+      "id": "orch",
+      "members": [
+        {
+          "id": "lead"
+        }
+      ]
+    },
+    {
+      "id": "spec",
+      "members": [
+        {
+          "id": "architect"
+        },
+        {
+          "id": "red-team"
+        },
+        {
+          "id": "resolve"
+        }
+      ]
+    },
+    {
+      "id": "build",
+      "members": [
+        {
+          "id": "execute"
+        },
+        {
+          "id": "audit"
+        }
+      ]
+    },
+    {
+      "id": "desk",
+      "members": [
+        {
+          "id": "scribe"
+        }
+      ]
+    }
+  ]
+}

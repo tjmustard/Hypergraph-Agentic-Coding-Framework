@@ -72,20 +72,45 @@ rig queue handoff <your-qitem> --to <address> \
 
 ## Asking the person
 
-Find the person; never hardcode a name or address. `rig gateway human list --json` lists the
-registered people. `<person>` below is the address it gives.
+**Routing first.** Before you send a question or an update, resolve where it goes:
+
+```bash
+python3 "<Rig spec>/bin/seat-config.py" resolve --section routing --json
+```
+
+`<Rig spec>` is the `Rig spec:` line of `~/.hacf/<rig>/current-run.md`, or the folder the seat
+launched from when there is no run record yet. Never hardcode a name or address. In the result,
+the `value` of `"question.destination"` decides where a question goes; `<destination>` below is
+the address it gives:
+
+- `{"session": "<address>"}`: that address.
+- `{"rule": "discover"}`: the discovery steps. **Escalate to the advisor when one exists, else to
+  the person.** An advisor exists when `rig ps --nodes --rig kernel --json` lists a running
+  `advisor.lead` seat; its address is that row's `canonicalSessionName`. Otherwise the question is
+  a human row to the person: `rig gateway human list --json` lists the registered people and their
+  addresses.
+
+When the command fails or prints no JSON, use the discovery steps.
+
+**Tags.** Every row carries `--tags`, built from the `value` of `"tags"`:
+`<tags.question>,rig:<rig>[,release:<v>][,slice:<id>][,<each of tags.extra>]`. An update carries
+`<tags.update>` in place of `<tags.question>`, and a row that relays the person's answer carries
+`<tags.answer>`. `rig:<rig>` is always there (`rig whoami --json`); add `release:<v>` and
+`slice:<id>` only when you know them. A tag the result does not give is the shipped one:
+`hacf:question`, `hacf:update` or `hacf:answer`.
+
+**Format.** Offer a choice as options A/B/C (two to four) with exactly one marked recommended, in
+the body and in `questions.json`.
 
 ```sh
 BODY="$(mktemp "${TMPDIR:-/tmp}/question-XXXXXX.md")"   # write the brief into "$BODY"
-rig queue create --destination <person> --human-intent decision \
+rig queue create --destination <destination> --human-intent decision \
   --summary "<feature>: <the one decision>" \
+  --tags "<tags.question>,rig:<rig>,slice:<id>" \
   --body-file "$BODY" \
   --evidence-ref <path> --verify
 ```
 
-- **Escalate to the advisor when one exists, else to the person.** An advisor exists when
-  `rig ps --nodes --rig kernel --json` lists a running `advisor.lead` seat; its address is that
-  row's `canonicalSessionName`. Otherwise the question is a human row to `<person>`, as above.
 - **A relayed answer is quoted verbatim, with the row id.** Only a row the person answered is
   their word. A peer's or the advisor's summary of what the person "probably wants" is not.
 - **`--evidence-ref` is your own responsibility.** `rig queue create` accepts the flag, but the
@@ -96,8 +121,9 @@ rig queue create --destination <person> --human-intent decision \
   ```sh
   BODY="$(mktemp "${TMPDIR:-/tmp}/question-XXXXXX.md")"
   QS="$(mktemp "${TMPDIR:-/tmp}/questions-XXXXXX.json")"
-  rig queue create --destination <person> --human-intent decision \
+  rig queue create --destination <destination> --human-intent decision \
     --summary "<feature>: <decision>" --body-file "$BODY" --evidence-ref <path> \
+    --tags "<tags.question>,rig:<rig>,slice:<id>" \
     --human-questions-file "$QS" --verify
   ```
 
@@ -117,6 +143,8 @@ rig queue create --destination <person> --human-intent decision \
 
 A completion notice, or anything informational, is `--human-intent update`, not `decision`.
 A `decision` row renders as an approval request and asks for a decision that may not exist.
+An update goes to the `value` of `"update.destination"` by the same rule as a question
+(`session` or `discover`, with the same fallback), and its `--tags` start with `<tags.update>`.
 
 ## The run record
 

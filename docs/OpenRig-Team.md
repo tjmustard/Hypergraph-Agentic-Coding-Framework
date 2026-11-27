@@ -152,6 +152,8 @@ ExecStart=/bin/bash "<project>/openrig/hacf/bin/view-layout.sh" --rig <rig>   # 
 OnUnitActiveSec=2min                                                          # hacf-view.timer, [Timer]
 ```
 
+`view-layout.sh` is deprecated: `openrig/hacf/bin/herdr-view.py --rig <rig>` also fixes the seats' window sizes, reopens a detached view, takes the layout from the rig spec and closes idle shells (see "The Herdr team view (herdr-view.py)" in [openrig/hacf/OPS.md](../openrig/hacf/OPS.md)).
+
 The view is Herdr-only: OpenRig runs each seat in its own tmux session, so no tmux window holds the
 team's panes, and `--provider tmux` says so and exits 0.
 

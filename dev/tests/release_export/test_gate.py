@@ -290,7 +290,7 @@ def build_both(gw: GateWorld, profile: Path) -> None:
 
 
 def test_gate_passes_and_writes_the_report(gw: GateWorld, digests: Path, tmp_path: Path) -> None:
-    """A clean export passes all ten steps; REPORT.md layout; the throwaway dirs are removed."""
+    """A clean export passes all eleven steps; REPORT.md layout; the throwaway dirs are removed."""
     profile = gw.profile()
     build_both(gw, profile)
     runner = FakeRunner()
@@ -306,6 +306,8 @@ def test_gate_passes_and_writes_the_report(gw: GateWorld, digests: Path, tmp_pat
     assert f"- source: {gw.sources['0.2.0']}" in lines
     steps = [ln.split(" | ")[1:3] for ln in lines if ln.startswith("| ") and ln[2].isdigit()]
     assert steps == [[name, "PASS"] for name, _ in rx.STEPS]
+    assert [name for name, _ in rx.STEPS][9:] == ["codegraph-live", "openrig-contract"]
+    assert "not checked (no openrig_accepted on this row)" in report
     for heading in ("Exclusions applied", "Advisory hits (never failing)", "Public deletions",
                     "Skips (check.sh, -rs)", "Messages in full"):  # fmt: skip
         assert f"## {heading}" in report
@@ -599,11 +601,12 @@ def test_cleanup_stops_only_the_isolated_daemon(tmp_path: Path) -> None:
 
 
 def assert_stopped_before_clone(report_dir: Path, runner: FakeRunner, failing: str) -> None:
-    """Steps 5-10 did not run and no clone dir exists; `failing` is a FAIL step."""
+    """Steps 5-11 did not run and no clone dir exists; `failing` is a FAIL step."""
     report = (report_dir / "REPORT.md").read_text()
     assert report.startswith("VERDICT: FAIL\n")
     assert f"| {failing} | FAIL |" in report
     assert "| clone | n/a |" in report and "no clone, no download" in report
+    assert "| openrig-contract | n/a |" in report
     assert runner.calls == []
     assert not (report_dir / "work" / "05-clone").exists()
 
@@ -1324,3 +1327,83 @@ def test_g8_step_8_is_unchanged_and_step_9_compares_the_stores(
     report = (report_dir / "REPORT.md").read_text()
     assert "installs equal, code-graph indexes equal (structure), three MCP entries, doctor ok" \
         in report  # fmt: skip
+
+
+# ----------------------------------------------------- step 11, openrig-contract (OPR.99.0.14.1)
+
+DECLARED = ("0.6.13", "0.7.16", "0.7.21", "0.7.23")
+
+
+def contract_text(*entries: tuple[str, str]) -> str:
+    """A contract file holding `(version, accepted_by)` entries."""
+    rows = [{"version": v, "accepted_by": by} for v, by in entries]
+    return yaml.safe_dump({"schema": 1, "accepted": rows})
+
+
+def contract_step(tmp_path: Path, text: str | None, declared: tuple[str, ...] | None = DECLARED):
+    """Run step 11 on a repository whose export commit holds `text` as the contract."""
+    repo = tmp_path / "contract-repo"
+    g(tmp_path, "init", "-q", "-b", "main", str(repo))
+    write(repo, "README.md", "export\n")
+    if text is not None:
+        write(repo, ".agents/config/openrig_contract.yml", text)
+    export = commit_all(repo, "export", DATES["0.1.0"])
+    run = SimpleNamespace(
+        repo=repo, export=export, release=SimpleNamespace(openrig_accepted=declared)
+    )
+    out = rx.StepOutcome(11, "openrig-contract")
+    dict(rx.STEPS)["openrig-contract"](run, out)
+    return out
+
+
+def people(*versions: str) -> list[tuple[str, str]]:
+    """Person entries."""
+    return [(v, "person") for v in versions]
+
+
+def test_contract_step_passes_on_the_declared_set_in_any_order(tmp_path: Path) -> None:
+    """The export's accepted versions equal the declared list, both sorted by version."""
+    out = contract_step(tmp_path, contract_text(*people(*reversed(DECLARED))))
+    assert (out.verdict, out.note) == (
+        "PASS", "accepted = declared: 0.6.13, 0.7.16, 0.7.21, 0.7.23")  # fmt: skip
+
+
+@pytest.mark.parametrize("versions", [(*DECLARED, "0.7.24"), DECLARED[:-1], (*DECLARED, "0.7.23")])
+def test_contract_step_fails_on_another_or_duplicated_set(
+    tmp_path: Path, versions: tuple[str, ...]
+) -> None:
+    """An extra, a missing or a duplicated version fails."""
+    out = contract_step(tmp_path, contract_text(*people(*versions)))
+    assert out.verdict == "FAIL"
+    assert out.note.startswith("accepted ") and " != declared " in out.note
+
+
+def test_contract_step_fails_on_a_watcher_entry(tmp_path: Path) -> None:
+    """A watcher acceptance never ships, even when its version is declared."""
+    text = contract_text(*people(*DECLARED[:-1]), ("0.7.23", "watcher"))
+    out = contract_step(tmp_path, text)
+    assert (out.verdict, out.note) == ("FAIL", "watcher entry 0.7.23 in the export")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        None,
+        "- 0.7.23\n",
+        "schema: 1\n",
+        "accepted: 0.7.23\n",
+        "accepted: [0.7.23]\n",
+        "accepted: [{accepted_by: person}]\n",
+        "accepted: [\n",
+    ],
+)
+def test_contract_step_fails_without_a_readable_contract(tmp_path: Path, text: str | None) -> None:
+    """No file, no mapping, no accepted list, or a broken entry."""
+    out = contract_step(tmp_path, text)
+    assert (out.verdict, out.note) == ("FAIL", "no readable contract in the export")
+
+
+def test_contract_step_does_not_check_a_row_without_the_field(tmp_path: Path) -> None:
+    """Rows below 0.6.7 declare nothing."""
+    out = contract_step(tmp_path, None, None)
+    assert (out.verdict, out.note) == ("PASS", "not checked (no openrig_accepted on this row)")

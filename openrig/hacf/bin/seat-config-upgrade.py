@@ -3,7 +3,9 @@
 
 usage:
   seat-config-upgrade.py plan    --live-spec <dir> --rig <name> [--take-hacf <rel>]...
+                                 [--project-root <dir>]
   seat-config-upgrade.py apply   --live-spec <dir> --rig <name> [--take-hacf <rel>]...
+                                 [--project-root <dir>]
   seat-config-upgrade.py restore <backup-dir>
 
 The HACF source is the checkout this script runs from (it must hold openrig/hacf/rig.yaml).
@@ -14,13 +16,16 @@ launch at a durable point, one seat at a time, never by a mass restart.
 
 - The always-HACF set (OPS.md, bin/*) is replaced from the source in full; a missing file is added.
 - The defaults files (roles.yml, caps.yml, seat-config.yml) are replaced when the live file is HACF
-  text (its git blob id is HACF's at HEAD or at a v* tag); a locally edited one is kept and plan
-  prints how to move the change into overrides.yml (`--take-hacf <rel>` replaces it).
+  text (its git blob id is HACF's at HEAD or at a v* tag). A locally edited caps.yml or
+  seat-config.yml is kept and plan prints how to move the change into overrides.yml; a locally
+  edited roles.yml is refused (below) unless it parses equal to HEAD's: a difference only in
+  comments or layout is replaced, and plan prints its diff. `--take-hacf <rel>` replaces any of
+  them.
 - overrides.yml is the user's: it is in no copy, backup, restore or checksum, and is never written.
-- The adapted set (agents/**, startup/**, CULTURE.md, README.md, HARDENING.md): a live file that is
-  unmodified HACF text (its git blob id equals the source's at HEAD or at a v* tag) is replaced;
-  any other file is kept and plan prints its diff against HEAD; --take-hacf <rel> replaces it.
-  A file only in the source is added; a file only in the live spec is kept and listed.
+- The adapted set (agents/**, startup/**, presets/**, CULTURE.md, README.md, HARDENING.md): a live
+  file that is unmodified HACF text (its git blob id equals the source's at HEAD or at a v* tag) is
+  replaced; any other file is kept and plan prints its diff against HEAD; --take-hacf <rel>
+  replaces it. A file only in the source is added; a file only in the live spec is kept and listed.
 - rig.yaml: only the top-level env.ENABLE_CLAUDEAI_MCP_SERVERS: "false" changes, by a line edit
   of a recognised shape; any other shape is `rig.yaml: manual (<reason>)` and the rest applies.
 - plan and apply refuse a source checkout with any uncommitted or untracked change under the
@@ -43,6 +48,31 @@ launch at a durable point, one seat at a time, never by a mass restart.
   lists each new default an override hides. It never runs a command that writes a seat; a host
   whose `rig seat set-model --help` fails gets `manual (...)` in place of the command.
 
+Seat config v2 (v0.6.7):
+- An edited roles.yml (R158). Keeping it would hide HACF's new defaults and replacing it would
+  re-deny a tool at the next fresh launch, so plan prints only its unified diff, the overrides.yml
+  `seats.<role>.tools` lines that carry the tools_deny difference and every other difference as
+  not expressible, and exits 1; apply refuses before the backup. `--take-hacf roles.yml` takes
+  HACF's file.
+- One resolution dir. The seat rules and the model, key and hidden-default sections read a temp dir
+  of the source defaults, presets and agent.yaml, plus read-only copies of the live overrides.yml
+  and agents/hacf/local/. `--project-root` and, when a layer sets skills, each seat's `rig skill
+  loadout --seat <session> --json` tell bin/seat-config.py which skills exist. A config it refuses
+  gives `manual` lines, never rules the overrides do not shape.
+- Key lines. Each key whose effect is owed gets one line naming when it takes effect: tools (at the
+  next fresh launch, under each set-permissions command), skills and instructions (rendered at
+  apply; next fresh launch), a claude-code, codex or pi harness that differs from the seat's live
+  runtime (`rig seat set-runtime`; when the successor confirms), any other harness (deferred, not
+  applied) and routing (read live; no apply step). They never change plan's exit code.
+- The render. apply writes the resolved skills and instructions into the role's profile in
+  agents/hacf/agent.yaml by a line edit of a recognised shape, checked by parsing the result; any
+  other shape is `<key> <role>: manual (<reason>)` and that role is not rendered.
+  seat-config.rendered.json records the written and unrendered blob ids, so a later plan treats
+  the rendered file as HACF text. agents/hacf/local/, like overrides.yml, is in no copy, backup,
+  restore or checksum and is never written.
+- Hidden defaults. For every role and new key overrides.yml sets, plan prints the default, your
+  edit and the resolved value, and names an edit the default already holds.
+
 HACF_SEAT_CONFIG_SANDBOX=1 (tests): refuse any path under the real OpenRig home
 ($OPENRIG_HOME, and ~/.openrig of the real user) before anything is read.
 
@@ -53,9 +83,12 @@ failed apply (auto-restored). Exit 2: usage.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import copy
 import difflib
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import pwd
@@ -79,17 +112,26 @@ ALWAYS = (
     "bin/seat-rules.py",
     "bin/brief.sh",
     "bin/view-layout.sh",
+    "bin/herdr-view.py",
     "bin/seat-config-upgrade.py",
     "bin/seat-config.py",
+    "bin/progress-report.py",
 )
 DEFAULTS = ("caps.yml", "seat-config.yml", "roles.yml")  # kept when locally edited (R87)
 OVERRIDES = "overrides.yml"  # the user's file: in no copy, backup, restore or checksum (R85)
-ADAPTED_DIRS = ("agents", "startup")
+AGENT = "agents/hacf/agent.yaml"
+LOCAL = "agents/hacf/local"  # the user's guidance files: treated like overrides.yml
+RENDERED = "seat-config.rendered.json"  # the blob ids of the agent.yaml apply rendered
+ADAPTED_DIRS = ("agents", "startup", "presets")
 ADAPTED_FILES = ("CULTURE.md", "README.md", "HARDENING.md")
 ENV_KEY = "ENABLE_CLAUDEAI_MCP_SERVERS"
 ENV_VALUE = '"false"'
 REASON = "hacf seat-config v0.6.5"
 MODEL_REASON = "hacf seat-config v0.6.6"
+RUNTIME_REASON = "hacf seat-config v0.6.7"
+NEXT_LAUNCH = "takes effect at the next fresh launch"
+NEW_KEYS = ("tools", "skills", "instructions", "harness")  # hidden-default lines (US-004)
+EDITS = {"tools": ("remove_deny", "add_deny"), "skills": ("remove", "add")}
 OPUS = "claude-opus-5-5"
 SANDBOX = "HACF_SEAT_CONFIG_SANDBOX"
 MANIFEST = "added.json"
@@ -160,6 +202,11 @@ def check_backup_place(backup: Path, live: Path) -> None:
             raise Refusal(f"backup {backup} is under {parent}, which holds a rig.yaml; refused")
 
 
+def users(rel: str) -> bool:
+    """Whether rel is the user's: overrides.yml, or agents/hacf/local and everything below it."""
+    return rel == OVERRIDES or rel == LOCAL or rel.startswith(f"{LOCAL}/")
+
+
 def files_under(root: Path) -> list[str]:
     """Every file (or symlink) below root, as sorted posix relative paths."""
     out = []
@@ -171,7 +218,7 @@ def files_under(root: Path) -> list[str]:
 
 
 def adapted(rel: str) -> bool:
-    """Whether rel is in the adapted set (agents/**, startup/**, CULTURE/README/HARDENING)."""
+    """Whether rel is in the adapted set (ADAPTED_DIRS and ADAPTED_FILES)."""
     return rel in ADAPTED_FILES or rel.split("/", 1)[0] in ADAPTED_DIRS and "/" in rel
 
 
@@ -253,7 +300,7 @@ def unfinished(rig: str) -> None:
 
 
 def file_plan(src: Path, live: Path, take: list[str]) -> list[dict]:
-    """One entry per path: action add, replace, same, keep, take or live-only."""
+    """One entry per path: action add, replace, same, keep, refuse, take or live-only."""
     blobs, _ = known_blobs(src.parents[1])
     source = files_under(src)
     plan = []
@@ -265,17 +312,27 @@ def file_plan(src: Path, live: Path, take: list[str]) -> list[dict]:
             if rel in take:
                 e["action"] = "take"
             elif blob_id((live / rel).read_bytes()) not in blobs.get(rel, set()):
-                e["action"] = "keep"
+                if rel != "roles.yml":
+                    e["action"] = "keep"
+                elif roles_difference(src, live) is None:
+                    e["text_only"] = True  # R227: no setting differs, so replace and show the diff
+                else:
+                    e["action"] = "refuse"  # R158
         plan.append(e)
-    for rel in [r for r in source if adapted(r)]:
+    for rel in [r for r in source if adapted(r) and not users(r)]:
         e = entry(src, live, rel, "adapted")
         if e["action"] == "replace":  # the live file differs from HEAD's bytes
             if rel in take:
                 e["action"] = "take"
-            elif blob_id((live / rel).read_bytes()) not in blobs.get(rel, set()):
-                e["action"] = "keep"  # not HACF text at HEAD or a v* tag (outside git: kept)
+            else:
+                mine = blob_id((live / rel).read_bytes())
+                ours = blobs.get(rel, set())
+                if rel == AGENT and rendered_from(live, mine) in ours:
+                    e["rendered"] = True  # apply's own render of HACF text
+                elif mine not in ours:
+                    e["action"] = "keep"  # not HACF text at HEAD or a v* tag (outside git: kept)
         plan.append(e)
-    for rel in [r for r in files_under(live) if adapted(r) and r not in source]:
+    for rel in [r for r in files_under(live) if adapted(r) and not users(r) and r not in source]:
         plan.append({"rel": rel, "set": "adapted", "action": "live-only"})
     return plan
 
@@ -290,6 +347,139 @@ def entry(src: Path, live: Path, rel: str, kind: str) -> dict:
     if target.read_bytes() == (src / rel).read_bytes():
         return {"rel": rel, "set": kind, "action": "same"}
     return {"rel": rel, "set": kind, "action": "replace"}
+
+
+def rendered_from(live: Path, blob: str) -> str | None:
+    """The unrendered blob id the marker records for a rendered agent.yaml with this blob id."""
+    try:
+        record = json.loads((live / RENDERED).read_text())[AGENT]
+        return record["base"] if record["rendered"] == blob else None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+# --- an edited roles.yml (R158) ----------------------------------------------------------------
+
+
+def seat_config_module(src: Path):
+    """The source's bin/seat-config.py as a module; no bytecode is written beside it."""
+    spec = importlib.util.spec_from_file_location("seat_config", src / "bin" / "seat-config.py")
+    module = importlib.util.module_from_spec(spec)
+    before, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = before
+    return module
+
+
+def flow(value) -> str:
+    """Return value as one line of flow-style YAML."""
+    text = yaml.safe_dump([value], default_flow_style=True, sort_keys=False, width=10**9)
+    return text.strip()[1:-1]
+
+
+def roles_difference(src: Path, live: Path) -> tuple[dict, list[str]] | None:
+    """({role: tools edit}, [what overrides.yml cannot say]); None when the files parse equal."""
+    new = yaml.safe_load((src / "roles.yml").read_text())
+    try:
+        old = yaml.safe_load((live / "roles.yml").read_text())
+    except (UnicodeDecodeError, yaml.YAMLError):
+        return {}, ["roles.yml (not readable as YAML)"]
+    if old == new:
+        return None
+    theirs = new["roles"]
+    mine = old.get("roles") if isinstance(old, dict) else None
+    if not isinstance(mine, dict):
+        return {}, ["roles.yml (no roles table)"]
+    config = seat_config_module(src)
+    edits: dict = {}
+    rest = [str(k) for k in {**new, **old} if k != "roles" and new.get(k) != old.get(k)]
+    for role in {**theirs, **mine}:
+        a, b = theirs.get(role), mine.get(role)
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            if role not in mine:
+                rest.append(f"{role} (only in HEAD/roles.yml)")
+            elif role not in theirs:
+                rest.append(f"{role} (only in live/roles.yml)")
+            else:
+                rest.append(str(role))
+            continue
+        for key in {**a, **b}:
+            if key in a and key in b and a[key] == b[key]:
+                continue
+            deny = b.get(key)
+            if key != "tools_deny" or not isinstance(deny, list) or key not in a:
+                rest.append(f"{role}.{key}")
+                continue
+            carried: dict = {}
+            for name, tools in (
+                ("remove_deny", [t for t in a[key] if t not in deny]),
+                ("add_deny", [t for t in deny if t not in a[key]]),
+            ):
+                for tool in tools:
+                    problems = config.Problems()  # the resolver's own floor and rule shapes
+                    if isinstance(tool, str) and tool:
+                        config.check_tools("-", "-", {name: [tool]}, problems)
+                    else:
+                        problems.add("-", "-", "not a tool name")
+                    if problems.lines:
+                        rest.append(f"{role}.{key} ({tool})")
+                    else:
+                        carried.setdefault(name, []).append(tool)
+            if carried:
+                edits[role] = carried
+            elif set(map(str, deny)) == set(a[key]):
+                rest.append(f"{role}.{key} (order or repeats only)")
+    return edits, rest
+
+
+def carried_by_overrides(live: Path, edits: dict) -> bool:
+    """Whether the live overrides.yml holds exactly these tools edits, as sets, per role."""
+    try:
+        seats_ = yaml.safe_load((live / OVERRIDES).read_text())["seats"]
+        return bool(edits) and all(
+            {k: set(v) for k, v in seats_[role]["tools"].items() if v}
+            == {k: set(v) for k, v in edit.items()}
+            for role, edit in edits.items()
+        )
+    except (OSError, UnicodeDecodeError, yaml.YAMLError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def diff_lines(live: Path, src: Path, rel: str) -> list[str]:
+    """The unified diff of the live file against HEAD's, indented 4."""
+    old = (live / rel).read_text(errors="replace").splitlines(keepends=True)
+    new = (src / rel).read_text(errors="replace").splitlines(keepends=True)
+    diff = difflib.unified_diff(old, new, f"live/{rel}", f"HEAD/{rel}")
+    return ["    " + d.rstrip("\n") for d in diff]
+
+
+def refusal_lines(src: Path, live: Path) -> list[str]:
+    """The refusal of a locally edited roles.yml: diff, override lines and the next step."""
+    out = [
+        "refused: roles.yml is locally edited; replacing it would drop your change at the next "
+        "fresh launch, and keeping it would hide HACF's new defaults (R158)",
+        "  diff -u live/roles.yml HEAD/roles.yml:",
+        *diff_lines(live, src, "roles.yml"),
+    ]
+    edits, rest = roles_difference(src, live)  # a refused file never parses equal
+    if edits:
+        out += ["  the overrides.yml lines that carry it:", "    seats:"]
+        out += [f"      {role}: {flow({'tools': edit})}" for role, edit in edits.items()]
+    if rest:
+        out.append(
+            "  not expressible in overrides.yml (move them by hand, then use --take-hacf "
+            f"roles.yml): {', '.join(rest)}"
+        )
+    if carried_by_overrides(live, edits):
+        out.append("  next: overrides.yml already carries these; re-run with --take-hacf roles.yml")
+    else:
+        out.append(
+            f"  next: put those lines in {live}/overrides.yml yourself, then re-run with "
+            "--take-hacf roles.yml"
+        )
+    return out
 
 
 # --- rig.yaml ---------------------------------------------------------------------------------
@@ -403,7 +593,38 @@ def node_role(node: dict) -> str | None:
     return None
 
 
-def seats(rig: str, src: Path) -> list[dict]:
+@contextlib.contextmanager
+def resolution_dir(src: Path, live: Path | None):
+    """A temp dir bin/seat-config.py resolves in.
+
+    It holds the source defaults, presets and agent.yaml, plus read-only copies of the live
+    overrides.yml and agents/hacf/local/. A symlink below local/ stays one, so the resolver refuses
+    it. A kept, locally edited defaults file does not change the dir (R87).
+    """
+    with tempfile.TemporaryDirectory(prefix="seat-config-") as tmp:
+        work = Path(tmp)
+        for rel in (*DEFAULTS, AGENT):
+            if (src / rel).is_file():
+                (work / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(src / rel, work / rel)
+        origins = [src / "presets"] + ([live / "presets"] if live else [])  # a live preset wins
+        for origin in origins:
+            if origin.is_dir():
+                shutil.copytree(origin, work / "presets", dirs_exist_ok=True)
+        if live and (live / OVERRIDES).is_file():
+            shutil.copyfile(live / OVERRIDES, work / OVERRIDES)  # read-only use, in a temp dir
+        if live and (live / LOCAL).is_symlink():  # the resolver judges the link, as it would live
+            (work / LOCAL).parent.mkdir(parents=True, exist_ok=True)
+            (work / LOCAL).symlink_to((live / LOCAL).resolve())
+        elif live and (live / LOCAL).is_dir():
+            try:
+                shutil.copytree(live / LOCAL, work / LOCAL, symlinks=True)
+            except (OSError, shutil.Error) as exc:
+                raise Refusal(f"cannot read {live / LOCAL} ({exc}); nothing written") from None
+        yield work
+
+
+def seats(rig: str, src: Path, live: Path | None = None) -> list[dict]:
     """Each seat of the rig: session, role, its status record, new rules and rollback rules."""
     # `profile` (the role) is in the record only with --full; without it every seat looked role-less
     nodes = rig_json("ps", "--nodes", "--rig", rig, "--full", "--json")
@@ -411,30 +632,39 @@ def seats(rig: str, src: Path) -> list[dict]:
         raise Refusal(f"rig ps --nodes --rig {rig} --full --json: unreadable; nothing written")
     roles = yaml.safe_load((src / "roles.yml").read_text())["roles"]
     out = []
-    for node in nodes:
-        if not isinstance(node, dict) or node.get("rigName", rig) != rig:
-            continue
-        session, role = node.get("canonicalSessionName"), node_role(node)
-        if not session:
-            continue
-        seat = {"session": session, "role": role, "live_known": "model" in node}
-        for key in ("model", "effort", "effortSource"):  # kept as given (None when absent)
-            seat[key] = node.get(key)
-        if role not in roles:
-            seat["skip"] = f"no role {role!r} in roles.yml"
+    with resolution_dir(src, live) as work:
+        for node in nodes:
+            if not isinstance(node, dict) or node.get("rigName", rig) != rig:
+                continue
+            session, role = node.get("canonicalSessionName"), node_role(node)
+            if not session:
+                continue
+            seat = {"session": session, "role": role, "live_known": "model" in node}
+            for key in ("model", "effort", "effortSource"):  # kept as given (None when absent)
+                seat[key] = node.get(key)
+            if role not in roles:
+                seat["skip"] = f"no role {role!r} in roles.yml"
+                out.append(seat)
+                continue
+            record = rig_json("seat", "status", session, "--json")
+            seat["runtime"] = node.get("runtime")
+            rules = subprocess.run(
+                [sys.executable, str(src / "bin" / "seat-rules.py"), "--roles",
+                 str(work / "roles.yml"), "--role", role, "--json"],
+                capture_output=True, text=True, timeout=60,
+            )  # fmt: skip
+            refused = [
+                x for x in rules.stderr.splitlines() if x.startswith("seat-rules.py: seat-config")
+            ]
+            if rules.returncode == 2 and refused:  # never the unedited denies in their place
+                why = refused[0].split("seat-config: ", 1)[-1]
+                seat.update(record=record, rules=None, rules_why=why)
+            elif rules.returncode != 0:
+                raise Refusal(f"seat-rules.py --role {role}: exit {rules.returncode}")
+            else:
+                seat.update(record=record, rules=json.loads(rules.stdout))
+            seat["rollback"] = rollback_rules(record) if isinstance(record, dict) else None
             out.append(seat)
-            continue
-        record = rig_json("seat", "status", session, "--json")
-        rules = subprocess.run(
-            [sys.executable, str(src / "bin" / "seat-rules.py"), "--roles",
-             str(src / "roles.yml"), "--role", role, "--json"],
-            capture_output=True, text=True, timeout=60,
-        )  # fmt: skip
-        if rules.returncode != 0:
-            raise Refusal(f"seat-rules.py --role {role}: exit {rules.returncode}")
-        seat.update(record=record, rules=json.loads(rules.stdout))
-        seat["rollback"] = rollback_rules(record) if isinstance(record, dict) else None
-        out.append(seat)
     return lead_last(out, lambda s: s.get("role") == "lead" or is_lead(s["session"]))
 
 
@@ -457,9 +687,13 @@ def seat_lines(rig_seats: list[dict], where: str) -> list[str]:
             lines.append(f"  {name}: skipped ({s['skip']})")
             continue
         lines.append(f"  {name} ({s['role']}):")
-        lines.append(f"    rules: {json.dumps(s['rules'], separators=(',', ':'))}")
-        rules = f"{where}/seats/{name}.json"
-        lines.append(f'    rig seat set-permissions {name} --rules {rules} --reason "{REASON}"')
+        if s["rules"] is None:
+            lines.append(f"    rules: manual (seat-config refused: {s['rules_why']})")
+        else:
+            lines.append(f"    rules: {json.dumps(s['rules'], separators=(',', ':'))}")
+            rules = f"{where}/seats/{name}.json"
+            lines.append(f'    rig seat set-permissions {name} --rules {rules} --reason "{REASON}"')
+            lines.append(f"      effect: {NEXT_LAUNCH}")
         if s["rollback"] is None:
             lines.append(f"    rollback: unknown (rig seat status {name} --json unreadable)")
         else:
@@ -486,9 +720,9 @@ def host_lines(rig: str) -> list[str]:
 
 
 def probe_verbs() -> dict[str, str | None]:
-    """Per verb (set-model, set-effort): None if `rig seat <verb> --help` works, else a note."""
+    """Per `rig seat` verb: None if its `--help` works, else a `manual (...)` note."""
     ok = {}
-    for verb in ("set-model", "set-effort"):
+    for verb in ("set-model", "set-effort", "set-runtime"):
         try:
             r = subprocess.run(
                 ["rig", "seat", verb, "--help"], capture_output=True, text=True, timeout=60
@@ -512,30 +746,78 @@ def probe_verbs() -> dict[str, str | None]:
     }
 
 
-def resolved_seats(src: Path, live: Path) -> tuple[dict | None, str]:
-    """The resolver's {role: {key: {value, source}}} for HACF's defaults and the live overrides.
+def skill_roles(work: Path) -> tuple[bool, set[str]]:
+    """Return (whether any layer sets skills, the roles a layer adds skills to).
 
-    The source's defaults files plus the live overrides.yml (and a preset), read through
-    bin/seat-config.py in a temp dir; (None, reason) when it refuses. A kept, locally edited
-    defaults file does not change this: the plan prints it separately (R87).
+    The layers of a resolution dir are overrides.yml and the named preset.
     """
-    with tempfile.TemporaryDirectory(prefix="seat-config-") as tmp:
-        work = Path(tmp)
-        for rel in DEFAULTS:
-            shutil.copyfile(src / rel, work / rel)
-        for origin in (src / "presets", live / "presets"):  # a live preset wins over a shipped one
-            if origin.is_dir():
-                shutil.copytree(origin, work / "presets", dirs_exist_ok=True)
-        if (live / OVERRIDES).is_file():
-            shutil.copyfile(live / OVERRIDES, work / OVERRIDES)  # read-only use, in a temp dir
-        r = subprocess.run(
-            [sys.executable, str(src / "bin" / "seat-config.py"), "resolve", "--dir", str(work),
-             "--section", "seats", "--json"],
-            capture_output=True, text=True, timeout=60,
-        )  # fmt: skip
+    paths = [work / OVERRIDES]
+    try:
+        name = yaml.safe_load((work / "seat-config.yml").read_text()).get("preset")
+        if isinstance(name, str) and name and "/" not in name:
+            paths.append(work / "presets" / f"{name}.yml")
+    except (OSError, UnicodeDecodeError, yaml.YAMLError, AttributeError):
+        pass
+    found = [
+        (role, value)
+        for path in paths
+        for (role, key), value in layer_values(path).items()
+        if key == "skills"
+    ]
+    return bool(found), {role for role, v in found if isinstance(v, dict) and v.get("add")}
+
+
+def loadouts(rig_seats: list[dict]) -> dict[str, list[str]]:
+    """{role: [skill id]} from each seat's `rig skill loadout` (read-only); a failure adds none."""
+    out: dict[str, list[str]] = {}
+    for seat in rig_seats:
+        if "skip" in seat:
+            continue
+        try:
+            r = subprocess.run(
+                ["rig", "skill", "loadout", "--seat", seat["session"], "--json"],
+                capture_output=True, text=True, timeout=60,
+            )  # fmt: skip
+            if r.returncode != 0:
+                continue
+            ids = [skill["id"] for skill in json.loads(r.stdout)["skills"]]
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+            continue
+        if all(isinstance(i, str) for i in ids):
+            have = out.setdefault(seat["role"], [])
+            have += [i for i in ids if i not in have]
+    return out
+
+
+def resolve_config(
+    src: Path, live: Path, rig_seats: list[dict], project_root: str | None
+) -> tuple[dict | None, str]:
+    """Run bin/seat-config.py resolve on a resolution dir.
+
+    Returns ({"seats": ..., "routing": ..., "warnings": [...]}, ""), or (None, reason) when it
+    refuses.
+    """
+    with resolution_dir(src, live) as work:
+        argv = [sys.executable, str(src / "bin" / "seat-config.py"), "resolve", "--dir",
+                str(work), "--json"]  # fmt: skip
+        if project_root is not None:
+            argv += ["--project-root", str(Path(project_root).resolve())]
+        any_skills, adding = skill_roles(work)
+        if any_skills:
+            known = loadouts(rig_seats)
+            # the resolver refuses an unknown skill for a role a given loadout leaves out, so a
+            # role it would judge without an answer means no loadout: unverified, warned (R162)
+            if adding <= set(known):
+                (work / "loadout.json").write_text(json.dumps(known))
+                argv += ["--loadout", str(work / "loadout.json")]
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=60)
         if r.returncode != 0:
-            return None, (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[0]
-        return json.loads(r.stdout)["seats"], ""
+            said = [
+                x for x in r.stderr.strip().splitlines() if not x.startswith(("warning:", "note:"))
+            ]
+            return None, (said or [f"exit {r.returncode}"])[0]
+        warnings = [x for x in r.stderr.splitlines() if x.startswith("warning:")]
+        return {**json.loads(r.stdout), "warnings": warnings}, ""
 
 
 def shown(value) -> str:
@@ -587,13 +869,8 @@ def seat_model_block(seat: dict, row: dict, verbs: dict) -> list[str]:
                 f"{pad}rig seat set-effort {name} --effort {row['effort']['value']} "
                 f'--reason "{MODEL_REASON}"'
             )
-    who = (
-        "planned handover by the operator; not by the lead itself"
-        if is_lead(name)
-        else ("at an idle point, never mid-MiniPRD")
-    )
     launch = f"rig seat launch {name} --fresh --stop"
-    out.append(f"{pad}{launch}   ({who})")
+    out.append(f"{pad}{launch}   ({who_switches(name)})")
     if unknown:
         out.append(f"{pad}verify with: rig seat effort {name}")
     if "model" in differs and not verbs["set-model"]:
@@ -667,28 +944,380 @@ def hidden_lines(src: Path, live: Path) -> list[str]:
     return out
 
 
-def model_plan(src, live, rig_seats, verbs) -> list[str]:
-    """The hidden-default and model sections of the plan.
+# --- the render of skills and instructions (R160) ---------------------------------------------
 
-    Like the seat half's rules, they are the operator's step and never turn plan's exit code to 1
-    (it reports file and rig.yaml changes only).
+
+class Manual(Exception):
+    """A shape the line edit does not recognise."""
+
+
+def guidance(role: str) -> str:
+    """The role's shipped guidance file, relative to the agent dir."""
+    return f"guidance/{role}.md"
+
+
+def child(lines: list[str], start: int, end: int, indent: int, key: str) -> tuple[int, int] | None:
+    """(first, past-last) of the lines under the one `<indent>key:` line in lines[start:end]."""
+    head = f"{' ' * indent}{key}:"
+    found = [i for i in range(start, end) if lines[i].rstrip() == head]
+    if len(found) != 1:
+        return None
+    stop = found[0] + 1
+    while stop < end and (
+        not lines[stop].strip() or len(lines[stop]) - len(lines[stop].lstrip(" ")) > indent
+    ):
+        stop += 1
+    return found[0] + 1, stop
+
+
+def block(lines: list[str], *path: str) -> tuple[int, int] | None:
+    """The line range under a block-mapping path whose keys are indented by two per level."""
+    span = (0, len(lines))
+    for depth, key in enumerate(path):
+        span = child(lines, *span, 2 * depth, key)
+        if span is None:
+            return None
+    return span
+
+
+def listed(doc, role: str, key: str) -> list | None:
+    """The role's uses.skills, or its startup paths after the guidance file; None if absent."""
+    try:
+        profile = doc["profiles"][role]
+        if key == "skills":
+            skills = profile["uses"].get("skills") or []
+            return list(skills) if isinstance(skills, list) else None
+        paths = [entry["path"] for entry in profile["startup"]["files"]]
+        return paths[paths.index(guidance(role)) + 1 :]
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+
+
+def unchanged(have: list | None, key: str, value: list) -> bool:
+    """Whether nothing is to render: the same list, or no instructions and no place for any."""
+    return have == value or (key == "instructions" and have is None and not value)
+
+
+def edit_skills(lines: list[str], role: str, value: list[str]) -> list[str]:
+    """Rewrite the role's one-line `skills: [...]` flow list."""
+    where = f"profiles.{role}.uses.skills"
+    span = block(lines, "profiles", role, "uses")
+    found = (
+        [i for i in range(*span) if re.match(r"      skills: \[[^\]]*\]\s*$", lines[i])]
+        if span
+        else []
+    )
+    if len(found) != 1:
+        raise Manual(f"{where} is not a one-line flow list")
+    new = list(lines)
+    new[found[0]] = f"      skills: {flow(value)}\n"
+    return new
+
+
+def edit_instructions(lines: list[str], role: str, value: list[str]) -> list[str]:
+    """Replace the entries after the role's guidance entry with one per instruction."""
+    first = f"        - path: {guidance(role)}"
+    where = f"profiles.{role}.startup.files"
+    span = block(lines, "profiles", role, "startup", "files")
+    found = [i for i in range(*span) if lines[i].rstrip() == first] if span else []
+    if len(found) != 1:
+        raise Manual(f"no {guidance(role)} entry under {where}")
+
+    def past(at: int) -> int:
+        """The line after the entry that starts at `at` (its keys are indented 10)."""
+        at += 1
+        while at < span[1] and lines[at].startswith("          "):
+            at += 1
+        return at
+
+    start = end = past(found[0])
+    while end < span[1] and lines[end].startswith("        - "):
+        path = lines[end].strip().removeprefix("- path: ").strip("'\"")
+        if not path.startswith("local/"):
+            raise Manual(f"an entry after {guidance(role)} is not under local/: {path}")
+        end = past(end)
+    added = []
+    for path in value:
+        added += [
+            f"        - path: {flow(path)}\n",
+            "          delivery_hint: send_text\n",
+            "          required: true\n",
+        ]
+    head = lines[:start]
+    if head and not head[-1].endswith("\n"):
+        head[-1] += "\n"
+    return head + added + lines[end:]
+
+
+def render_role(text: str, role: str, wanted: dict) -> str:
+    """Set the role's lists in text, parse-checked; Manual (naming the key) if it cannot."""
+    for key, edit in (("skills", edit_skills), ("instructions", edit_instructions)):
+        if key not in wanted:
+            continue
+        value = wanted[key]
+        try:
+            doc = yaml.safe_load(text)
+        except yaml.YAMLError:
+            raise Manual(f"{key}|{AGENT} is not valid YAML") from None
+        if unchanged(listed(doc, role, key), key, value):
+            continue
+        try:
+            new = "".join(edit(text.splitlines(keepends=True), role, value))
+            expected = copy.deepcopy(doc)
+            if key == "skills":
+                expected["profiles"][role]["uses"]["skills"] = value
+            else:
+                files = expected["profiles"][role]["startup"]["files"]
+                at = [entry["path"] for entry in files].index(guidance(role))
+                files[at + 1 :] = [
+                    {"path": p, "delivery_hint": "send_text", "required": True} for p in value
+                ]
+            if yaml.safe_load(new) != expected:
+                raise Manual("the line edit changed more than the list")
+        except Manual as exc:
+            raise Manual(f"{key}|{exc}") from None
+        except (KeyError, TypeError, ValueError, yaml.YAMLError):
+            raise Manual(f"{key}|profiles.{role} has no recognised {key} list") from None
+        text = new
+    return text
+
+
+def render_agent(src: Path, live: Path, plan: list[dict], resolved: dict | None) -> dict:
+    """Plan the agent.yaml write and update its plan entry in place.
+
+    Returns {"data": bytes to write or None, "marker": seat-config.rendered.json's bytes or None,
+    "manual": {role: (key, reason)}}.
+    """
+    out: dict = {"data": None, "marker": None, "manual": {}}
+    found = [e for e in plan if e["rel"] == AGENT]
+    if not found:
+        return out
+    e = found[0]
+    if resolved is None:
+        if e.get("rendered"):  # never drop an earlier render on a config nobody can resolve
+            e["action"], e["held"] = "keep", True
+        return out
+    wanted = {
+        role: {k: row[k]["value"] for k in ("skills", "instructions") if k in row}
+        for role, row in resolved.items()
+    }
+    if e["action"] == "symlink":
+        out["manual"] = {
+            role: ("skills", f"{AGENT} is a symlink")
+            for role, lists in wanted.items()
+            if any(listed(yaml.safe_load((src / AGENT).read_text()), role, k) != v
+                   for k, v in lists.items())
+        }  # fmt: skip
+        return out
+    from_source = e["action"] in ("add", "replace", "take")
+    base = ((src if from_source else live) / AGENT).read_bytes()
+    try:
+        text = base.decode()
+    except UnicodeDecodeError:
+        out["manual"] = {role: ("skills", f"{AGENT} is not UTF-8") for role in wanted}
+        return out
+    for role, lists in wanted.items():
+        try:
+            text = render_role(text, role, lists)
+        except Manual as exc:
+            out["manual"][role] = tuple(str(exc).split("|", 1))
+    data = text.encode()
+    target = live / AGENT
+    if target.is_file() and target.read_bytes() == data:
+        if e["action"] in ("replace", "take"):
+            e["action"] = "same"
+        return out
+    if data != base:
+        e["render"] = True
+    elif not from_source:
+        return out
+    out["data"] = data
+    if data != base or (live / RENDERED).is_file():
+        record = {AGENT: {"rendered": blob_id(data), "base": blob_id(base)}}
+        out["marker"] = (json.dumps(record, indent=2) + "\n").encode()
+    return out
+
+
+# --- the key lines (R160, R161) ---------------------------------------------------------------
+
+
+def bracketed(items) -> str:
+    """A list as printed in a key line."""
+    return f"[{', '.join(str(i) for i in items)}]"
+
+
+def who_switches(name: str) -> str:
+    """Who runs a seat's launch or switch, and when."""
+    if is_lead(name):
+        return "planned handover by the operator; not by the lead itself"
+    return "at an idle point, never mid-MiniPRD"
+
+
+def live_agent(src: Path, live: Path):
+    """The live agent.yaml parsed (the source's when apply would add it); None if unreadable."""
+    path = live / AGENT if (live / AGENT).exists() else src / AGENT
+    try:
+        return yaml.safe_load(path.read_text())
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return None
+
+
+def seat_key_lines(seat: dict, row: dict, doc, manual: dict, verbs: dict) -> list[str]:
+    """One seat's skills, instructions and appliable harness lines."""
+    name, role, out = seat["session"], seat["role"], []
+    for key, field in (("skills", "uses.skills"), ("instructions", "startup.files")):
+        if key not in row or role in manual:
+            continue
+        value, have = row[key]["value"], listed(doc, role, key)
+        if unchanged(have, key, value):
+            continue
+        shown_have = "unknown" if have is None else bracketed(have)
+        out.append(
+            f"  {key} {role} {name}: {shown_have} -> {bracketed(value)} (source: "
+            f"{row[key]['source']}); rendered into {AGENT} profiles.{role}.{field} at apply; "
+            f"{NEXT_LAUNCH}"
+        )
+    cell = row.get("harness")
+    if not cell or "deferred" in cell:
+        return out
+    runtime, value = seat.get("runtime"), cell["value"]
+    # a record with no runtime says nothing about the default; a harness someone set is shown
+    if runtime == value or (runtime is None and cell["source"] == "default"):
+        return out
+    out.append(
+        f"  harness {role} {name}: {runtime or 'live unknown'} -> {value} "
+        f"(source: {cell['source']})"
+    )
+    if verbs["set-runtime"]:
+        out.append(f"      harness: {verbs['set-runtime']}")
+        return out
+    out.append(
+        f'      rig seat set-runtime {name} --runtime {value} --reason "{RUNTIME_REASON}"   '
+        f"(successor-first switch; {who_switches(name)})"
+    )
+    out.append("      effect: takes effect when the successor confirms the handover")
+    return out
+
+
+def key_lines(src, live, rig_seats, config, why, rendered, verbs) -> list[str]:
+    """The keys section: per seat in the lead-last order, then deferrals' leftovers and routing."""
+    out = ["keys (the operator runs these per seat; this script never does):"]
+    if config is None:
+        out.append(f"  keys: manual (seat-config resolve refused: {why})")
+        return out
+    out += [f"  {line}" for line in config["warnings"]]
+    doc, manual = live_agent(src, live), rendered["manual"]
+    rows = config["seats"]
+    order = [s["role"] for s in rig_seats if "skip" not in s]
+    order += [role for role in rows if role not in order]  # a role with no live seat
+    for role in dict.fromkeys(order):
+        row = rows.get(role, {})
+        if role in manual:
+            out.append(f"  {manual[role][0]} {role}: manual ({manual[role][1]})")
+        for seat in rig_seats:
+            if "skip" not in seat and seat["role"] == role:
+                out += seat_key_lines(seat, row, doc, manual, verbs)
+        if "deferred" in row.get("harness", {}):
+            out.append(f"  {row['harness']['deferred']}")
+    out.append(
+        "routing: read live by each seat through bin/seat-config.py resolve --section routing; "
+        "no apply step"
+    )
+    return out
+
+
+def override_lines(src: Path, live: Path, resolved: dict) -> list[str]:
+    """US-004: default vs override for each new key and routing key overrides.yml sets."""
+    try:
+        mine = yaml.safe_load((live / OVERRIDES).read_text()) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return []
+    roles = yaml.safe_load((src / "roles.yml").read_text())["roles"]
+    agent = yaml.safe_load((src / AGENT).read_text())
+    config = yaml.safe_load((src / "seat-config.yml").read_text()) or {}
+
+    def show(key: str, value) -> str:
+        """A value of a key as printed."""
+        if key == "tools":
+            return f"{len(value)} denies"
+        if key in ("skills", "instructions"):
+            return bracketed(value)
+        return str(value)
+
+    out = []
+    seats_ = mine.get("seats") or {}
+    for role in sorted(seats_):
+        for key in NEW_KEYS:
+            if not isinstance(seats_[role], dict) or key not in seats_[role]:
+                continue
+            edit, cell = seats_[role][key], resolved["seats"][role].get(key)
+            if cell is None:
+                continue
+            value = cell["value"]["deny"] if key == "tools" else cell["value"]
+            if key == "tools":
+                default = roles[role]["tools_deny"]
+            elif key == "skills":
+                default = listed(agent, role, "skills") or []
+            elif key == "harness":
+                default = agent["profiles"][role]["preferences"]["runtime"]
+            else:
+                default = []
+            yours = flow(edit) if isinstance(edit, (dict, list)) else str(edit)
+            out.append(
+                f"  default vs override: {role}.{key} default {show(key, default)}; yours: "
+                f"{yours} ({OVERRIDES}) -> resolved {show(key, value)}"
+            )
+            if key not in EDITS:
+                continue
+            remove, add = EDITS[key]
+            for name, items in ((remove, edit.get(remove) or []), (add, edit.get(add) or [])):
+                for item in items:
+                    if (item in default) == (name == add):
+                        out.append(f"  override now equals the default: {role}.{key}.{name} {item}")
+    for key, cell in resolved["routing"].items():
+        node, base = mine.get("routing"), config.get("routing")
+        for part in key.split("."):
+            node = node.get(part) if isinstance(node, dict) else None
+            base = base.get(part) if isinstance(base, dict) else None
+        if node is None:
+            continue
+        if base is None and key.endswith(".destination"):
+            base = {"rule": "discover"}
+        out.append(
+            f"  default vs override: routing.{key} default "
+            f"{'(none)' if base is None else flow(base)}; yours: {flow(node)} ({OVERRIDES}) -> "
+            f"resolved {flow(cell['value'])}"
+        )
+    return out
+
+
+def model_plan(src, live, rig_seats, verbs, project_root=None, plan=()) -> tuple[list[str], dict]:
+    """The hidden-default, model and key sections of the plan, and the agent.yaml render.
+
+    Like the seat half's rules, the sections are the operator's step and never turn plan's exit
+    code to 1 (it reports file and rig.yaml changes only; a render that changes agent.yaml is one).
     """
     lines = []
+    config, why = resolve_config(src, live, rig_seats, project_root)
+    resolved = None if config is None else config["seats"]
+    rendered = render_agent(src, live, plan, resolved)
     hidden = hidden_lines(src, live)
+    if config is not None:
+        hidden += override_lines(src, live, config)
     if hidden:
         lines += ["defaults hidden by your overrides (overrides.yml is never changed):", *hidden]
     lines.append(
         "models (live state from rig ps --nodes --full; the operator runs these per seat, the "
         "lead last; this script never does):"
     )
-    resolved, why = resolved_seats(src, live)
     if resolved is None:
         lines.append(f"  model: manual (seat-config resolve refused: {why})")
-        return lines
-    for seat in rig_seats:
-        if "skip" not in seat:
-            lines += seat_model_block(seat, resolved.get(seat["role"], {}), verbs)
-    return lines
+    else:
+        for seat in rig_seats:
+            if "skip" not in seat:
+                lines += seat_model_block(seat, resolved.get(seat["role"], {}), verbs)
+    lines += key_lines(src, live, rig_seats, config, why, rendered, verbs)
+    return lines, rendered
 
 
 # --- plan text --------------------------------------------------------------------------------
@@ -717,10 +1346,15 @@ def proposed_lines(live: Path, src: Path, rel: str) -> list[str]:
     ]
 
 
+def header(src: Path, live: Path, rig: str) -> str:
+    """The plan's first line (restore reads the rig and the live spec back from it)."""
+    label = source_label(src.parents[1])
+    return f"seat-config-upgrade plan: rig {rig}; live spec {live}; {label}"
+
+
 def plan_text(src, live, rig, plan, rig_note, rig_seats, where, extra) -> tuple[list[str], bool]:
     """The plan's lines and whether anything changes."""
-    label = source_label(src.parents[1])
-    lines = [f"seat-config-upgrade plan: rig {rig}; live spec {live}; {label}"]
+    lines = [header(src, live, rig)]
     changes = False
     for e in plan:
         a, rel = e["action"], e["rel"]
@@ -729,28 +1363,31 @@ def plan_text(src, live, rig, plan, rig_note, rig_seats, where, extra) -> tuple[
             why = {"add": "add", "replace": "replace", "take": "replace (--take-hacf)"}[a]
             if a == "replace" and e["set"] == "adapted":
                 why = "replace (unmodified HACF text)"
+            elif a == "replace" and e.get("text_only"):
+                why = "replace (text only; no setting differs from HEAD)"
             lines.append(f"  {why}: {rel}")
+            if e.get("text_only"):
+                lines += diff_lines(live, src, rel)
         elif a == "keep" and e["set"] == "defaults":
             lines.append(
                 "  keep (locally edited defaults; move your changes to overrides.yml, then "
                 f"--take-hacf {rel}): {rel}"
             )
             lines += proposed_lines(live, src, rel)
-            if rel == "roles.yml":
-                old = (live / rel).read_text(errors="replace").splitlines(keepends=True)
-                new = (src / rel).read_text(errors="replace").splitlines(keepends=True)
-                diff = difflib.unified_diff(old, new, f"live/{rel}", f"HEAD/{rel}")
-                lines.extend("    " + d.rstrip("\n") for d in diff)
+        elif a == "keep" and e.get("held"):
+            lines.append(
+                f"  keep (an earlier apply rendered it; the seat config is refused): {rel}"
+            )
         elif a == "keep":
             lines.append(f"  keep (locally edited; --take-hacf {rel} replaces it): {rel}")
-            old = (live / rel).read_text(errors="replace").splitlines(keepends=True)
-            new = (src / rel).read_text(errors="replace").splitlines(keepends=True)
-            diff = difflib.unified_diff(old, new, f"live/{rel}", f"HEAD/{rel}")
-            lines.extend("    " + d.rstrip("\n") for d in diff)
+            lines += diff_lines(live, src, rel)
         elif a == "live-only":
             lines.append(f"  keep (only in the live spec): {rel}")
         elif a == "symlink":
             lines.append(f"  keep (a symlink; left alone): {rel}")
+        if e.get("render"):
+            changes = True
+            lines.append(f"  render: {rel} (resolved skills and instructions)")
     if rig_note[0] is None:
         changes = True  # a manual edit is still owed
         lines.append(f"rig.yaml: {rig_note[1]}")
@@ -792,8 +1429,8 @@ def sha256sums(root: Path) -> str:
     """SHA256SUMS text for every file below root (a symlink hashes its target text)."""
     out = []
     for rel in files_under(root):
-        if rel == OVERRIDES:
-            continue  # the user's file is never checksummed (R85)
+        if users(rel):
+            continue  # the user's files are never checksummed (R85)
         path = root / rel
         data = os.readlink(path).encode() if path.is_symlink() else path.read_bytes()
         out.append(f"{hashlib.sha256(data).hexdigest()}  {rel}\n")
@@ -819,10 +1456,10 @@ def restore_files(backup: Path, live: Path) -> None:
     added = json.loads((backup / MANIFEST).read_text()) if (backup / MANIFEST).exists() else []
     for rel in added:
         path = live / rel
-        if rel != OVERRIDES and (path.is_file() or path.is_symlink()):
+        if not users(rel) and (path.is_file() or path.is_symlink()):
             path.unlink()
     for rel in files_under(spec):
-        if rel == OVERRIDES:
+        if users(rel):
             continue  # never written, removed or restored (R85)
         src, dst = spec / rel, live / rel
         if src.is_symlink():
@@ -839,9 +1476,12 @@ def restore_files(backup: Path, live: Path) -> None:
         for d in dirnames:
             path = Path(dirpath) / d
             kept = (spec / path.relative_to(live)).exists()
-            if not path.is_symlink() and not kept and not any(path.iterdir()):
+            mine = users(path.relative_to(live).as_posix())
+            if not mine and not path.is_symlink() and not kept and not any(path.iterdir()):
                 path.rmdir()
-    if sha256sums(live) != (backup / "SHA256SUMS").read_text():
+    recorded = (backup / "SHA256SUMS").read_text().splitlines(keepends=True)
+    expected = "".join(x for x in recorded if not users(x.rstrip("\n").partition("  ")[2]))
+    if sha256sums(live) != expected:
         raise Refusal(f"restore: {live} does not match {backup}/SHA256SUMS")
 
 
@@ -898,8 +1538,11 @@ def prepare(ns):
 def cmd_plan(ns) -> int:
     """Print the plan; exit 1 when anything would change."""
     live, src, plan, _, rig_note = prepare(ns)
-    rig_seats = seats(ns.rig, src)
-    extra = model_plan(src, live, rig_seats, probe_verbs())
+    if any(e["action"] == "refuse" for e in plan):  # R158: only the header and the refusal
+        print("\n".join([header(src, live, ns.rig), *refusal_lines(src, live)]))
+        return 1
+    rig_seats = seats(ns.rig, src, live)
+    extra, _ = model_plan(src, live, rig_seats, probe_verbs(), ns.project_root, plan)
     lines, changes = plan_text(src, live, ns.rig, plan, rig_note, rig_seats, "<backup>", extra)
     print("\n".join(lines))
     return 1 if changes else 0
@@ -919,16 +1562,21 @@ def _raise_interrupted(signum, _frame) -> None:
     raise Interrupted(f"interrupted ({signal.Signals(signum).name})")
 
 
-def write_backup(backup, live, src, rig, plan, rig_note, rig_seats, extra) -> list[str]:
+def write_backup(
+    backup, live, src, rig, plan, rig_note, rig_seats, extra, marker=None
+) -> list[str]:
     """Write the whole backup (spec, SHA256SUMS, seats, plan.txt, added.json); the plan lines."""
     backup.mkdir(parents=True)
     live_root = live.resolve()
 
-    def skip_overrides(directory: str, names: list[str]) -> list[str]:
-        """The live spec's top-level overrides.yml stays out of the backup (R85)."""
-        return [OVERRIDES] if Path(directory).resolve() == live_root and OVERRIDES in names else []
+    def skip_users(directory: str, names: list[str]) -> list[str]:
+        """The live spec's overrides.yml and agents/hacf/local stay out of the backup (R85)."""
+        here = Path(directory).resolve()
+        if here != live_root and live_root not in here.parents:
+            return []
+        return [n for n in names if users((here / n).relative_to(live_root).as_posix())]
 
-    shutil.copytree(live, backup / "spec", symlinks=True, ignore=skip_overrides)
+    shutil.copytree(live, backup / "spec", symlinks=True, ignore=skip_users)
     (backup / "SHA256SUMS").write_text(sha256sums(backup / "spec"))
     (backup / "seats").mkdir()
     for s in rig_seats:
@@ -937,23 +1585,33 @@ def write_backup(backup, live, src, rig, plan, rig_note, rig_seats, extra) -> li
         name = s["session"]
         (backup / "seats" / f"{name}.before.json").write_text(json.dumps(s["record"], indent=2))
         (backup / "seats" / f"{name}.rollback.json").write_text(json.dumps(s["rollback"]))
-        (backup / "seats" / f"{name}.json").write_text(json.dumps(s["rules"]))
+        if s["rules"] is not None:
+            (backup / "seats" / f"{name}.json").write_text(json.dumps(s["rules"]))
     order = [s["session"] for s in rig_seats if "skip" not in s]  # the lead role last
     (backup / "seats" / ORDER).write_text(json.dumps(order))
     lines, _ = plan_text(src, live, rig, plan, rig_note, rig_seats, str(backup), extra)
     (backup / "plan.txt").write_text("\n".join(lines) + "\n")
     added = [e["rel"] for e in plan if e["action"] == "add"]
+    if marker is not None and not (live / RENDERED).exists():
+        added.append(RENDERED)
     (backup / MANIFEST).write_text(json.dumps(added))
     return lines
 
 
-def write_live(live, src, plan, rig_text, rig_note) -> subprocess.CompletedProcess:
-    """Write each planned file and the rig.yaml edit atomically, then run rig spec validate."""
+def write_live(live, src, plan, rig_text, rig_note, rendered) -> subprocess.CompletedProcess:
+    """Write the planned files and the rig.yaml edit atomically, then run rig spec validate.
+
+    agent.yaml is written with its render, and the render's marker beside it.
+    """
     for e in plan:
-        if e["action"] in ("add", "replace", "take"):
-            rel = e["rel"]
-            mode = mode_for(rel, live / rel, src / rel)
-            atomic_write(live / rel, (src / rel).read_bytes(), mode)
+        rel = e["rel"]
+        data = rendered["data"] if rel == AGENT else None
+        if data is None and e["action"] in ("add", "replace", "take"):
+            data = (src / rel).read_bytes()
+        if data is not None:
+            atomic_write(live / rel, data, mode_for(rel, live / rel, src / rel))
+    if rendered["marker"] is not None:
+        atomic_write(live / RENDERED, rendered["marker"], 0o644)
     if rig_note[0] is not None and rig_note[0] != rig_text:
         target = live / "rig.yaml"
         atomic_write(target, rig_note[0].encode(), target.stat().st_mode & 0o7777)
@@ -972,24 +1630,28 @@ def write_live(live, src, plan, rig_text, rig_note) -> subprocess.CompletedProce
 def cmd_apply(ns) -> int:
     """Back up, write the files atomically under the lock, validate; auto-restore on any failure."""
     live, src, plan, rig_text, rig_note = prepare(ns)
+    if any(e["action"] == "refuse" for e in plan):
+        raise Refusal("\n".join(refusal_lines(src, live)))
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup = Path.home() / ".hacf" / ns.rig / "backups" / f"seat-config-{stamp}"
     check_backup_place(backup, live)
-    rig_seats = seats(ns.rig, src)
+    rig_seats = seats(ns.rig, src, live)
     if any(s.get("rollback") is None and "skip" not in s for s in rig_seats):
         raise Refusal("a seat's status record is unreadable, so its rollback is unknown; refused")
-    extra = model_plan(src, live, rig_seats, probe_verbs())
+    extra, rendered = model_plan(src, live, rig_seats, probe_verbs(), ns.project_root, plan)
     held = lock(ns.rig)
     saved = {s: signal.signal(s, _raise_interrupted) for s in (signal.SIGTERM, signal.SIGINT)}
     try:
         try:
-            lines = write_backup(backup, live, src, ns.rig, plan, rig_note, rig_seats, extra)
+            lines = write_backup(
+                backup, live, src, ns.rig, plan, rig_note, rig_seats, extra, rendered["marker"]
+            )
             (backup / MARKER).write_text(f"apply started {stamp}\n")
         except BaseException as exc:
             print(f"apply failed ({reason(exc)}) before any live write; the live spec is unchanged")
             return 1
         try:
-            write_live(live, src, plan, rig_text, rig_note)
+            write_live(live, src, plan, rig_text, rig_note, rendered)
         except BaseException as exc:
             why = reason(exc)
             for s in saved:
@@ -1052,6 +1714,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--live-spec", required=True)
         p.add_argument("--rig", required=True)
         p.add_argument("--take-hacf", action="append", default=[], metavar="REL")
+        p.add_argument("--project-root", metavar="DIR", help="the project whose skills count")
     p = sub.add_parser("restore")
     p.add_argument("backup")
     try:

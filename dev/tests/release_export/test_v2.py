@@ -337,6 +337,54 @@ def test_old_rows_end_at_0_6_2() -> None:
     assert rows["dev/tests/fixtures/recorded-raw/"] == rows["dev/tests/private_records/"] == "all"
 
 
+# ---------------------------------------------------------- openrig_accepted (OPR.99.0.14.1)
+
+SOME_SHA = "a" * 40
+
+
+def accepted_profile(world: World, version: str, **extra) -> Path:
+    """The world's profile with one release row at `version`."""
+    row = {"version": version, "source": SOME_SHA, **extra}
+    return world.profile(releases=[row])
+
+
+def test_a_row_from_0_6_7_needs_openrig_accepted(world: World) -> None:
+    """R167: a row at or above 0.6.7 declares its accepted set."""
+    for version in ("0.6.7", "0.7.0", "1.0.0"):
+        with pytest.raises(rx.Refusal, match=r"releases\[0\]: missing key 'openrig_accepted'"):
+            rx.load_profile(accepted_profile(world, version))
+
+
+def test_a_row_below_0_6_7_refuses_openrig_accepted(world: World) -> None:
+    """The released rows carry no field."""
+    path = accepted_profile(world, "0.6.6", openrig_accepted=["0.7.21"])
+    wanted = r"releases\[0\]\.openrig_accepted: only rows from 0\.6\.7 carry it"
+    with pytest.raises(rx.Refusal, match=wanted):
+        rx.load_profile(path)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [[], ["0.7.21", "0.7.21"], ["v0.7.23"], ["0.7"], [0.7], "0.7.23", None, ["0.7.23\n"]],
+)
+def test_a_malformed_openrig_accepted_is_refused(world: World, value: object) -> None:
+    """A non-empty list of unique M.m.p strings, nothing else."""
+    path = accepted_profile(world, "0.6.7", openrig_accepted=value)
+    with pytest.raises(rx.Refusal, match=r"releases\[0\]\.openrig_accepted"):
+        rx.load_profile(path)
+
+
+def test_a_valid_openrig_accepted_parses(world: World) -> None:
+    """The declared set is on the release; a row below 0.6.7 has None."""
+    versions = ["0.6.13", "0.7.16", "0.7.21", "0.7.23"]
+    rows = [
+        {"version": "0.6.6", "source": SOME_SHA},
+        {"version": "0.6.7", "source": SOME_SHA, "openrig_accepted": versions},
+    ]
+    profile = rx.load_profile(world.profile(releases=rows))
+    assert [r.openrig_accepted for r in profile.releases] == [None, tuple(versions)]
+
+
 # ------------------------------------------------------------- P18: binary rows (lead ruling)
 
 

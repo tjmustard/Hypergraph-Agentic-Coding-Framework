@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "rig",
+    "scope",
+    "--workspace",
+    "<T><TMP>/repo",
+    "audit",
+    "--mission",
+    "release-0.6.0",
+    "--json"
+  ],
+  "exit_code": 0,
+  "git_status_after": [],
+  "stderr": "",
+  "stdout": "{\n  \"ok\": true,\n  \"mission\": {\n    \"name\": \"release-0.6.0\",\n    \"railStatus\": \"present\",\n    \"frontmatterError\": null,\n    \"findings\": []\n  },\n  \"slices\": [],\n  \"graph\": {\n    \"mission\": {\n      \"id\": \"OPR.0.6.0\",\n      \"name\": \"release-0.6.0\",\n      \"dependsOn\": []\n    },\n    \"nodes\": [],\n    \"ready\": [],\n    \"waiting\": [],\n    \"advisories\": []\n  },\n  \"parentFindings\": [],\n  \"totalFindings\": 0\n}\n",
+  "step": "scope-audit-initial"
+}

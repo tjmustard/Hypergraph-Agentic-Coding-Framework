@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -104,7 +105,7 @@ def test_malformed_contract_falls_back(tmp_path: Path, case: str) -> None:
         path.write_text(CASES[case], encoding="utf-8")
     contract = hyper_openrig.load_contract(path)
     _assert_fallback(contract, path)
-    assert hyper_openrig.contract_rig_version(contract) == "0.7.21"
+    assert hyper_openrig.contract_rig_version(contract) == "0.7.23"
 
 
 def test_missing_contract_falls_back(tmp_path: Path) -> None:
@@ -208,11 +209,11 @@ def test_watcher_entry_does_not_move_rig_version(tmp_path: Path) -> None:
 
 
 def test_shipped_contract() -> None:
-    """The shipped file parses as `file`: three person entries and one range."""
+    """The shipped file parses as `file`: four person entries and one range."""
     contract = hyper_openrig.load_contract(SHIPPED)
     assert contract.source == "file" and contract.warning is None
     people = [e for e in contract.accepted if e.accepted_by == "person"]
-    assert [e.version for e in people] == ["0.6.13", "0.7.16", "0.7.21"]
+    assert [e.version for e in people] == ["0.6.13", "0.7.16", "0.7.21", "0.7.23"]
     assert all(e.integrity.startswith("sha512-") and e.verdict for e in people)
     assert contract.range == ((0, 7, 16),)
     assert contract.probe_schema == 1
@@ -228,8 +229,28 @@ def test_fallback_equals_shipped_person_set() -> None:
 
 def test_rig_version_is_highest_person_entry() -> None:
     """RIG_VERSION and ACCEPTED_RIG_VERSIONS come from the shipped file at import."""
-    assert hyper_openrig.RIG_VERSION == "0.7.21"
+    contract = hyper_openrig.load_contract(SHIPPED)
+    people = [e.version for e in contract.accepted if e.accepted_by == "person"]
+    assert hyper_openrig.RIG_VERSION == highest_person(people)
     assert hyper_openrig.ACCEPTED_RIG_VERSIONS == hyper_openrig.load_contract(SHIPPED).versions
+
+
+def test_the_0_7_23_baseline_holds_the_agy_harness_and_a_review() -> None:
+    """R156: the accepted baseline has harness/agy/ and a REVIEW.md, and names no private path."""
+    base = REPO / "dev" / "tests" / "fixtures" / "openrig-compat" / "0.7.23"
+    assert (base / "harness" / "agy").is_dir() and any((base / "harness" / "agy").iterdir())
+    assert (base / "REVIEW.md").is_file()
+    roots = ["/" + "home/", "/" + "Users/"]  # built here: this file must hold neither
+    needles = [os.environ.get("HOME") or str(Path.home()), *roots]
+    files = [p for p in base.rglob("*") if p.is_file()]
+    assert files
+    hits = [
+        f"{p.relative_to(base)}: needle {i}"
+        for p in files
+        for i, needle in enumerate(needles)
+        if needle.encode() in p.read_bytes()
+    ]
+    assert hits == []
 
 
 def _show(*args: str) -> subprocess.CompletedProcess:
@@ -245,16 +266,88 @@ def _show(*args: str) -> subprocess.CompletedProcess:
     )
 
 
+MARKER = "HACF_COMPAT_WATCHER_VERSIONS"
+PERSON_PINNED = ["0.6.13", "0.7.16", "0.7.21", "0.7.23"]
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def highest_person(versions: list[str]) -> str:
+    """The highest version (by tuple) of a list of accepted_by: person versions."""
+    return max(versions, key=_version_key)
+
+
+def check_accepted(accepted: list[dict], marker: str | None) -> str | None:
+    """Return a problem when `accepted` is not the pinned person set plus the marker's watchers.
+
+    Without a marker nothing but the pinned person entries is allowed. A marker names the watcher
+    entries a compat harness run vouches for: each must be a plain M.m.p, appear exactly once and
+    be accepted_by: watcher, and no other entry may exist (OPR.99.0.12.2 MR 3).
+    """
+    people = [e["version"] for e in accepted if e["accepted_by"] == "person"]
+    if people != PERSON_PINNED:
+        return f"person entries {people} differ from the pinned {PERSON_PINNED}"
+    others = [e for e in accepted if e["accepted_by"] != "person"]
+    if marker is None and others:
+        return f"unexpected entries without {MARKER}: {[e['version'] for e in others]}"
+    if marker is None:
+        return None
+    names = marker.split(",")
+    for name in names:
+        if not re.fullmatch(r"\d+\.\d+\.\d+", name):
+            return f"{MARKER} holds {name!r}, which is not M.m.p"
+    if len(set(names)) != len(names) or len({e["version"] for e in others}) != len(others):
+        return "duplicate entries"
+    if {e["version"] for e in others} != set(names):
+        return (
+            f"non-person entries {sorted(e['version'] for e in others)} != marker {sorted(names)}"
+        )
+    if any(e["accepted_by"] != "watcher" for e in others):
+        return "a marker-named entry is not accepted_by: watcher"
+    for entry in accepted:
+        if entry["version"] in names and entry["accepted_by"] == "person":
+            return f"{entry['version']} is named by the marker but accepted_by: person"
+    return None
+
+
+def _entry(version: str, by: str) -> dict:
+    return {"version": version, "accepted_by": by}
+
+
+PEOPLE = [_entry(v, "person") for v in PERSON_PINNED]
+
+
+def test_check_accepted_cases() -> None:
+    """The exact check passes the pinned set and tolerates only the watchers a marker names."""
+    assert check_accepted(PEOPLE, None) is None
+    for bad in ("", ",", "0.7.22,", ",0.7.22", "0.7.22,,"):
+        problem = check_accepted([*PEOPLE, _entry("0.7.22", "watcher")], bad)
+        assert problem is not None and "not M.m.p" in problem, bad
+    assert check_accepted(PEOPLE, "") is not None
+    assert check_accepted([*PEOPLE, _entry("0.7.22", "watcher")], "0.7.22") is None
+    assert check_accepted([*PEOPLE, _entry("0.7.22", "watcher")], None) is not None
+    assert check_accepted([*PEOPLE, _entry("0.7.22", "watcher")], "0.7.23") is not None
+    assert check_accepted(PEOPLE, "0.7.22") is not None
+    assert check_accepted([*PEOPLE, _entry("0.7.22", "watcher")], "0.7.2x") is not None
+    assert check_accepted([*PEOPLE, _entry("0.7.22", "watcher")], "0.7.22,0.7.22") is not None
+    assert check_accepted([*PEOPLE[:2], _entry("0.7.21", "watcher")], "0.7.21") is not None
+    assert check_accepted([*PEOPLE, _entry("0.7.22", "person")], "0.7.22") is not None
+    assert highest_person(PERSON_PINNED) == "0.7.23"
+
+
 def test_contract_show() -> None:
     """`contract show` and `contract show --json` print what HACF will do, exit 0."""
     proc = _show()
     assert proc.returncode == 0, proc.stderr
     assert f"contract: {SHIPPED}" in proc.stdout and "source: file" in proc.stdout
-    for version in ("0.6.13", "0.7.16", "0.7.21"):
+    for version in PERSON_PINNED:
         assert f"  {version}  accepted_by: person" in proc.stdout
     assert "verdict: openrig-compat-0.7.21-20261123T075801Z" in proc.stdout
+    assert "verdict: openrig-compat-0.7.23-20261126T044840Z" in proc.stdout
     assert "range: 0.7.x (x >= 16)" in proc.stdout
-    assert "RIG_VERSION: 0.7.21" in proc.stdout
+    assert "RIG_VERSION: 0.7.23" in proc.stdout
 
     proc = _show("--json")
     assert proc.returncode == 0, proc.stderr
@@ -264,6 +357,22 @@ def test_contract_show() -> None:
         "opt_out", "rig", "decision", "probes",
     }  # fmt: skip
     assert data["path"] == str(SHIPPED) and data["source"] == "file" and data["warning"] is None
-    assert [e["version"] for e in data["accepted"]] == ["0.6.13", "0.7.16", "0.7.21"]
+    assert check_accepted(data["accepted"], os.environ.get(MARKER)) is None
+    assert [e["version"] for e in data["accepted"] if e["accepted_by"] == "person"] == PERSON_PINNED
     assert data["range"] == [{"major": 0, "minor": 7, "min_patch": 16}]
-    assert data["rig_version"] == "0.7.21"
+    assert data["rig_version"] == highest_person(PERSON_PINNED)
+
+
+def test_derived_unlisted_version_is_in_range_and_unlisted() -> None:
+    """openrig_versions derives an in-range version no entry lists, whatever the file lists."""
+    import openrig_versions
+
+    contract = hyper_openrig.load_contract(SHIPPED)
+    version, shown = openrig_versions.unlisted_in_range(contract)
+    assert version not in contract.versions and shown.startswith(f"{version} (fake")
+    assert hyper_openrig.version_decision(version, contract, "pass") == ("delegate", None)
+    patches = openrig_versions.unlisted_patches(contract, 3)
+    assert patches[0] == version and len(set(patches)) == 3
+    assert not set(patches) & set(contract.versions)
+    with pytest.raises(ValueError):
+        openrig_versions.unlisted_in_range(contract._replace(range=()))

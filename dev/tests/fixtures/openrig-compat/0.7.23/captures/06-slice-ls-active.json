@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "rig",
+    "scope",
+    "--workspace",
+    "<T><TMP>/repo",
+    "slice",
+    "ls",
+    "--mission",
+    "release-0.6.0",
+    "--state",
+    "active",
+    "--json"
+  ],
+  "exit_code": 0,
+  "git_status_after": [],
+  "stderr": "",
+  "stdout": "{\n  \"ok\": true,\n  \"count\": 1,\n  \"slices\": [\n    {\n      \"mission\": \"release-0.6.0\",\n      \"name\": \"01-adapter-spike\",\n      \"nn\": 1,\n      \"slug\": \"adapter-spike\",\n      \"id\": \"OPR.0.6.0.1\",\n      \"status\": \"active\",\n      \"path\": \"<T><TMP>/repo/missions/release-0.6.0/slices/01-adapter-spike\"\n    }\n  ]\n}\n",
+  "step": "slice-ls-active"
+}

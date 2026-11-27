@@ -2,8 +2,9 @@
 
 Mission v064-upgrade-path OPR.99.0.10.9. Offline: a temp HACF source checkout (a copy of
 openrig/hacf, with an older commit tagged v0.0.1 whose scribe guidance is the fixture's old text), a
-fake `rig` on PATH (ps, seat status, spec validate; argv logged), HOME under tmp_path, and the live
-specs copied from dev/tests/fixtures/seat_config/ into a stand-in spec library under tmp_path.
+fake `rig` on PATH (ps, seat status, skill loadout, spec validate; argv logged), HOME under
+tmp_path, and the live specs copied from dev/tests/fixtures/seat_config/ into a stand-in spec
+library under tmp_path.
 
 Every run sets HACF_SEAT_CONFIG_SANDBOX=1 (autouse fixture below; lead's brief, orch-lead 19:2xZ),
 so the script refuses any path under the real OpenRig home before it reads anything.
@@ -42,8 +43,10 @@ ALWAYS = (
     "bin/seat-rules.py",
     "bin/brief.sh",
     "bin/view-layout.sh",
+    "bin/herdr-view.py",
     "bin/seat-config-upgrade.py",
     "bin/seat-config.py",
+    "bin/progress-report.py",
 )
 LEAD, EXEC = f"orch-lead@{RIG}", f"build-execute@{RIG}"
 RECORDED = FIXTURES / "rig-ps-full-0.7.21.json"  # a real 0.7.21 record, normalised (R79)
@@ -76,7 +79,15 @@ if argv[:2] == ["spec", "validate"]:
         time.sleep(float(open(nap).read()))
     print("validate: stand-in output")
     sys.exit(int(open(code).read()) if os.path.exists(code) else 0)
-if argv[:2] in (["seat", "set-model"], ["seat", "set-effort"]):
+if argv[:2] == ["skill", "loadout"]:
+    if len(argv) != 5 or argv[2] != "--seat" or argv[4] != "--json":
+        sys.exit(98)  # only the read-only inspection; --apply is a write
+    path = os.path.join(d, "loadout-%s.json" % argv[3])
+    if not os.path.exists(path):
+        sys.exit(1)
+    print(open(path).read())
+    sys.exit(0)
+if argv[:2] in (["seat", "set-model"], ["seat", "set-effort"], ["seat", "set-runtime"]):
     if "--help" in argv:  # the host probe (MR 5); `help-<verb>.exit` makes it fail
         code = os.path.join(d, "help-%s.exit" % argv[1])
         if os.path.exists(os.path.join(d, "help-%s.parent" % argv[1])):
@@ -417,6 +428,7 @@ def test_h_no_claude_mcp_and_no_set_permissions(tmp_path: Path, fixture: str) ->
     assert {tuple(a) for a in w.argv() if "--help" in a} == {
         ("seat", "set-model", "--help"),
         ("seat", "set-effort", "--help"),
+        ("seat", "set-runtime", "--help"),  # OPR.99.0.14.3 MR 3: the harness verb is probed too
     }
 
 
@@ -928,7 +940,9 @@ def _models(out: str) -> list[str]:
     """The model section of a plan or apply output (stripped), up to the host lines."""
     lines = out.splitlines()
     start = next(i for i, ln in enumerate(lines) if ln.startswith("models ("))
-    end = next(i for i, ln in enumerate(lines) if ln.startswith("host lines"))
+    end = next(  # the keys section (OPR.99.0.14.3), else the host lines, ends the model section
+        i for i, ln in enumerate(lines) if ln.startswith(("keys (", "host lines"))
+    )
     return [ln.strip() for ln in lines[start + 1 : end]]
 
 
@@ -946,7 +960,9 @@ def _block(lines: list[str], seat: str) -> list[str]:
 def _no_writes(w: World) -> None:
     """No `rig seat` verb that writes a seat ever reached the fake: only --help probes ran."""
     for a in w.argv():
-        assert not (a[:2] in (["seat", "set-model"], ["seat", "set-effort"]) and "--help" not in a)
+        write = (["seat", "set-model"], ["seat", "set-effort"], ["seat", "set-runtime"])
+        assert not (a[:2] in write and "--help" not in a)
+        assert not (a[:1] == ["skill"] and "--apply" in a)
         assert a[:2] != ["seat", "launch"] and "set-permissions" not in a
 
 
@@ -1122,23 +1138,24 @@ def test_m_g_a_locally_edited_defaults_file_is_kept(eta: World) -> None:
     assert (eta.live / "caps.yml").read_text() == caps
 
 
-def test_m_g_an_edited_roles_yml_is_kept_with_its_diff_and_a_seat_config_one_is_proposed(
-    eta: World,
-) -> None:
-    """(g) roles.yml keeps with the unified diff; a seat-config.yml edit proposes its key."""
+def test_m_g_an_edited_seat_config_yml_is_proposed(eta: World) -> None:
+    """(g) a seat-config.yml edit proposes its key; the file is kept.
+
+    The roles.yml half of the earlier test (kept with its diff) is replaced by the R158 refusal
+    tests below (OPR.99.0.14.3).
+    """
     _live(eta)
-    (eta.live / "roles.yml").write_text("roles: {}  # mine\n")
-    (eta.live / "seat-config.yml").write_text(
+    edited = (
         (eta.src / "seat-config.yml")
         .read_text()
         .replace(f"execute:   {{model: {OPUS}}}", f"execute:   {{model: {HAIKU}}}")
     )
+    (eta.live / "seat-config.yml").write_text(edited)
     r = eta.plan()
-    assert "--take-hacf roles.yml): roles.yml" in r.stdout
-    assert "+++ HEAD/roles.yml" in r.stdout
+    assert "--take-hacf seat-config.yml): seat-config.yml" in r.stdout
     assert f"  proposed override: execute: {{model: {HAIKU}}}" in r.stdout
     assert eta.apply().returncode == 0
-    assert (eta.live / "roles.yml").read_text() == "roles: {}  # mine\n"
+    assert (eta.live / "seat-config.yml").read_text() == edited
 
 
 # --- the host's verbs and a record without a model (MR 5) ---------------------------------------
@@ -1205,3 +1222,869 @@ def test_m_h_an_unknown_verb_whose_help_falls_back_to_the_parent_usage_is_manual
     block = _block(_models(eta.plan().stdout), EXEC)
     assert "model: manual (rig seat set-model not available on 0.7.21 (fake))" in block
     assert not [ln for ln in block if ln.startswith("rig seat set-model")]
+
+
+# --- OPR.99.0.14.3 MR 1: an edited roles.yml is refused (R158) ----------------------------------
+
+ETA67 = FIXTURES / "eta-v067"
+AGENT = "agents/hacf/agent.yaml"
+RENDERED = "seat-config.rendered.json"
+SKILL = "adversarial-agent-hardening"
+REFUSED = (
+    "refused: roles.yml is locally edited; replacing it would drop your change at the next fresh "
+    "launch, and keeping it would hide HACF's new defaults (R158)"
+)
+CARRY = [
+    f"    {role}: {{tools: {{remove_deny: [Monitor, TaskStop]}}}}"
+    for role in ("lead", "execute", "audit")  # the order of roles.yml
+]
+
+
+def _eta_edit(w: World, overrides: bool = False) -> None:
+    """Put eta's edited roles.yml (and, asked, its overrides.yml) into the live spec."""
+    shutil.copyfile(ETA67 / "roles.yml", w.live / "roles.yml")
+    if overrides:
+        shutil.copyfile(ETA67 / "overrides.yml", w.live / "overrides.yml")
+
+
+def test_r_an_edited_roles_yml_is_refused_with_its_diff_and_override_lines(eta: World) -> None:
+    """MR 1: plan prints the header and only the refusal block; apply writes nothing."""
+    _eta_edit(eta)
+    live, home = tree(eta.live), tree(eta.home)
+    r = eta.plan()
+    assert r.returncode == 1, r.stderr
+    out = r.stdout.splitlines()
+    assert out[0].startswith(f"seat-config-upgrade plan: rig {RIG}; live spec {eta.live}; ")
+    assert out[1:3] == [REFUSED, "  diff -u live/roles.yml HEAD/roles.yml:"]
+    at = out.index("  the overrides.yml lines that carry it:")
+    diff = out[3:at]
+    assert diff[:2] == ["    --- live/roles.yml", "    +++ HEAD/roles.yml"]
+    assert all(line.startswith("    ") for line in diff)
+    assert any(line.startswith("    +") and "Monitor" in line for line in diff)
+    assert out[at + 1 :] == [
+        "    seats:",
+        *("  " + line for line in CARRY),
+        f"  next: put those lines in {eta.live}/overrides.yml yourself, then re-run with "
+        "--take-hacf roles.yml",
+    ]
+    assert "not expressible" not in r.stdout
+    # OPR.99.0.14.8 MR 4: the shared treg deny is no part of this refusal's edit. The one line
+    # naming it is HACF's own header entry, which the diff shows because the live file lacks it.
+    assert [line for line in out if TREG in line] == [TREG_HEADER]
+    a = eta.apply()
+    assert a.returncode == 1
+    assert REFUSED in a.stderr and CARRY[1].strip() in a.stderr
+    assert tree(eta.live) == live and tree(eta.home) == home and eta.backups() == []
+
+
+def test_r_overrides_that_already_carry_the_edit_are_named(eta: World) -> None:
+    """MR 1: with eta's overrides the next line changes; --take-hacf roles.yml proceeds."""
+    _eta_edit(eta, overrides=True)
+    r = eta.plan()
+    assert r.returncode == 1
+    assert r.stdout.splitlines()[-1] == (
+        "  next: overrides.yml already carries these; re-run with --take-hacf roles.yml"
+    )
+    r = eta.plan("--take-hacf", "roles.yml")
+    assert r.returncode == 1, r.stderr
+    assert "  replace (--take-hacf): roles.yml" in r.stdout and "refused:" not in r.stdout
+    assert "seats (the seat half" in r.stdout
+    a = eta.apply("--take-hacf", "roles.yml")
+    assert a.returncode == 0, a.stdout + a.stderr
+    assert (eta.live / "roles.yml").read_bytes() == (eta.src / "roles.yml").read_bytes()
+
+
+def test_r_a_partial_override_is_not_reported_as_carrying_it(eta: World) -> None:
+    """MR 1: `already carries` needs exactly the computed edits for every printed role."""
+    _eta_edit(eta)
+    (eta.live / "overrides.yml").write_text(
+        "seats:\n  execute: {tools: {remove_deny: [Monitor, TaskStop]}}\n"
+    )
+    assert "next: put those lines in " in eta.plan().stdout
+
+
+def _roles_edit(w: World, change) -> None:
+    data = yaml.safe_load((w.src / "roles.yml").read_text())
+    change(data["roles"])
+    (w.live / "roles.yml").write_text(yaml.safe_dump(data, sort_keys=False))
+
+
+def test_r_other_differences_are_not_expressible(eta: World) -> None:
+    """MR 1: tools_allow, mcp, skills, a one-sided role and a floor edit are named, not carried."""
+
+    def change(roles: dict) -> None:
+        roles["execute"]["tools_allow"].append("Monitor")
+        roles["execute"]["tools_deny"].append("Bash")
+        roles["audit"]["mcp"] = "on"
+        roles["lead"]["skills"] = []
+        roles["resolve"]["tools_deny"].remove("AskUserQuestion")
+        roles["scribe"]["tools_deny"].append("mcp__codebase-memory-mcp")
+        roles["extra"] = dict(roles["scribe"])
+        del roles["architect"]
+
+    _roles_edit(eta, change)
+    out = eta.plan().stdout.splitlines()
+    at = out.index("  the overrides.yml lines that carry it:")
+    assert out[at + 1 : at + 3] == [
+        "    seats:",
+        "      execute: {tools: {add_deny: [Bash]}}",
+    ]
+    assert out[at + 3] == (
+        "  not expressible in overrides.yml (move them by hand, then use --take-hacf roles.yml): "
+        "lead.skills, architect (only in HEAD/roles.yml), resolve.tools_deny (AskUserQuestion), "
+        "execute.tools_allow, audit.mcp, scribe.tools_deny (mcp__codebase-memory-mcp), "
+        "extra (only in live/roles.yml)"
+    )
+    assert len(out) == at + 5
+
+
+def test_r_a_text_only_edit_says_so(eta: World) -> None:
+    """OPR.99.0.14.8 MR 3: parsed-equal files are replaced, and the lost text is shown."""
+    (eta.live / "roles.yml").write_text((eta.src / "roles.yml").read_text() + "# mine\n")
+    r = eta.plan()
+    assert r.returncode == 1
+    out = r.stdout.splitlines()
+    at = out.index(TEXT_ONLY)
+    assert out[at + 1 : at + 3] == ["    --- live/roles.yml", "    +++ HEAD/roles.yml"]
+    assert "    -# mine" in out
+    assert "refused:" not in r.stdout and "not expressible" not in r.stdout
+    assert "  the overrides.yml lines that carry it:" not in out
+
+
+# --- OPR.99.0.14.8: a hand-applied deny that HEAD now ships (R227) -----------------------------
+
+HAND_DENY = FIXTURES / "hand-deny" / "roles.yml"
+TREG = "mcp__treg"
+TREG_HEADER = (
+    "    +#   - v0.6.7: `mcp__treg` is denied on every role as well: an external paid tool service;"
+)
+TEXT_ONLY = "  replace (text only; no setting differs from HEAD): roles.yml"
+
+
+def _hand_deny(w: World, old: str = "", new: str = "") -> bytes:
+    """Put the hand-edited roles.yml into the live spec, optionally with one change."""
+    text = HAND_DENY.read_text()
+    if old:
+        assert old in text
+        text = text.replace(old, new, 1)
+    (w.live / "roles.yml").write_text(text)
+    return text.encode()
+
+
+def test_x_a_hand_applied_deny_is_replaced_with_its_diff(eta: World) -> None:
+    """MR 3 and 5: plan shows the replacement and the diff; apply leaves one deny per role."""
+    live = _hand_deny(eta)
+    r = eta.plan()
+    assert r.returncode == 1, r.stderr
+    out = r.stdout.splitlines()
+    at = out.index(TEXT_ONLY)
+    assert out[at + 1 : at + 3] == ["    --- live/roles.yml", "    +++ HEAD/roles.yml"]
+    assert TREG_HEADER in out
+    assert (
+        "    +#     project seats run in bypass mode, so deny it by default (TJ 2026-11-26)." in out
+    )
+    assert "refused:" not in r.stdout
+    assert (eta.live / "roles.yml").read_bytes() == live
+    a = eta.apply()
+    assert a.returncode == 0, a.stdout + a.stderr
+    assert (eta.live / "roles.yml").read_bytes() == (eta.src / "roles.yml").read_bytes()
+    (backup,) = eta.backups()
+    assert (backup / "spec" / "roles.yml").read_bytes() == live
+    assert TEXT_ONLY in (backup / "plan.txt").read_text().splitlines()
+    roles = yaml.safe_load((eta.live / "roles.yml").read_text())["roles"]
+    assert len(roles) == 7
+    assert {name: e["tools_deny"].count(TREG) for name, e in roles.items()} == dict.fromkeys(
+        roles, 1
+    )
+
+
+def test_x_a_hand_deny_with_one_more_deny_is_refused_for_that_deny_only(eta: World) -> None:
+    """MR 6: a setting difference is still refused (R158), and treg is no part of it."""
+    live = _hand_deny(eta, "mcp__treg]", "mcp__treg, mcp__other]")
+    r = eta.plan()
+    assert r.returncode == 1, r.stderr
+    out = r.stdout.splitlines()
+    assert out[1] == REFUSED and TEXT_ONLY not in out
+    at = out.index("  the overrides.yml lines that carry it:")
+    assert out[at + 1 : at + 3] == ["    seats:", "      lead: {tools: {add_deny: [mcp__other]}}"]
+    assert len(out) == at + 4 and out[-1].startswith("  next: put those lines in ")
+    assert not [line for line in out[at:] if TREG in line]
+    assert eta.apply().returncode == 1
+    assert (eta.live / "roles.yml").read_bytes() == live and eta.backups() == []
+
+
+def test_x_a_hand_deny_that_is_not_yaml_is_refused(eta: World) -> None:
+    """MR 6: an unparseable file is refused, never read as equal."""
+    live = _hand_deny(eta, "roles:\n", "roles: [\n")
+    r = eta.plan()
+    assert r.returncode == 1, r.stderr
+    out = r.stdout.splitlines()
+    assert out[1] == REFUSED and TEXT_ONLY not in out
+    assert (
+        "  not expressible in overrides.yml (move them by hand, then use --take-hacf roles.yml): "
+        "roles.yml (not readable as YAML)"
+    ) in out
+    assert eta.apply().returncode == 1
+    assert (eta.live / "roles.yml").read_bytes() == live and eta.backups() == []
+
+
+# --- MR 2 and the tools effect line -------------------------------------------------------------
+
+
+def _rules(out: str, seat: str) -> dict:
+    lines = out.splitlines()
+    at = next(i for i, ln in enumerate(lines) if ln.startswith(f"  {seat} ("))
+    return json.loads(lines[at + 1].strip().removeprefix("rules: "))
+
+
+def test_s_seat_rules_are_the_resolved_ones(eta: World) -> None:
+    """MR 2: with eta's overrides and roles.yml taken, execute may use Monitor and TaskStop."""
+    _live(eta)
+    _eta_edit(eta, overrides=True)
+    r = eta.plan("--take-hacf", "roles.yml")
+    assert r.returncode == 1, r.stderr
+    for role in ("execute", "audit", "lead"):
+        seat = next(s for s, x in ROLE_OF.items() if x == role)
+        deny = _rules(r.stdout, seat)["deny"]
+        assert "AskUserQuestion" in deny and not {"Monitor", "TaskStop"} & set(deny), role
+    assert "Monitor" in _rules(r.stdout, f"spec-resolve@{RIG}")["deny"]
+    lines = r.stdout.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip().startswith("rig seat set-permissions "):
+            assert lines[i + 1] == "      effect: takes effect at the next fresh launch"
+    assert eta.apply("--take-hacf", "roles.yml").returncode == 0
+    (backup,) = eta.backups()
+    saved = json.loads((backup / "seats" / f"{EXEC}.json").read_text())
+    assert "Monitor" not in saved["deny"]
+
+
+def test_s_a_refused_config_prints_manual_rules_never_unresolved_ones(eta: World) -> None:
+    """A config the resolver refuses gives no rules and no set-permissions command."""
+    _live(eta)
+    (eta.live / "overrides.yml").write_text(
+        "seats:\n  execute: {tools: {remove_deny: [AskUserQuestion]}}\n"
+    )
+    r = eta.plan()
+    assert r.returncode == 1, r.stderr
+    assert "    rules: manual (seat-config refused: " in r.stdout
+    assert not [
+        x for x in r.stdout.splitlines() if x.strip().startswith("rig seat set-permissions")
+    ]
+    assert "  keys: manual (seat-config resolve refused: overrides.yml" in r.stdout
+    assert eta.apply().returncode == 0
+    (backup,) = eta.backups()
+    assert not (backup / "seats" / f"{EXEC}.json").exists()
+    assert (backup / "seats" / f"{EXEC}.rollback.json").exists()
+
+
+def _skills_override(w: World, name: str = "my-skill") -> None:
+    (w.live / "overrides.yml").write_text(f"seats:\n  execute: {{skills: {{add: [{name}]}}}}\n")
+
+
+def _project(w: World, name: str = "my-skill") -> Path:
+    root = w.tmp / "project"
+    (root / ".agents" / "skills" / name).mkdir(parents=True)
+    (root / ".agents" / "skills" / name / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: stand-in\n---\n# stand-in\n"
+    )
+    return root
+
+
+def _loadouts(w: World, ids: list[str]) -> None:
+    for seat in ROLE_OF:
+        (w.fake / f"loadout-{seat}.json").write_text(
+            json.dumps({"skills": [{"id": i} for i in ids]})
+        )
+
+
+def test_s_loadout_and_project_root_reach_the_resolver(eta: World) -> None:
+    """MR 2: a skill no set knows is refused; the loadout or the project makes it known."""
+    _live(eta)
+    _skills_override(eta)
+    _loadouts(eta, [SKILL])
+    r = eta.plan()
+    assert (
+        "seat-config resolve refused: overrides.yml: seats.execute.skills.add: unknown" in r.stdout
+    )
+    calls = [a for a in eta.argv() if a[:1] == ["skill"]]
+    assert sorted(calls) == sorted(["skill", "loadout", "--seat", s, "--json"] for s in ROLE_OF)
+    out = eta.plan("--project-root", str(_project(eta))).stdout  # P44: claude-code
+    assert (
+        "seat-config resolve refused: overrides.yml: seats.execute.skills.add: my-skill is only "
+        "in <project>/.agents/skills, which OpenRig 0.7.23 does not scan for claude-code" in out
+    )
+    _loadouts(eta, [SKILL, "my-skill"])
+    assert "skills execute " in eta.plan().stdout
+    _loadouts(eta, [SKILL])
+    (eta.fake / f"loadout-{EXEC}.json").unlink()  # a failed call: that role is unverified (R162)
+    out = eta.plan().stdout
+    assert _keys(out)[0] == (
+        "  warning: overrides.yml: seats.execute.skills.add.my-skill: unverified: rig skill "
+        "loadout unavailable"
+    )
+    assert "skills execute " in out
+
+
+def test_s_a_project_only_skill_is_held_from_the_render(eta: World) -> None:
+    """P44: with no loadout the plan warns, and apply leaves the held name out of uses.skills."""
+    _installed(eta)
+    _skills_override(eta)
+    root = str(_project(eta))
+    out = eta.plan("--project-root", root).stdout
+    assert _keys(out)[0].startswith(
+        "  warning: overrides.yml: seats.execute.skills.add.my-skill: unverified: rig skill "
+        "loadout unavailable; my-skill is only in <project>/.agents/skills, which OpenRig "
+        "0.7.23 does not scan for claude-code (scan roots: <cwd>/.claude/skills, "
+    )
+    r = eta.apply("--project-root", root)
+    assert r.returncode in (0, 1), r.stderr
+    doc = yaml.safe_load((eta.live / AGENT).read_text())
+    assert doc["profiles"]["execute"]["uses"]["skills"] == [SKILL]
+
+
+# --- OPR.99.0.14.4 MR 5: presets/ are carried like the other adapted files ----------------------
+
+PRESET_FILES = [
+    f"presets/{n}.yml"
+    for n in ("agy", "claude-haiku-5-5", "claude-opus-5-5", "claude-sonnet-5-5", "codex", "tiered")
+]
+
+
+def test_p_plan_adds_the_six_presets_and_apply_writes_them(eta: World) -> None:
+    """A live spec without presets/ gets all six."""
+    r = eta.plan()
+    for rel in PRESET_FILES:
+        assert f"  add: {rel}" in r.stdout.splitlines()
+    assert eta.apply().returncode == 0
+    for rel in PRESET_FILES:
+        assert (eta.live / rel).read_bytes() == (eta.src / rel).read_bytes()
+
+
+def test_p_an_edited_preset_is_kept_until_taken_and_a_live_only_one_is_listed(eta: World) -> None:
+    """The adapted rules: keep with the diff, --take-hacf replaces, live-only is kept."""
+    _installed(eta)
+    mine = (eta.live / "presets/agy.yml").read_text() + "# mine\n"
+    (eta.live / "presets/agy.yml").write_text(mine)
+    (eta.live / "presets/own.yml").write_text("schema: hacf.seat-preset/v2\n")
+    out = eta.plan().stdout
+    assert (
+        "  keep (locally edited; --take-hacf presets/agy.yml replaces it): presets/agy.yml" in out
+    )
+    assert "+++ HEAD/presets/agy.yml" in out
+    assert "  keep (only in the live spec): presets/own.yml" in out
+    time.sleep(1.1)  # backups are named to the second
+    r = eta.apply("--take-hacf", "presets/agy.yml")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "  replace (--take-hacf): presets/agy.yml" in r.stdout
+    assert (eta.live / "presets/agy.yml").read_bytes() == (eta.src / "presets/agy.yml").read_bytes()
+    assert (eta.live / "presets/own.yml").is_file()
+
+
+def test_p_a_dirty_source_preset_is_refused(eta: World) -> None:
+    """source_paths() covers presets/."""
+    with (eta.src / "presets/agy.yml").open("a") as handle:
+        handle.write("# dirty\n")
+    r = eta.plan()
+    assert r.returncode == 1
+    assert "openrig/hacf/presets/agy.yml" in r.stdout + r.stderr
+
+
+def test_s_no_skills_layer_means_no_loadout_call(eta: World) -> None:
+    """MR 2: `skill loadout` runs only when a layer sets skills."""
+    _live(eta)
+    eta.plan()
+    assert not [a for a in eta.argv() if a[:1] == ["skill"]]
+
+
+# --- MR 3: one apply line per key, with its effect time -----------------------------------------
+
+KEYS_HEAD = "keys (the operator runs these per seat; this script never does):"
+ROUTING = (
+    "routing: read live by each seat through bin/seat-config.py resolve --section routing; no "
+    "apply step"
+)
+
+
+def _keys(out: str) -> list[str]:
+    """The keys section's lines, as printed."""
+    lines = out.splitlines()
+    start = lines.index(KEYS_HEAD)
+    end = next(i for i, ln in enumerate(lines) if ln.startswith("host lines"))
+    return lines[start + 1 : end]
+
+
+def _installed(w: World) -> None:
+    """Seven live seats on a spec that is up to date (applied once, no overrides)."""
+    _live(w)
+    r = w.apply()
+    assert r.returncode == 0, r.stdout + r.stderr
+    for backup in w.backups():
+        shutil.rmtree(backup)
+
+
+def _local(w: World, *names: str) -> list[str]:
+    (w.live / "agents/hacf/local").mkdir(parents=True, exist_ok=True)
+    for name in names:
+        (w.live / "agents/hacf/local" / name).write_text(f"# {name}\n")
+    return [f"local/{n}" for n in names]
+
+
+def test_t_defaults_print_only_the_routing_line(eta: World) -> None:
+    """MR 3: nothing differs: the keys section holds the routing line alone; plan exits 0."""
+    _installed(eta)
+    r = eta.plan()
+    assert r.returncode == 0, r.stdout
+    assert _keys(r.stdout) == [ROUTING]
+
+
+def test_t_a_skills_override_prints_its_line(eta: World) -> None:
+    """MR 3: the skills line, exactly."""
+    _installed(eta)
+    _skills_override(eta)
+    _loadouts(eta, [SKILL, "my-skill"])  # P44: claude-code finds it through the loadout
+    r = eta.plan("--project-root", str(_project(eta)))
+    assert _keys(r.stdout) == [
+        f"  skills execute {EXEC}: [{SKILL}] -> [{SKILL}, my-skill] (source: default+override); "
+        "rendered into agents/hacf/agent.yaml profiles.execute.uses.skills at apply; takes effect "
+        "at the next fresh launch",
+        ROUTING,
+    ]
+    assert "  render: agents/hacf/agent.yaml (resolved skills and instructions)" in r.stdout
+    assert r.returncode == 1  # agent.yaml itself would change
+
+
+def test_t_an_instructions_override_prints_its_line(eta: World) -> None:
+    """MR 3: the instructions line, exactly."""
+    _installed(eta)
+    files = _local(eta, "one.md", "two.md")
+    (eta.live / "overrides.yml").write_text(
+        f"seats:\n  execute: {{instructions: [{', '.join(files)}]}}\n"
+    )
+    assert _keys(eta.plan().stdout) == [
+        f"  instructions execute {EXEC}: [] -> [local/one.md, local/two.md] (source: override); "
+        "rendered into agents/hacf/agent.yaml profiles.execute.startup.files at apply; takes "
+        "effect at the next fresh launch",
+        ROUTING,
+    ]
+
+
+def test_t_a_harness_override_prints_set_runtime_lead_last(eta: World) -> None:
+    """MR 3: the harness lines, exactly, per seat; plan's exit code stays 0."""
+    _installed(eta)
+    (eta.live / "overrides.yml").write_text(
+        "seats:\n  lead: {harness: pi}\n  execute: {harness: codex}\n"
+    )
+    r = eta.plan()
+    assert r.returncode == 0, r.stdout
+    reason = '--reason "hacf seat-config v0.6.7"   (successor-first switch;'
+    effect = "      effect: takes effect when the successor confirms the handover"
+    assert _keys(r.stdout) == [
+        f"  harness execute {EXEC}: claude-code -> codex (source: override)",
+        f"      rig seat set-runtime {EXEC} --runtime codex {reason} at an idle point, never "
+        "mid-MiniPRD)",
+        effect,
+        f"  harness lead {LEAD}: claude-code -> pi (source: override)",
+        f"      rig seat set-runtime {LEAD} --runtime pi {reason} planned handover by the "
+        "operator; not by the lead itself)",
+        effect,
+        ROUTING,
+    ]
+    a = eta.apply()
+    assert a.returncode == 0 and _keys(a.stdout) == _keys(r.stdout)
+    _no_writes(eta)
+
+
+def test_t_a_default_harness_switches_a_seat_back(eta: World) -> None:
+    """MR 3: a seat live on codex with no override is told to go back to the default."""
+    _installed(eta)
+    nodes = json.loads((eta.fake / "ps.json").read_text())
+    for n in nodes:
+        if n["profile"] == "execute":
+            n["runtime"] = "codex"
+    (eta.fake / "ps.json").write_text(json.dumps(nodes))
+    assert _keys(eta.plan().stdout)[0] == (
+        f"  harness execute {EXEC}: codex -> claude-code (source: default)"
+    )
+
+
+def test_t_a_record_without_a_runtime_prints_only_a_set_harness(eta: World) -> None:
+    """No `runtime` key: a default says nothing; an override reads `live unknown`."""
+    _installed(eta)
+    nodes = json.loads((eta.fake / "ps.json").read_text())
+    for n in nodes:
+        del n["runtime"]
+    (eta.fake / "ps.json").write_text(json.dumps(nodes))
+    assert _keys(eta.plan().stdout) == [ROUTING]
+    (eta.live / "overrides.yml").write_text("seats:\n  execute: {harness: codex}\n")
+    assert _keys(eta.plan().stdout)[0] == (
+        f"  harness execute {EXEC}: live unknown -> codex (source: override)"
+    )
+
+
+def test_t_a_host_without_set_runtime_prints_manual(eta: World) -> None:
+    """MR 3: a failed set-runtime probe replaces the command."""
+    _installed(eta)
+    (eta.live / "overrides.yml").write_text("seats:\n  execute: {harness: codex}\n")
+    (eta.fake / "help-set-runtime.exit").write_text("1")
+    assert _keys(eta.plan().stdout) == [
+        f"  harness execute {EXEC}: claude-code -> codex (source: override)",
+        "      harness: manual (rig seat set-runtime not available on 0.7.21 (fake))",
+        ROUTING,
+    ]
+
+
+def test_t_a_community_harness_is_deferred(eta: World) -> None:
+    """R161: agy is reported as deferred and no set-runtime is printed."""
+    _installed(eta)
+    (eta.live / "overrides.yml").write_text("seats:\n  execute: {harness: agy}\n")
+    r = eta.plan()
+    assert r.returncode == 0, r.stdout
+    assert _keys(r.stdout) == [
+        "  harness agy for execute: deferred in v0.6.7 (OpenRig 0.7.23 has no per-seat path for a "
+        "community harness); not applied",
+        ROUTING,
+    ]
+    assert "rig seat set-runtime " not in r.stdout
+
+
+# --- MR 4: the render at apply ------------------------------------------------------------------
+
+
+def _render_override(w: World) -> Path:
+    files = _local(w, "one.md", "two.md")
+    (w.live / "overrides.yml").write_text(
+        "seats:\n  execute:\n    skills: {add: [my-skill]}\n"
+        f"    instructions: [{', '.join(files)}]\n"
+    )
+    _loadouts(w, [SKILL, "my-skill"])  # P44: claude-code finds it through the loadout
+    return _project(w)
+
+
+def _blob(data: bytes) -> str:
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def test_u_apply_renders_and_restore_returns_the_bytes(eta: World) -> None:
+    """MR 4: render, an unchanged second plan, and a byte-identical restore."""
+    _installed(eta)
+    before = (eta.live / AGENT).read_bytes()
+    root = _render_override(eta)
+    pre = tree(eta.live)
+    time.sleep(1.1)  # backups are named to the second
+    r = eta.apply("--project-root", str(root))
+    assert r.returncode == 0, r.stdout + r.stderr
+    after = (eta.live / AGENT).read_bytes()
+    old, new = yaml.safe_load(before), yaml.safe_load(after)
+    execute = new["profiles"]["execute"]
+    assert execute["uses"]["skills"] == [SKILL, "my-skill"]
+    assert execute["startup"]["files"][1:] == [
+        {"path": f"local/{n}.md", "delivery_hint": "send_text", "required": True}
+        for n in ("one", "two")
+    ]
+    assert execute["startup"]["files"][0]["path"] == "guidance/execute.md"
+    old["profiles"]["execute"] = execute
+    assert new == old  # only execute's two lists changed
+    added = [ln for ln in after.decode().splitlines() if ln not in before.decode().splitlines()]
+    assert added[0] == f"      skills: [{SKILL}, my-skill]"
+    assert added[1] == "        - path: local/one.md"
+    assert json.loads((eta.live / RENDERED).read_text()) == {
+        AGENT: {"rendered": _blob(after), "base": _blob(before)}
+    }
+    assert ["spec", "validate", str(eta.live / "rig.yaml")] in eta.argv()
+    (backup,) = eta.backups()
+    assert RENDERED in json.loads((backup / MANIFEST).read_text())
+    p = eta.plan("--project-root", str(root))
+    assert p.returncode == 0, p.stdout
+    assert AGENT + "\n" not in p.stdout and "  render:" not in p.stdout
+    assert _keys(p.stdout) == [ROUTING]
+    r = eta.run("restore", str(backup))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert tree(eta.live) == pre and not (eta.live / RENDERED).exists()
+
+
+def test_u_a_rendered_file_is_hacf_text_for_the_next_source(eta: World) -> None:
+    """MR 4: after a source change the rendered file is replaced and re-rendered, not kept."""
+    _installed(eta)
+    root = _render_override(eta)
+    time.sleep(1.1)
+    assert eta.apply("--project-root", str(root)).returncode == 0
+    path = eta.src / AGENT
+    path.write_text(path.read_text() + "# a newer HACF\n")
+    _git(eta.src.parents[1], "commit", "-qam", "newer agent.yaml")
+    r = eta.plan("--project-root", str(root))
+    assert f"  replace (unmodified HACF text): {AGENT}" in r.stdout
+    assert f"--take-hacf {AGENT}" not in r.stdout
+    time.sleep(1.1)
+    assert eta.apply("--project-root", str(root)).returncode == 0
+    text = (eta.live / AGENT).read_text()
+    assert text.endswith("# a newer HACF\n") and "- path: local/one.md" in text
+    assert json.loads((eta.live / RENDERED).read_text())[AGENT]["base"] == _blob(path.read_bytes())
+
+
+def test_u_removing_the_override_returns_the_source_text(eta: World) -> None:
+    """MR 4: with the override gone the rendered file goes back to HACF's bytes."""
+    _installed(eta)
+    root = _render_override(eta)
+    time.sleep(1.1)
+    assert eta.apply("--project-root", str(root)).returncode == 0
+    (eta.live / "overrides.yml").unlink()
+    time.sleep(1.1)
+    assert eta.apply().returncode == 0
+    assert (eta.live / AGENT).read_bytes() == (eta.src / AGENT).read_bytes()
+    assert eta.plan().returncode == 0
+
+
+def test_u_a_refused_config_keeps_the_rendered_file(eta: World) -> None:
+    """A config the resolver refuses never drops what an earlier apply rendered."""
+    _installed(eta)
+    root = _render_override(eta)
+    time.sleep(1.1)
+    assert eta.apply("--project-root", str(root)).returncode == 0
+    rendered = (eta.live / AGENT).read_bytes()
+    (eta.live / "overrides.yml").write_text("seats: [not, a, mapping]\n")
+    time.sleep(1.1)
+    r = eta.apply()
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (eta.live / AGENT).read_bytes() == rendered
+    assert f"  keep (an earlier apply rendered it; the seat config is refused): {AGENT}" in r.stdout
+
+
+def test_u_a_kept_file_is_rendered_and_stays_kept(eta: World) -> None:
+    """MR 4: the live bytes of a locally edited agent.yaml are rendered; it stays `keep`."""
+    _installed(eta)
+    mine = (eta.live / AGENT).read_text() + "# mine\n"
+    (eta.live / AGENT).write_text(mine)
+    root = _render_override(eta)
+    time.sleep(1.1)
+    r = eta.apply("--project-root", str(root))
+    assert r.returncode == 0, r.stdout + r.stderr
+    text = (eta.live / AGENT).read_text()
+    assert text.endswith("# mine\n") and "- path: local/two.md" in text
+    p = eta.plan("--project-root", str(root))
+    assert p.returncode == 0, p.stdout
+    assert f"  keep (locally edited; --take-hacf {AGENT} replaces it): {AGENT}" in p.stdout
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "key", "why"),
+    [
+        (
+            f"      skills: [{SKILL}]\n",
+            f"      skills:\n        - {SKILL}\n",
+            "skills",
+            "profiles.execute.uses.skills is not a one-line flow list",
+        ),
+        (
+            "        - path: guidance/execute.md\n",
+            "        - path: guidance/other.md\n",
+            "instructions",
+            "no guidance/execute.md entry under profiles.execute.startup.files",
+        ),
+        (
+            "        - path: guidance/execute.md\n          delivery_hint: send_text\n"
+            "          required: true\n",
+            "        - path: guidance/execute.md\n          delivery_hint: send_text\n"
+            "          required: true\n        - path: guidance/mine.md\n"
+            "          delivery_hint: send_text\n          required: true\n",
+            "instructions",
+            "an entry after guidance/execute.md is not under local/: guidance/mine.md",
+        ),
+    ],
+)
+def test_u_an_unrecognised_shape_is_manual_and_the_rest_applies(
+    eta: World, old: str, new: str, key: str, why: str
+) -> None:
+    """MR 4: manual, the role is not rendered, agent.yaml stays as the file plan left it."""
+    _installed(eta)
+    text = (eta.live / AGENT).read_text()
+    head, mark, tail = text.partition("\n  execute:\n")
+    assert mark and old in tail
+    tail = tail.replace(old, new, 1)
+    mine = head + mark + tail
+    (eta.live / AGENT).write_text(mine)
+    root = _render_override(eta)
+    (eta.live / "OPS.md").write_text("old\n")
+    time.sleep(1.1)
+    r = eta.apply("--project-root", str(root))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"  {key} execute: manual ({why})" in r.stdout.splitlines()
+    assert (eta.live / AGENT).read_text() == mine
+    assert not (eta.live / RENDERED).exists()
+    assert (eta.live / "OPS.md").read_bytes() == (eta.src / "OPS.md").read_bytes()
+
+
+# --- MR 5: the defaults an override hides, for the new keys -------------------------------------
+
+HIDDEN = "defaults hidden by your overrides (overrides.yml is never changed):"
+
+
+def _hidden(out: str) -> list[str]:
+    lines = out.splitlines()
+    start = lines.index(HIDDEN)
+    end = next(i for i, ln in enumerate(lines) if ln.startswith("models ("))
+    return lines[start + 1 : end]
+
+
+def _denies(w: World, role: str) -> int:
+    return len(yaml.safe_load((w.src / "roles.yml").read_text())["roles"][role]["tools_deny"])
+
+
+def test_v_the_eta_overrides_list_default_and_yours(eta: World) -> None:
+    """MR 5: the three tools lines, exactly."""
+    _installed(eta)
+    shutil.copyfile(ETA67 / "overrides.yml", eta.live / "overrides.yml")
+    assert _hidden(eta.plan().stdout) == [
+        f"  default vs override: {role}.tools default {_denies(eta, role)} denies; yours: "
+        "{remove_deny: [Monitor, TaskStop]} (overrides.yml) -> resolved "
+        f"{_denies(eta, role) - 2} denies"
+        for role in ("audit", "execute", "lead")
+    ]
+
+
+def test_v_one_line_per_key_and_the_no_effect_edits(eta: World) -> None:
+    """MR 5: every new key and each routing key, and the edits the default already holds."""
+    _installed(eta)
+    files = _local(eta, "one.md")
+    (eta.live / "overrides.yml").write_text(
+        "seats:\n"
+        "  execute:\n"
+        "    tools: {add_deny: [AskUserQuestion, Bash], remove_deny: [NoSuchTool]}\n"
+        f"    skills: {{add: [{SKILL}], remove: [absent-skill]}}\n"
+        f"    instructions: [{files[0]}]\n"
+        "    harness: codex\n"
+        "routing:\n"
+        "  question: {destination: {session: advisor-lead@kernel}}\n"
+        "  update: {destination: {rule: discover}}\n"
+        "  tags: {question: 'hacf:q'}\n"
+        "  format: {options: A/B/C, recommended: required}\n"
+    )
+    n = _denies(eta, "execute")
+    yours = "(overrides.yml) -> resolved"
+    session = "{session: advisor-lead@kernel}"
+    assert _hidden(eta.plan().stdout) == [
+        f"  default vs override: execute.tools default {n} denies; yours: {{add_deny: "
+        f"[AskUserQuestion, Bash], remove_deny: [NoSuchTool]}} {yours} {n + 1} denies",
+        "  override now equals the default: execute.tools.remove_deny NoSuchTool",
+        "  override now equals the default: execute.tools.add_deny AskUserQuestion",
+        f"  default vs override: execute.skills default [{SKILL}]; yours: {{add: [{SKILL}], "
+        f"remove: [absent-skill]}} {yours} [{SKILL}]",
+        "  override now equals the default: execute.skills.remove absent-skill",
+        f"  override now equals the default: execute.skills.add {SKILL}",
+        f"  default vs override: execute.instructions default []; yours: [local/one.md] {yours} "
+        "[local/one.md]",
+        f"  default vs override: execute.harness default claude-code; yours: codex {yours} codex",
+        "  default vs override: routing.question.destination default {rule: discover}; yours: "
+        f"{session} {yours} {session}",
+        "  default vs override: routing.update.destination default {rule: discover}; yours: "
+        f"{{rule: discover}} {yours} {{rule: discover}}",
+        "  default vs override: routing.tags default {question: 'hacf:question', update: "
+        "'hacf:update', answer: 'hacf:answer', extra: []}; yours: {question: 'hacf:q'} "
+        f"{yours} {{question: 'hacf:q'}}",
+        "  default vs override: routing.format default {options: A/B/C, recommended: required}; "
+        "yours: {options: A/B/C, "
+        f"recommended: required}} {yours} {{options: A/B/C, recommended: required}}",
+    ]
+
+
+def test_v_a_removed_then_denied_again_default_is_reported(eta: World) -> None:
+    """MR 5: removing a skill the default holds has an effect, so only the key line prints."""
+    _installed(eta)
+    (eta.live / "overrides.yml").write_text(
+        f"seats:\n  execute: {{skills: {{remove: [{SKILL}]}}}}\n"
+    )
+    assert _hidden(eta.plan().stdout) == [
+        f"  default vs override: execute.skills default [{SKILL}]; yours: {{remove: [{SKILL}]}} "
+        "(overrides.yml) -> resolved []"
+    ]
+
+
+# --- MR 6 and MR 8 ------------------------------------------------------------------------------
+
+
+def _users(w: World) -> dict[str, tuple[str, int]]:
+    """overrides.yml and every file under agents/hacf/local/: sha256 and mtime."""
+    paths = [w.live / "overrides.yml", *sorted((w.live / "agents/hacf/local").rglob("*"))]
+    return {
+        str(p.relative_to(w.live)): (
+            hashlib.sha256(p.read_bytes()).hexdigest(),
+            p.stat().st_mtime_ns,
+        )
+        for p in paths
+        if p.is_file()
+    }
+
+
+def test_w_overrides_and_local_are_never_written(eta: World) -> None:
+    """MR 6: byte-identical across plan, apply, a failed apply and restore; in no backup."""
+    _installed(eta)
+    root = _render_override(eta)
+    (eta.live / "agents/hacf/local/empty-dir").mkdir()
+    mine = _users(eta)
+    assert len(mine) == 3
+    args = ("--project-root", str(root))
+    eta.plan(*args)
+    assert _users(eta) == mine
+    (eta.fake / "validate.exit").write_text("1")
+    time.sleep(1.1)
+    assert eta.apply(*args).returncode == 1
+    assert _users(eta) == mine
+    for backup in eta.backups():
+        shutil.rmtree(backup)
+    (eta.fake / "validate.exit").unlink()
+    time.sleep(1.1)
+    assert eta.apply(*args).returncode == 0
+    assert _users(eta) == mine
+    (backup,) = eta.backups()
+    assert not (backup / "spec" / "agents" / "hacf" / "local").exists()
+    assert "agents/hacf/local" not in (backup / "SHA256SUMS").read_text()
+    assert "agents/hacf/local" not in (backup / MANIFEST).read_text()
+    assert "overrides.yml" not in (backup / MANIFEST).read_text()
+    later = eta.live / "agents/hacf/local/later.md"
+    later.write_text("written between apply and restore\n")
+    (eta.live / "agents/hacf/local/one.md").write_text("edited after apply\n")
+    mine = _users(eta)
+    r = eta.run("restore", str(backup))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _users(eta) == mine
+    assert (eta.live / "agents/hacf/local/empty-dir").is_dir()
+
+
+def test_s_the_resolution_dir_copies_local_and_keeps_a_link_a_link(eta: World) -> None:
+    """MR 2: local/ is a copy in the temp dir; a symlinked local stays a symlink there."""
+    mod = _load_script()
+    _local(eta, "one.md")
+    with mod.resolution_dir(eta.src, eta.live) as work:
+        copied = work / "agents/hacf/local"
+        assert (copied / "one.md").read_text() == "# one.md\n" and not copied.is_symlink()
+        for rel in ("roles.yml", "caps.yml", "seat-config.yml", AGENT):
+            assert (work / rel).read_bytes() == (eta.src / rel).read_bytes(), rel
+    real = eta.tmp / "elsewhere"
+    (eta.live / "agents/hacf/local").rename(real)
+    (eta.live / "agents/hacf/local").symlink_to(real)
+    with mod.resolution_dir(eta.src, eta.live) as work:
+        assert (work / "agents/hacf/local").is_symlink()
+    assert (real / "one.md").read_text() == "# one.md\n"
+
+
+def test_w_the_eta_overrides_validate_on_the_shipped_defaults(tmp_path: Path) -> None:
+    """MR 8: seat-config.py validate exits 0 on the shipped kit plus eta's overrides.yml."""
+    work = tmp_path / "hacf"
+    shutil.copytree(HACF, work)
+    shutil.copyfile(ETA67 / "overrides.yml", work / "overrides.yml")
+    r = subprocess.run(
+        [sys.executable, str(work / "bin" / "seat-config.py"), "validate", "--dir", str(work)],
+        capture_output=True, text=True, timeout=60,
+    )  # fmt: skip
+    assert r.returncode == 0 and r.stderr == "", r.stderr
+
+
+def test_w_the_eta_fixture_differs_only_by_the_allowed_tools() -> None:
+    """MR 8: eta's roles.yml is the shipped table less Monitor and TaskStop on three roles."""
+    shipped = yaml.safe_load((HACF / "roles.yml").read_text())["roles"]
+    mine = yaml.safe_load((ETA67 / "roles.yml").read_text())["roles"]
+    for role, entry in shipped.items():
+        if role in ("execute", "audit", "lead"):
+            entry["tools_deny"] = [
+                t for t in entry["tools_deny"] if t not in ("Monitor", "TaskStop")
+            ]
+    assert mine == shipped

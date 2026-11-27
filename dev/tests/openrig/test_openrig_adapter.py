@@ -506,8 +506,12 @@ def test_rig_version_rule(
     assert "test_openrig_live.py passes" in stop_text
     assert hyper_openrig.ACCEPTED_RIG_VERSIONS == contract.versions
     assert {"0.6.13", "0.7.16", "0.7.21"} <= set(hyper_openrig.ACCEPTED_RIG_VERSIONS)
-    assert hyper_openrig.RIG_VERSION == "0.7.21"
-    assert hyper_openrig.NPX_PREFIX[2] == "--package=@openrig/cli@0.7.21"
+    top = max(
+        (e.version for e in contract.accepted if e.accepted_by == "person"),
+        key=lambda v: tuple(int(part) for part in v.split(".")),
+    )
+    assert hyper_openrig.RIG_VERSION == top
+    assert hyper_openrig.NPX_PREFIX[2] == f"--package=@openrig/cli@{top}"
 
     # No rig on PATH: npx is never used without explicit download consent.
     npx_log = tmp_path / "npx.log"

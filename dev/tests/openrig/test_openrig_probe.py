@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 import hyper_openrig as h
+import openrig_versions
 import pytest
 from conftest import (
     REAL_PROBE_CACHE,
@@ -32,7 +33,7 @@ from conftest import (
     clean_env,
 )
 
-IN_RANGE = "0.7.22 (fake0722)"
+IN_VERSION, IN_RANGE = openrig_versions.unlisted_in_range(h.load_contract())
 # The baseline the fake rig prints: JSON key paths per JSON step, the help text's flags, and the
 # exit code of every step.
 BASE_JSON = {
@@ -341,12 +342,12 @@ def test_bad_expectation_file_is_an_error(probe, tmp_path: Path, damage: str) ->
 def test_version_decision_rule() -> None:
     """Only "pass" delegates an in-range version; listed, other-minor and stop are unchanged."""
     contract = h.load_contract()
-    assert h.version_decision("0.7.22", contract, "pass") == ("delegate", None)
+    assert h.version_decision(IN_VERSION, contract, "pass") == ("delegate", None)
     for result in (None, "pending", "fail", "timeout", "error", "off", "unwritable"):
-        mode, warning = h.version_decision("0.7.22", contract, result, probe_note="x")
+        mode, warning = h.version_decision(IN_VERSION, contract, result, probe_note="x")
         assert mode == "native" and "inside the probed range" in warning
-    assert "probe pending" in h.version_decision("0.7.22", contract)[1]
-    assert "probe off" in h.version_decision("0.7.22", contract, "off")[1]
+    assert "probe pending" in h.version_decision(IN_VERSION, contract)[1]
+    assert "probe off" in h.version_decision(IN_VERSION, contract, "off")[1]
     assert h.version_decision("0.7.21", contract, "fail") == ("delegate", None)
     assert h.version_decision("0.7.15", contract, "pass")[0] == "native"
     assert h.version_decision("0.6.14", contract, "pass")[0] == "native"

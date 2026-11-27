@@ -7,7 +7,9 @@ so the script finds agent.yaml and rig.yaml beside the roles.yml it is given. No
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import re
 import shutil
 import stat
@@ -43,6 +45,18 @@ def run(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args], capture_output=True, text=True, timeout=60
     )
+
+
+def load_module(name: str, path: Path):
+    """Import a hyphenated script as a module, leaving no bytecode beside it."""
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    before, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = before
+    return module
 
 
 @pytest.fixture
@@ -468,12 +482,27 @@ def test_every_role_emits_the_chrome_and_easel_denies() -> None:
             assert server in deny, (role, server)
 
 
+TREG = "mcp__treg"
+
+
+def test_every_role_emits_the_treg_deny_exactly_once() -> None:
+    """OPR.99.0.14.8 (TJ): every role's emitted deny holds the external paid tool service once."""
+    roles = table()["roles"]
+    assert len(roles) == 7
+    for role in roles:
+        result = run("--role", role, "--json")
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["deny"].count(TREG) == 1, role
+
+
 def test_check_still_refuses_codebase_memory_mcp_beside_the_new_denies(copy: Path) -> None:
     """With the two new denies in place, a codebase-memory-mcp deny is still refused, per role."""
     roles = list(table()["roles"])
     assert all(
-        set(NEW_SERVER_DENIES) <= set(entry["tools_deny"]) for entry in table()["roles"].values()
+        {*NEW_SERVER_DENIES, TREG} <= set(entry["tools_deny"])
+        for entry in table()["roles"].values()
     )
+    assert check(copy).returncode == 0
     edit_yaml(
         copy,
         lambda d: [
@@ -490,15 +519,142 @@ def test_check_still_refuses_codebase_memory_mcp_beside_the_new_denies(copy: Pat
 
 
 def test_ops_md_rig_env_keys_section() -> None:
-    """KI-opsa-1: an env key takes effect only at a whole-rig down/up, the person's call."""
+    """P49: an env key is stored at rig creation; a new team is the person's call."""
     text = OPS.read_text()
-    heading = "## Rig env keys take effect at `rig down`/`rig up`"
+    heading = "## Rig env keys are stored when a rig is created"
     assert heading in text
     section = text.split(heading, 1)[1].split("\n## ", 1)[0]
     flat = " ".join(section.split())
-    assert "reaches a seat only when the whole rig is brought down and up again" in flat
+    assert "Editing the live spec of an existing rig changes nothing for it" in flat
+    assert "Restoring the same rig does not re-read it either" in flat
+    assert "Only a new team created from the spec stores the new value" in flat
     assert "`rig seat launch --fresh` does not re-read it" in flat
     assert "operator's or the person's call" in flat
     assert "a seat never runs `rig down` or `rig up` itself" in flat
     assert "roles v2's bare denies cover the claude.ai connectors" in flat
     assert "Never take the rig down and up to apply a seat rule" in flat
+
+
+# --- OPR.99.0.14.2: the resolved tools (seat config v2) -----------------------------------------
+
+ETA = {"seats": {r: {"tools": {"remove_deny": ["Monitor", "TaskStop"]}}
+                 for r in ("execute", "audit", "lead")}}  # fmt: skip
+
+
+@pytest.fixture
+def configured(tmp_path: Path) -> Path:
+    """A temp copy of openrig/hacf/ (no bin/). Returns its roles.yml."""
+    dest = tmp_path / "hacf-configured"
+    shutil.copytree(RIG, dest, ignore=shutil.ignore_patterns("bin", "__pycache__"))
+    return dest / "roles.yml"
+
+
+def overrides(roles: Path, doc: dict) -> None:
+    """Write overrides.yml beside roles."""
+    (roles.parent / "overrides.yml").write_text(yaml.safe_dump(doc, sort_keys=False))
+
+
+def deny(roles: Path, role: str) -> list[str]:
+    """The deny list `--role` prints."""
+    result = run("--roles", str(roles), "--role", role, "--json")
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["allow"] == [] and list(doc) == ["allow", "deny"]
+    return doc["deny"]
+
+
+def test_role_and_all_print_the_resolved_deny(configured: Path) -> None:
+    """The overrides' tools edits reach --role and --all; other roles keep their table."""
+    overrides(configured, ETA)
+    base = table()["roles"]["execute"]["tools_deny"]
+    wanted = [t for t in base if t not in ("Monitor", "TaskStop")]
+    assert deny(configured, "execute") == wanted
+    assert deny(configured, "red-team") == table()["roles"]["red-team"]["tools_deny"]
+    result = run("--roles", str(configured), "--all", "--json")
+    assert result.returncode == 0, result.stderr
+    every = json.loads(result.stdout)
+    assert every["execute"]["deny"] == wanted and list(every) == list(table()["roles"])
+    assert every["scribe"]["deny"] == table()["roles"]["scribe"]["tools_deny"]
+
+
+def test_without_seat_config_the_table_is_printed(configured: Path) -> None:
+    """D2: no seat-config.yml in the roles dir, no resolution."""
+    overrides(configured, ETA)
+    (configured.parent / "seat-config.yml").unlink()
+    assert deny(configured, "execute") == table()["roles"]["execute"]["tools_deny"]
+
+
+def test_the_roles_file_named_is_the_one_resolved(configured: Path) -> None:
+    """--roles with another file name: its table is the base."""
+    other = configured.parent / "other-roles.yml"
+    shutil.copy2(configured, other)
+    edit_yaml(other, lambda d: d["roles"]["lead"]["tools_deny"].append("ZedTool"))
+    assert deny(other, "lead")[-1] == "ZedTool"
+
+
+@pytest.mark.parametrize("mode", [("--role", "execute"), ("--all",)])
+@pytest.mark.parametrize(
+    "bad",
+    [{"remove_deny": ["AskUserQuestion"]}, {"add_deny": ["mcp__codebase-memory-mcp"]}],
+)
+def test_a_refused_directory_exits_2(configured: Path, mode: tuple, bad: dict) -> None:
+    """Each problem line is prefixed; nothing is printed on stdout."""
+    overrides(configured, {"seats": {"execute": {"tools": bad, "harness": "Bad!"}}})
+    result = run("--roles", str(configured), *mode)
+    assert result.returncode == 2 and result.stdout == ""
+    lines = result.stderr.splitlines()
+    assert len(lines) == 2
+    assert all(ln.startswith("seat-rules.py: seat-config: overrides.yml: ") for ln in lines)
+    assert "the floor" in result.stderr
+
+
+def grant(roles: Path, role: str, skill: str) -> None:
+    """Grant a skill to a profile in agent.yaml, as the planner's rendering would."""
+    agent = roles.parent / "agents" / "hacf" / "agent.yaml"
+    edit_yaml(agent, lambda d: d["profiles"][role]["uses"]["skills"].append(skill))
+
+
+def test_check_accepts_a_granted_skill_an_override_adds(configured: Path) -> None:
+    """A rendered agent.yaml passes; the same grant without the override does not."""
+    grant(configured, "scribe", "added-skill")
+    assert check(configured).returncode == 1
+    overrides(configured, {"seats": {"scribe": {"skills": {"add": ["added-skill"]}}}})
+    result = check(configured)
+    assert (result.returncode, result.stdout) == (0, "ok\n"), result.stderr
+    grant(configured, "lead", "added-skill")  # added for the scribe only
+    result = check(configured)
+    assert result.returncode == 1 and "profile 'lead' grants skill 'added-skill'" in result.stdout
+
+
+def test_check_refuses_a_grant_when_the_directory_is_refused(configured: Path) -> None:
+    """A grant the table lacks needs the resolver; its refusal is exit 2."""
+    grant(configured, "scribe", "added-skill")
+    overrides(configured, {"seats": {"scribe": {"harness": "Bad!"}}})
+    result = check(configured)
+    assert result.returncode == 2
+    assert "seat-rules.py: seat-config: overrides.yml: seats.scribe.harness" in result.stderr
+
+
+def test_check_compares_the_unedited_deny(configured: Path) -> None:
+    """The kit check ignores overrides' tools edits."""
+    overrides(configured, ETA)
+    assert (check(configured).stdout, check(configured).returncode) == ("ok\n", 0)
+
+
+def test_the_floor_constants_are_the_resolvers() -> None:
+    """D1: one definition, bound under the same names."""
+    rules = load_module("seat_rules_under_test", SCRIPT)
+    assert rules.REQUIRED_DENY == "AskUserQuestion" and rules.KEPT_MCP == "codebase-memory-mcp"
+    assert rules.MCP_SERVER_DENY.fullmatch("mcp__easel")
+    for name in ("REQUIRED_DENY", "KEPT_MCP", "MCP_SERVER_DENY"):
+        assert getattr(rules, name) is getattr(rules.seat_config, name)
+
+
+def test_seat_rules_writes_no_bytecode(tmp_path: Path) -> None:
+    """Loading the resolver leaves no __pycache__ beside it."""
+    shutil.copytree(RIG, tmp_path / "hacf", ignore=shutil.ignore_patterns("__pycache__"))
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONDONTWRITEBYTECODE"}
+    argv = [sys.executable, str(tmp_path / "hacf" / "bin" / "seat-rules.py"), "--all"]
+    proc = subprocess.run(argv, capture_output=True, text=True, timeout=60, env=env, check=False)
+    assert proc.returncode == 0, proc.stderr
+    assert not list((tmp_path / "hacf").rglob("__pycache__"))

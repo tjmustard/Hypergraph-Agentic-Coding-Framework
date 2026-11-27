@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # dev/openrig_compat.sh <M.m.p> [--seed] [--accept] [--registry <url>] [--package-dir <dir>]
+#                       [--harness <name>]...
 #
 # Decides in minutes whether an @openrig/cli version works with HACF (release-0.6.2 R12-R14):
 # installs it into a throwaway npm prefix, copies the tree under test (this repo) into the same
@@ -16,6 +17,8 @@
 # is dev/openrig_compat.py.
 #
 #   --seed               steps 1-3, 5 and 7 only, nothing compared; verdict SEED when green.
+#   --harness <name>     a community harness to smoke-test (repeatable; default agy). A changed,
+#                        unreferenced or absent harness is REVIEW, a broken one FAIL.
 #   --registry <url>     the npm registry to install from.
 #   --package-dir <dir>  install that unpacked package dir (a copy) instead of the registry's
 #                        (synthetic candidates); integrity `local`.
@@ -54,7 +57,7 @@ set -uo pipefail
 
 usage() {
     printf 'usage: dev/openrig_compat.sh <M.m.p> [--seed] [--accept] [--registry <url>]'\
-' [--package-dir <dir>]\n' >&2
+' [--package-dir <dir>] [--harness <name>]...\n' >&2
 }
 die_usage() {
     printf 'openrig_compat.sh: %s\n' "$1" >&2
@@ -64,6 +67,7 @@ die_usage() {
 
 orig_args=("$@")
 version="" seed=0 accept=0 registry="" package_dir=""
+harnesses=()
 while [[ $# -gt 0 ]]; do
     case $1 in
     --seed) seed=1 ;;
@@ -75,6 +79,12 @@ while [[ $# -gt 0 ]]; do
     --package-dir)
         [[ $# -ge 2 ]] || die_usage "--package-dir needs a directory"
         package_dir=$2
+        shift
+        ;;
+    --harness)
+        [[ $# -ge 2 ]] || die_usage "--harness needs a name"
+        [[ $2 =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || die_usage "bad harness name '$2'"
+        harnesses+=("$2")
         shift
         ;;
     --accept) accept=1 ;;
@@ -91,6 +101,16 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 [[ -n $version ]] || die_usage "a version is required"
+# harness list: default agy, duplicates dropped (the first occurrence wins)
+[[ ${#harnesses[@]} -gt 0 ]] || harnesses=(agy)
+harness_flags=()
+declare -A harness_seen=()
+for h in "${harnesses[@]}"; do
+    [[ -n ${harness_seen[$h]:-} ]] && continue
+    harness_seen[$h]=1
+    harness_flags+=(--harness "$h")
+done
+# end of harness list
 [[ $accept -eq 0 || $seed -eq 0 ]] || die_usage "--accept and --seed exclude each other"
 [[ $accept -eq 0 || -z $package_dir ]] || die_usage "--accept never takes --package-dir"
 
@@ -277,8 +297,9 @@ names=[p for p in open(sys.argv[1],"rb").read().split(b"\0") if p and os.path.le
 sys.stdout.buffer.write(b"\0".join(names))' "$listing") >"$T/state/tree-add" || return 2
     git -C "$T/hacf" add --force --pathspec-from-file="$T/state/tree-add" --pathspec-file-nul || return 2
     git -C "$T/hacf" -c user.name="HACF openrig-compat" -c user.email=openrig-compat@hacf.invalid \
-        -c commit.gpgsign=false commit -q -m "tree under test" || return 2
+        -c commit.gpgsign=false commit -q --allow-empty -m "tree under test" || return 2
     tree_sha=$(git -C "$T/hacf" rev-parse HEAD) || return 2
+    python3 "$compat" provision-ledger --root "$T/hacf" || return 2
     (cd -- "$T/hacf" && timeout 600 uv sync --locked --quiet) || return 2
 }
 
@@ -373,7 +394,16 @@ delegate_proof() {
 }
 
 delegate_oracle() {
-    (cd -- "$T/hacf" && timeout --kill-after=10 900 uv run --locked pytest -q -p no:cacheprovider \
+    # The oracle's tests assume the contract lists exactly what was shipped; the marker names the
+    # watcher entries this run vouches for (the tree's own, plus the one contract_add just added),
+    # so the exact contract check tolerates those and nothing else (OPR.99.0.12.2).
+    local allowed plus=() oracle_env=()
+    [[ $contract_state == not-listed ]] && plus=(--plus "$version")
+    allowed=$(python3 "$compat" watcher-versions --contract "$T/state/contract.orig" \
+        --root "$T/hacf" "${plus[@]}") || return 2
+    [[ -n $allowed ]] && oracle_env=(env "HACF_COMPAT_WATCHER_VERSIONS=$allowed")
+    (cd -- "$T/hacf" && timeout --kill-after=10 900 "${oracle_env[@]}" \
+        uv run --locked pytest -q -p no:cacheprovider \
         dev/tests/openrig dev/tests/private_records/installer_records/test_contract_pin_upgrade.py)
 }
 
@@ -427,6 +457,12 @@ if step install install_candidate && step tree copy_tree; then
             step watched python3 "$compat" watched --root "$T/hacf" --package "$package" \
                 --baselines "$baselines" --out "$T/state/watched.json" --diff-dir "$evidence/diffs"
         fi
+        harness_baselines=$baselines
+        [[ $seed -eq 1 ]] && harness_baselines=""
+        step harness timeout --kill-after=10 300 python3 "$compat" harness --root "$T/hacf" \
+            --package "$package" --baselines "$harness_baselines" --work "$T/harness" \
+            --out "$T/state/harness.json" --diff-dir "$evidence/diffs" "${harness_flags[@]}" \
+            "${seed_flag[@]}"
         if step delegate-probe delegate_probe; then :; fi
         if step delegate-contract delegate_contract; then
             step delegate-verify delegate_verify
@@ -437,14 +473,14 @@ if step install install_candidate && step tree copy_tree; then
 fi
 step daemon-contact stop_listener
 step host-touched host_unchanged
-for f in captures.json help.json watched.json baselines.json spec_validate.json; do
+for f in captures.json help.json watched.json baselines.json spec_validate.json harness.json; do
     [[ -f $T/state/$f ]] && cp -- "$T/state/$f" "$evidence/$f"
 done
 cp -- "$steps" "$evidence/steps.tsv"
 
 python3 "$compat" report --state "$T/state" --evidence "$evidence" --version "$version" \
     --integrity "$integrity" --rig-version-output "$rig_shown" --package "$package" \
-    --tree-sha "$tree_sha" --root-alias "$T" "${seed_flag[@]}"
+    --tree-sha "$tree_sha" --root-alias "$T" "${harness_flags[@]}" "${seed_flag[@]}"
 rc=$?
 [[ $accept -eq 1 ]] || exit "$rc"
 
@@ -452,10 +488,18 @@ rc=$?
 accept_env=(env -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_NOSYSTEM)
 [[ -n $had_gcg ]] && accept_env+=("GIT_CONFIG_GLOBAL=$orig_gcg")
 [[ -n $had_gcns ]] && accept_env+=("GIT_CONFIG_NOSYSTEM=$orig_gcns")
+# accept's own test run inherits the marker: the tree's watcher entries plus the one being added
+refuse=()
+if allowed=$(python3 "$compat" watcher-versions \
+    --contract "$root/.agents/config/openrig_contract.yml" --plus "$version"); then
+    accept_env+=("HACF_COMPAT_WATCHER_VERSIONS=$allowed")
+else
+    refuse=(--refuse "watcher-versions failed: the tree's contract could not be read")
+fi
 expect=()
 [[ -n $start_head ]] && expect=(--expect-head "$start_head")
 "${accept_env[@]}" python3 "$compat" accept --root "$root" --version "$version" \
-    --evidence "$evidence" "${expect[@]}" --started-clean "$start_clean" -- \
+    --evidence "$evidence" "${expect[@]}" --started-clean "$start_clean" "${refuse[@]}" -- \
     uv run --locked pytest -q dev/tests/openrig dev/tests/private_records/installer_records/test_contract_pin_upgrade.py
 if [[ $rc -eq 0 ]] && grep -q '"result": "review-streak"' -- "$evidence/verdict.json"; then
     exit 3

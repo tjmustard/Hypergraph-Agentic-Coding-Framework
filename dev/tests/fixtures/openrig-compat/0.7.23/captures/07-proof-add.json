@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "rig",
+    "proof",
+    "--workspace",
+    "<T><TMP>/repo",
+    "add",
+    "01-adapter-spike",
+    "--mission",
+    "release-0.6.0",
+    "--artifact-type",
+    "qa",
+    "--verdict",
+    "PASS",
+    "--candidate-sha",
+    "<SHA>",
+    "--money-evidence",
+    "the S02 spike harness ran",
+    "--file",
+    "<T><TMP>/proof-body.md",
+    "--name",
+    "01-qa.md",
+    "--json"
+  ],
+  "exit_code": 0,
+  "git_status_after": [
+    "?? missions/release-0.6.0/slices/01-adapter-spike/proof/01-qa.md"
+  ],
+  "stderr": "",
+  "stdout": "{\n  \"dropped\": \"missions/release-0.6.0/slices/01-adapter-spike/proof/01-qa.md\",\n  \"header\": {\n    \"slice\": \"OPR.0.6.0.1\",\n    \"candidate_sha\": \"<SHA>\",\n    \"artifact_type\": \"qa\",\n    \"verdict\": \"PASS\",\n    \"money_evidence\": \"the S02 spike harness ran\"\n  },\n  \"contractItemsDeclared\": 0,\n  \"contractSource\": null,\n  \"contractItemsCovered\": [],\n  \"mediaRefs\": [],\n  \"warnings\": [],\n  \"advisories\": [\n    \"contract source: no authored SPEC.md proof contract or readable legacy fallback \u2014 treated as no declared contract.\"\n  ]\n}\n",
+  "step": "proof-add"
+}

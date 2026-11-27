@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "rig",
+    "scope",
+    "--workspace",
+    "<T><TMP>/repo",
+    "slice",
+    "progress",
+    "01-adapter-spike",
+    "--mission",
+    "release-0.6.0",
+    "--add",
+    "Spike row added by rig",
+    "--json"
+  ],
+  "exit_code": 0,
+  "git_status_after": [
+    " M missions/release-0.6.0/slices/01-adapter-spike/PROGRESS.md"
+  ],
+  "stderr": "",
+  "stdout": "{\n  \"ok\": true,\n  \"progress\": {\n    \"scope\": \"slice\",\n    \"name\": \"01-adapter-spike\",\n    \"target\": \"<T><TMP>/repo/missions/release-0.6.0/slices/01-adapter-spike/PROGRESS.md\",\n    \"kind\": \"progress\",\n    \"operation\": \"add\",\n    \"status\": \"active\",\n    \"changed\": true\n  }\n}\n",
+  "step": "slice-progress"
+}

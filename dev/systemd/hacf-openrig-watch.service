@@ -7,18 +7,27 @@
 # 03-compat.md, "Task 10"; the worst of its 5 runs was 494 MiB). ceil(1.5 x 415) = 623 MiB, rounded
 # up to a multiple of 256 MiB = 768 MiB, below the 1536M floor: MemoryMax=1536M (1.5 x 494 = 741
 # gives the same).
+# Re-measured with the harness step (OPR.99.0.13.2, P3): one 0.7.23 compat run under
+# MemoryMax=1536M peaked at 484597760 B = 462.1 MiB with oom_kill 0; 1.5 x 462.1 = 693.2 MiB
+# <= 1536 MiB, so MemoryMax is unchanged.
 #
 # OOMPolicy=continue (slice 3's audit): systemd's default (stop) kills the whole unit on the first
 # OOM kill, so the watcher would die without a verdict; with continue, the killed step is recorded
 # and the compat run ends SETUP-ERROR, which the watcher counts as a run without a verdict.
+#
+# TimeoutStartSec (OPR.99.0.13.2; mission SPEC 5.5): the worst case is a flush of 20 rows of 60 s,
+# the npm reads, a 1800 s gate wait, a compat run of at most 5400 s plus 60 s, the FAIL retry and
+# the tail; the watcher's own --deadline (21000 s) skips a run that no longer fits its budget
+# (deadline - elapsed >= gate_max + compat_max + 60 + 600), and 21600 s covers that deadline.
 [Unit]
 Description=HACF OpenRig compat watcher (one run, zero tokens)
+OnFailure=hacf-openrig-watch-failed.service
 
 [Service]
 Type=oneshot
 EnvironmentFile=%h/.config/hacf-openrig-watch/env
 ExecStart=/bin/bash ${HACF_WATCH_WORKTREE}/dev/openrig_watch.sh
-TimeoutStartSec=2700
+TimeoutStartSec=21600
 Nice=10
 IOSchedulingClass=idle
 MemoryMax=1536M

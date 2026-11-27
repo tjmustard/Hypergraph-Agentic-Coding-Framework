@@ -1,0 +1,73 @@
+{
+  "result": {
+    "layout": {
+      "tab_id": "wK:t2",
+      "workspace_id": "wK",
+      "panes": [
+        {
+          "pane_id": "wK:p2",
+          "rect": {
+            "height": 22,
+            "width": 280,
+            "x": 0,
+            "y": 0
+          }
+        },
+        {
+          "pane_id": "wK:p4",
+          "rect": {
+            "height": 22,
+            "width": 93,
+            "x": 0,
+            "y": 22
+          }
+        },
+        {
+          "pane_id": "wK:p5",
+          "rect": {
+            "height": 22,
+            "width": 94,
+            "x": 93,
+            "y": 22
+          }
+        },
+        {
+          "pane_id": "wK:p3",
+          "rect": {
+            "height": 22,
+            "width": 93,
+            "x": 187,
+            "y": 22
+          }
+        },
+        {
+          "pane_id": "wK:p7",
+          "rect": {
+            "height": 21,
+            "width": 93,
+            "x": 0,
+            "y": 44
+          }
+        },
+        {
+          "pane_id": "wK:p8",
+          "rect": {
+            "height": 21,
+            "width": 94,
+            "x": 93,
+            "y": 44
+          }
+        },
+        {
+          "pane_id": "wK:p6",
+          "rect": {
+            "height": 21,
+            "width": 93,
+            "x": 187,
+            "y": 44
+          }
+        }
+      ]
+    }
+  }
+}

@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 from conftest import REPO_ROOT
+from openrig_versions import unlisted_in_range
 
 sys.path.insert(0, str(REPO_ROOT / "dev"))
 import openrig_compat as oc  # noqa: E402
@@ -27,6 +28,8 @@ import openrig_compat as oc  # noqa: E402
 WATCH = REPO_ROOT / "dev" / "openrig_watch.sh"
 INTEGRITY = "sha512-" + "A" * 86 + "=="
 DESTINATION = "maintainer@example"
+BROKE = "OpenRig watcher: checker broke"
+SELF_TEST = "OpenRig checker self-test:"  # slice 03's tail rows, tested in their own file
 ROW_PREFIX = ["queue", "create", "--source", "hacf-openrig-watch@hacf",
               "--destination", DESTINATION]  # fmt: skip
 
@@ -58,6 +61,12 @@ RIG = r"""#!/usr/bin/env python3
 import json, os, sys
 stub = os.environ["STUB_DIR"]
 argv = sys.argv[1:]
+if argv == ["--version"]:  # logged apart: rig.log holds the rows. Unset: unparsable
+    open(os.path.join(stub, "rig-version.log"), "a").write("--version\n")
+    path = os.path.join(stub, "rig.version")
+    if os.path.exists(path):
+        print(open(path).read())
+    sys.exit(0)
 body = argv[argv.index("--body-file") + 1] if "--body-file" in argv else None
 with open(os.path.join(stub, "rig.log"), "a") as h:
     h.write(json.dumps({"argv": argv, "body": open(body).read() if body else None,
@@ -97,15 +106,19 @@ ev = os.path.join(root, f"openrig-compat-{version}-2026112{n}T000000Z")
 os.makedirs(os.path.join(ev, "diffs"), exist_ok=True)
 verdict = step["verdict"]
 steps = [{"name": s, "result": "ok", "rc": 0, "seconds": 1.0, "detail": ""} for s in step["names"]]
+base = step.get("baselines", ["0.7.21", "0.7.21"])
 data = {"version": version, "verdict": verdict,
         "failed_step": "help" if verdict == "FAIL" else None,
-        "baseline": "0.7.21", "person_baseline": "0.7.21",
-        "watched_diff": {"scope-audit.js": {"0.7.21": "differs"}} if verdict == "REVIEW" else {},
+        "baseline": base[0], "person_baseline": base[1],
+        "watched_diff": {k: {"0.7.21": "differs"} for k in step.get(
+            "watched", ["scope-audit.js"] if verdict == "REVIEW" else [])},
         "help_diff": {}, "json_paths_added": {},
-        "setup_error": "npm: exit 2" if verdict == "SETUP-ERROR" else None, "timings": {},
+        "harness": step.get("harness", {"agy": "ok" if verdict == "PASS" else "changed"}),
+        "setup_error": step.get("setup_error", "npm: exit 2") if verdict == "SETUP-ERROR" else None,
+        "timings": {},
         "steps": steps, "integrity": step.get("integrity", "sha512-" + "A" * 86 + "==")}
 if "accept" in step:
-    data["accept"] = {"result": step["accept"], "reason": "stub", "sha": "f" * 40}
+    data["accept"] = {"result": step["accept"], "reason": "stub", "sha": step.get("sha", "f" * 40)}
 if verdict == "REVIEW":
     open(os.path.join(ev, "diffs", "watched-scope-audit.js-0.7.21.diff"), "w").write("-a\n+b\n")
 if step.get("raw") is not None:
@@ -126,9 +139,21 @@ def _write(path: Path, text: str) -> Path:
     return path
 
 
+def _person_contract_bytes() -> bytes:
+    """The shipped contract without its watcher entries, so a listed watcher never moves CAND."""
+    text = (REPO_ROOT / oc.CONTRACT_PATH).read_text(encoding="utf-8")
+    return "".join(
+        ln for ln in text.splitlines(keepends=True)
+        if not (oc._ENTRY_RE.match(ln) and "accepted_by: watcher" in ln)
+    ).encode()  # fmt: skip
+
+
 def _contract_integrities() -> dict[str, str]:
-    contract = oc._shipped(REPO_ROOT)._parse_contract((REPO_ROOT / oc.CONTRACT_PATH).read_bytes())
+    contract = oc._shipped(REPO_ROOT)._parse_contract(_person_contract_bytes())
     return {e.version: e.integrity for e in contract.accepted}
+
+
+CAND = unlisted_in_range(oc._shipped(REPO_ROOT)._parse_contract(_person_contract_bytes()))[0]
 
 
 class Watch:
@@ -158,13 +183,13 @@ class Watch:
                 (self.worktree / ".agents/scripts" / name).write_bytes(
                     (REPO_ROOT / ".agents/scripts" / name).read_bytes()
                 )
-        (self.worktree / oc.CONTRACT_PATH).write_bytes((REPO_ROOT / oc.CONTRACT_PATH).read_bytes())
+        (self.worktree / oc.CONTRACT_PATH).write_bytes(_person_contract_bytes())
         self.state = tmp / "state"
         self.evidence = tmp / "evidence"
         self.tmpdir = tmp / "tmpdir"
         self.meminfo = tmp / "meminfo"
         self.mem(8192)
-        self.npm("0.7.22")
+        self.npm(f"{CAND}")
 
     def mem(self, mb: int) -> None:
         """Set the fake MemAvailable in MB."""
@@ -216,8 +241,8 @@ class Watch:
         return [json.loads(line) for line in path.read_text().splitlines()]
 
     def rows(self) -> list[dict]:
-        """The rows the stub rig received."""
-        return self.lines("rig.log")
+        """The rows the stub rig received, the tail's self-test rows left out."""
+        return [r for r in self.lines("rig.log") if not _summary(r).startswith(SELF_TEST)]
 
     def compat_calls(self) -> list[dict]:
         """The stub compat run's calls."""
@@ -228,13 +253,19 @@ class Watch:
         return [line for line in self.history_all() if not line.startswith("notify: ")]
 
     def history_all(self) -> list[str]:
-        """history.log's lines, `notify:` lines included."""
+        """history.log's lines, the tail's self-test and upgrade lines left out."""
         path = self.state / "history.log"
-        return path.read_text().splitlines() if path.exists() else []
+        lines = path.read_text().splitlines() if path.exists() else []
+        tail = ("selftest ", "upgrade:", f"notify: {SELF_TEST}", f"row-failed {SELF_TEST}")
+        return [line for line in lines if not line.startswith(tail)]
 
     def counters(self) -> dict:
         """counters.json."""
         return json.loads((self.state / "counters.json").read_text())
+
+    def stream(self, name: str = "new-version") -> dict:
+        """One stream's counters."""
+        return self.counters()["streams"][name]
 
     def reset_logs(self) -> None:
         """Forget what the stubs logged."""
@@ -274,18 +305,18 @@ def test_pass_patch_is_accepted_and_the_update_row_is_exact(w: Watch) -> None:
     proc = w.run()
     assert proc.returncode == 0, proc.stderr
     calls = w.compat_calls()
-    assert len(calls) == 1 and calls[0]["argv"] == ["0.7.22", "--accept"]
+    assert len(calls) == 1 and calls[0]["argv"] == [f"{CAND}", "--accept", "--harness", "agy"]
     assert calls[0]["tmpdir"] == str(w.tmpdir)
     rows = w.rows()
     assert len(rows) == 1
-    evidence = str(w.evidence / "openrig-compat-0.7.22-20261120T000000Z")
-    _assert_row_argv(rows[0], "OpenRig 0.7.22: accepted locally (watcher)", evidence)
+    evidence = str(w.evidence / f"openrig-compat-{CAND}-20261120T000000Z")
+    _assert_row_argv(rows[0], f"OpenRig {CAND}: accepted locally (watcher)", evidence)
     assert "ffffffffffff" in rows[0]["body"] and evidence in rows[0]["body"]
     notified = w.lines("notify.log")
-    assert notified == [["OpenRig 0.7.22: accepted locally (watcher)",
+    assert notified == [[f"OpenRig {CAND}: accepted locally (watcher)",
                          "PASS; commit ffffffffffff on swimlane/openrig-accepted"]]  # fmt: skip
-    assert json.loads((w.state / "verdicts/0.7.22.json").read_text())["outcome"] == "accepted"
-    assert (w.state / "latest.md").read_text().split()[:2] == ["0.7.22", "accepted"]
+    assert json.loads((w.state / f"verdicts/{CAND}.json").read_text())["outcome"] == "accepted"
+    assert (w.state / "latest.md").read_text().split()[:2] == [f"{CAND}", "accepted"]
     assert (w.state / "last-run").exists()
     assert len(w.history()) == 1
     assert list(w.tmpdir.iterdir()) == []  # $T removed
@@ -296,10 +327,12 @@ def test_registry_is_passed_through(w: Watch) -> None:
     w.plan({"verdict": "PASS", "accept": "accepted", "rc": 0})
     w.run("--registry", "http://127.0.0.1:9/")
     assert w.compat_calls()[0]["argv"] == [
-        "0.7.22",
+        f"{CAND}",
         "--accept",
         "--registry",
         "http://127.0.0.1:9/",
+        "--harness",
+        "agy",
     ]
     assert all("--registry" in call for call in w.lines("npm.log"))
 
@@ -309,7 +342,7 @@ def test_review_is_a_decision_row(w: Watch) -> None:
     w.plan({"verdict": "REVIEW", "rc": 3})
     w.run()
     rows = w.rows()
-    assert [_summary(r) for r in rows] == ["OpenRig 0.7.22: REVIEW: decision needed"]
+    assert [_summary(r) for r in rows] == [f"OpenRig {CAND}: REVIEW: decision needed"]
     assert "watched-scope-audit.js-0.7.21.diff" in rows[0]["body"]
     assert "Verdict: REVIEW" in rows[0]["body"]
 
@@ -320,9 +353,9 @@ def test_fail_then_fail_is_one_retry_then_a_decision_row(w: Watch) -> None:
     w.run()
     assert len(w.compat_calls()) == 2
     rows = w.rows()
-    assert [_summary(r) for r in rows] == ["OpenRig 0.7.22: FAIL: decision needed"]
+    assert [_summary(r) for r in rows] == [f"OpenRig {CAND}: FAIL: decision needed"]
     assert "failed step: help" in rows[0]["body"]
-    assert json.loads((w.state / "verdicts/0.7.22.json").read_text())["outcome"] == "FAIL"
+    assert json.loads((w.state / f"verdicts/{CAND}.json").read_text())["outcome"] == "FAIL"
     assert w.counters()["fails"] == {}
 
 
@@ -331,7 +364,7 @@ def test_fail_then_pass_takes_the_pass_branch(w: Watch) -> None:
     w.plan({"verdict": "FAIL", "rc": 1}, {"verdict": "PASS", "accept": "accepted", "rc": 0})
     w.run()
     assert len(w.compat_calls()) == 2
-    assert [_summary(r) for r in w.rows()] == ["OpenRig 0.7.22: accepted locally (watcher)"]
+    assert [_summary(r) for r in w.rows()] == [f"OpenRig {CAND}: accepted locally (watcher)"]
 
 
 def test_fail_with_the_gate_closed_before_the_retry_is_fail_pending(w: Watch) -> None:
@@ -343,15 +376,15 @@ def test_fail_with_the_gate_closed_before_the_retry_is_fail_pending(w: Watch) ->
     w.run()
     assert len(w.compat_calls()) == 1 and w.rows() == []
     assert w.history()[-1].split()[1] == "fail-pending"
-    assert not (w.state / "verdicts/0.7.22.json").exists()
-    assert w.counters()["fails"] == {"0.7.22": 1}
+    assert not (w.state / f"verdicts/{CAND}.json").exists()
+    assert w.counters()["fails"] == {f"{CAND}": 1}
     # tomorrow: the gate is open, and one more FAIL is final (no second retry)
     _write(pgrep, PGREP)
     w.reset_logs()
     w.plan({"verdict": "FAIL", "rc": 1})
     w.run()
     assert len(w.compat_calls()) == 1
-    assert [_summary(r) for r in w.rows()] == ["OpenRig 0.7.22: FAIL: decision needed"]
+    assert [_summary(r) for r in w.rows()] == [f"OpenRig {CAND}: FAIL: decision needed"]
 
 
 def test_not_a_patch_is_a_decision_row(w: Watch) -> None:
@@ -359,7 +392,7 @@ def test_not_a_patch_is_a_decision_row(w: Watch) -> None:
     w.npm("0.8.0")
     w.plan({"verdict": "PASS", "accept": "not-a-patch", "rc": 0})
     w.run()
-    assert w.compat_calls()[0]["argv"] == ["0.8.0", "--accept"]
+    assert w.compat_calls()[0]["argv"] == ["0.8.0", "--accept", "--harness", "agy"]
     assert [_summary(r) for r in w.rows()] == ["OpenRig 0.8.0: not a patch: decision needed"]
 
 
@@ -371,7 +404,7 @@ def test_a_refused_accept_is_a_review_row(result: str, w: Watch) -> None:
     w.plan({"verdict": "PASS", "accept": result, "rc": rc})
     w.run()
     rows = w.rows()
-    assert [_summary(r) for r in rows] == ["OpenRig 0.7.22: REVIEW: decision needed"]
+    assert [_summary(r) for r in rows] == [f"OpenRig {CAND}: REVIEW: decision needed"]
     assert f"Accept: {result}" in rows[0]["body"]
 
 
@@ -380,7 +413,7 @@ def test_pass_without_an_accept_result_is_never_reported_accepted(w: Watch) -> N
     w.plan({"verdict": "PASS", "rc": 0})
     w.run()
     rows = w.rows()
-    assert [_summary(r) for r in rows] == ["OpenRig 0.7.22: REVIEW: decision needed"]
+    assert [_summary(r) for r in rows] == [f"OpenRig {CAND}: REVIEW: decision needed"]
     assert "Accept: accept-missing" in rows[0]["body"]
 
 
@@ -418,7 +451,7 @@ def test_gate_closed_is_deferred_without_a_row(w: Watch) -> None:
     assert proc.returncode == 0
     assert w.compat_calls() == [] and w.rows() == []
     assert w.history()[-1].split()[1] == "deferred"
-    assert w.counters()["deferred"] == 1
+    assert w.stream()["deferred"] == 1
 
 
 def test_gate_closed_by_another_pytest(w: Watch) -> None:
@@ -451,30 +484,43 @@ def test_hostile_meminfo_keeps_the_gate_closed(meminfo: str, w: Watch) -> None:
     assert w.compat_calls() == [] and w.history()[-1].split()[1] == "deferred"
 
 
-def test_second_run_without_a_verdict_sends_one_row_and_a_third_none(w: Watch) -> None:
-    """Second run without a verdict sends one row and a third none."""
+def test_the_first_setup_error_is_one_row_and_the_next_none(w: Watch) -> None:
+    """One checker-broke row per stream until a verdict resets it (replaces the 2nd-run latch)."""
     w.mem(100)
     w.plan({"verdict": "PASS", "accept": "accepted", "rc": 0})
     w.run()
-    assert w.rows() == []
-    w.npm(None)  # the second: an npm setup error
+    assert w.rows() == []  # one deferral: no row yet
+    w.npm(None)  # an npm setup error: the first setup error of the stream
     w.run()
     rows = w.rows()
-    assert [_summary(r) for r in rows] == ["OpenRig watcher: 2 runs without a verdict"]
-    _assert_row_argv(rows[0], "OpenRig watcher: 2 runs without a verdict", str(w.state))
+    assert [_summary(r) for r in rows] == [BROKE]
+    _assert_row_argv(rows[0], BROKE, str(w.state))
+    assert "new-version" in rows[0]["body"] and "npm view" in rows[0]["body"]
     w.run()
     assert len(w.rows()) == 1
-    assert w.counters()["no_verdict"] == 3
-    # a verdict resets it; two more runs without one send one more row
-    w.npm("0.7.22")
+    assert w.stream()["no_verdict"] == 3
+    # a verdict resets it; the next setup error sends one more row
+    w.npm(f"{CAND}")
     w.mem(8192)
     w.run()
-    assert w.counters()["no_verdict"] == 0
+    assert w.stream()["no_verdict"] == 0
     w.reset_logs()
     w.npm(None)
     w.run()
     w.run()
+    assert [_summary(r) for r in w.rows()] == [BROKE]
+
+
+def test_two_deferrals_in_a_row_send_one_row(w: Watch) -> None:
+    """The deferred latch: the second run without a verdict is one row, the third none."""
+    w.mem(100)
+    w.plan({"verdict": "PASS", "accept": "accepted", "rc": 0})
+    w.run()
+    assert w.rows() == []
+    w.run()
     assert [_summary(r) for r in w.rows()] == ["OpenRig watcher: 2 runs without a verdict"]
+    w.run()
+    assert len(w.rows()) == 1
 
 
 @pytest.mark.parametrize("rc", [137, 124, 143, 2])
@@ -484,10 +530,10 @@ def test_an_oom_timeout_or_signal_exit_is_a_setup_error_never_fail(rc: int, w: W
     w.plan({"verdict": verdict, "rc": rc})
     w.run()
     assert len(w.compat_calls()) == 1  # no FAIL retry
-    assert w.rows() == []
+    assert [_summary(r) for r in w.rows()] == [BROKE]  # R139: the first setup error is a row
     assert w.history()[-1].split()[1] == "setup"
-    assert w.counters()["setup_errors"] == 1 and w.counters()["fails"] == {}
-    assert not (w.state / "verdicts/0.7.22.json").exists()
+    assert w.stream()["setup_errors"] == 1 and w.counters()["fails"] == {}
+    assert not (w.state / f"verdicts/{CAND}.json").exists()
 
 
 @pytest.mark.parametrize("step", [
@@ -503,7 +549,8 @@ def test_a_malformed_or_inconsistent_verdict_is_a_setup_error(step: dict, w: Wat
     """A malformed or inconsistent verdict is a setup error."""
     w.plan(step)
     w.run()
-    assert w.rows() == [] and w.history()[-1].split()[1] == "setup"
+    assert [_summary(r) for r in w.rows()] == [BROKE]  # R139: the first setup error is a row
+    assert w.history()[-1].split()[1] == "setup"
 
 
 def test_hostile_npm_version_is_a_setup_error(w: Watch) -> None:
@@ -557,8 +604,10 @@ def test_the_watcher_calls_rig_only_for_queue_create(w: Watch) -> None:
     ):
         w.plan(step)
         w.run()
-        (w.state / "verdicts/0.7.22.json").unlink(missing_ok=True)
-    assert w.rows() and all(r["argv"][:2] == ["queue", "create"] for r in w.rows())
+        (w.state / f"verdicts/{CAND}.json").unlink(missing_ok=True)
+    rows = w.lines("rig.log")
+    assert rows and all(r["argv"][:2] == ["queue", "create"] for r in rows)
+    assert (w.stub / "rig-version.log").read_text().split() == ["--version"] * 2
 
 
 def test_corrupt_counters_are_moved_aside(w: Watch) -> None:
@@ -569,7 +618,7 @@ def test_corrupt_counters_are_moved_aside(w: Watch) -> None:
     proc = w.run()
     assert proc.returncode == 0 and len(w.rows()) == 1
     assert list(w.state.glob("counters.json.bad-*"))
-    assert w.counters()["no_verdict"] == 0
+    assert w.stream()["no_verdict"] == 0
 
 
 # ---------------------------------------------------------------------------------------------
@@ -597,7 +646,9 @@ def test_check_env(w: Watch) -> None:
     out = dict(line.split(": ", 1) for line in proc.stdout.splitlines())
     assert out == {"npm": str(w.bin / "npm"), "node": str(node), "uv": str(uv),
                    "rig": str(w.rig), "notifier": str(w.bin / "notify-stub"),
-                   "row destination": DESTINATION, "evidence root": str(w.evidence),
+                   "row destination": DESTINATION, "upgrade destination": "none",
+                   "harnesses": "agy", "failure notifier": "none",
+                   "evidence root": str(w.evidence),
                    "worktree": str(w.worktree)}  # fmt: skip
     (w.bin / "notify-stub").unlink()
     proc = w.run("--check-env")
@@ -671,12 +722,12 @@ def test_unset_settings_call_no_notifier_and_no_rig_but_are_never_silent(w: Watc
     assert proc.returncode == 0, proc.stderr
     assert w.lines("notify.log") == [] and w.rows() == []
     assert not (w.stub / "rig.log").exists()
-    line = ("notify: OpenRig 0.7.22: REVIEW: decision needed"
+    line = (f"notify: OpenRig {CAND}: REVIEW: decision needed"
             " | every step green; watched files differ")  # fmt: skip
     assert proc.stdout.splitlines() == [line]
     assert w.history_all()[-1] == line
-    assert w.history()[-1].split()[:2] == ["0.7.22", "REVIEW"]
-    assert (w.state / "latest.md").read_text().split()[:2] == ["0.7.22", "REVIEW"]
+    assert w.history()[-1].split()[:2] == [f"{CAND}", "REVIEW"]
+    assert (w.state / "latest.md").read_text().split()[:2] == [f"{CAND}", "REVIEW"]
 
 
 def test_the_notifier_and_row_argv_are_exact(w: Watch) -> None:
@@ -684,7 +735,7 @@ def test_the_notifier_and_row_argv_are_exact(w: Watch) -> None:
     w.plan({"verdict": "FAIL", "rc": 1}, {"verdict": "FAIL", "rc": 1})
     proc = w.run(HACF_WATCH_ROW_DESTINATION="someone-else@rig")
     assert proc.returncode == 0, proc.stderr
-    summary = "OpenRig 0.7.22: FAIL: decision needed"
+    summary = f"OpenRig {CAND}: FAIL: decision needed"
     assert w.lines("notify.log") == [[summary, "FAIL twice: help"]]
     rows = w.rows()
     assert len(rows) == 1
@@ -692,7 +743,7 @@ def test_the_notifier_and_row_argv_are_exact(w: Watch) -> None:
     assert argv[:6] == ["queue", "create", "--source", "hacf-openrig-watch@hacf",
                         "--destination", "someone-else@rig"]  # fmt: skip
     assert argv[6:8] == ["--summary", summary] and argv[8] == "--body-file"
-    evidence = w.evidence / "openrig-compat-0.7.22-20261121T000000Z"
+    evidence = w.evidence / f"openrig-compat-{CAND}-20261121T000000Z"
     assert argv[10:] == ["--evidence-ref", str(evidence)]
     assert f"notify: {summary} | FAIL twice: help" in proc.stdout.splitlines()
 
@@ -702,7 +753,7 @@ def test_only_a_notifier_or_only_a_destination(w: Watch) -> None:
     w.plan({"verdict": "REVIEW", "rc": 3})
     w.run(HACF_WATCH_ROW_DESTINATION=None)
     assert len(w.lines("notify.log")) == 1 and w.rows() == []
-    (w.state / "verdicts/0.7.22.json").unlink()
+    (w.state / f"verdicts/{CAND}.json").unlink()
     w.reset_logs()
     w.plan({"verdict": "REVIEW", "rc": 3})
     w.run(HACF_WATCH_NOTIFY_CMD=None)
@@ -723,9 +774,9 @@ def test_evidence_root_precedence(source: str, w: Watch) -> None:
     w.plan({"verdict": "REVIEW", "rc": 3})
     proc = w.run(*extra, evidence_root=False, **env)
     assert proc.returncode == 0, proc.stderr
-    assert w.compat_calls()[0]["argv"] == ["0.7.22", "--accept"]
-    assert w.history()[-1].split()[3] == str(want / "openrig-compat-0.7.22-20261120T000000Z")
-    assert [p.name for p in want.iterdir()] == ["openrig-compat-0.7.22-20261120T000000Z"]
+    assert w.compat_calls()[0]["argv"] == [f"{CAND}", "--accept", "--harness", "agy"]
+    assert w.history()[-1].split()[3] == str(want / f"openrig-compat-{CAND}-20261120T000000Z")
+    assert [p.name for p in want.iterdir()] == [f"openrig-compat-{CAND}-20261120T000000Z"]
 
 
 # Host names that must never reach a public tree (mission R16, R22). Stored only as
@@ -749,6 +800,8 @@ SCANNED = (
     "DEVELOPMENT.md",
     "dev/tests/compat/test_openrig_watch.py",
     "dev/tests/compat/test_openrig_watch_install.py",
+    "dev/tests/compat/test_openrig_watch_rows.py",
+    "dev/tests/compat/test_openrig_watch_upgrade.py",
     "dev/tests/compat/test_openrig_compat.py",
 )
 
@@ -823,4 +876,4 @@ def test_the_watcher_files_carry_no_host_names() -> None:
         data = path.read_bytes()
         hits += [f"{path.name}@{at}: needle {i}" for at, i in digest_hits(data)]
         hits += [f"{path.name}@{at}: account name" for at in account_hits(data, name)]
-    assert len(paths) == 10 and hits == []
+    assert len(paths) == 13 and hits == []

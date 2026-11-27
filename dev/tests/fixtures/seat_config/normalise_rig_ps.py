@@ -23,6 +23,7 @@ KEEP = (
     "rigName",
     "profile",
     "role",
+    "runtime",
     "model",
     "effort",
     "effortSource",

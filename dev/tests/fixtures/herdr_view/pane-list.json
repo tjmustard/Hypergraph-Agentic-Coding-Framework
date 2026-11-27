@@ -1,0 +1,60 @@
+{
+  "result": {
+    "panes": [
+      {
+        "pane_id": "wK:p2",
+        "tab_id": "wK:t2",
+        "workspace_id": "wK",
+        "label": "orch.lead",
+        "agent": "claude"
+      },
+      {
+        "pane_id": "wK:p4",
+        "tab_id": "wK:t2",
+        "workspace_id": "wK",
+        "label": "build.execute",
+        "agent": "claude"
+      },
+      {
+        "pane_id": "wK:p5",
+        "tab_id": "wK:t2",
+        "workspace_id": "wK",
+        "label": "build.audit",
+        "agent": "claude"
+      },
+      {
+        "pane_id": "wK:p3",
+        "tab_id": "wK:t2",
+        "workspace_id": "wK",
+        "label": "desk.scribe",
+        "agent": "claude"
+      },
+      {
+        "pane_id": "wK:p7",
+        "tab_id": "wK:t2",
+        "workspace_id": "wK",
+        "label": "spec.architect",
+        "agent": "claude"
+      },
+      {
+        "pane_id": "wK:p8",
+        "tab_id": "wK:t2",
+        "workspace_id": "wK",
+        "label": "spec.red-team",
+        "agent": "claude"
+      },
+      {
+        "pane_id": "wK:p6",
+        "tab_id": "wK:t2",
+        "workspace_id": "wK",
+        "label": "spec.resolve",
+        "agent": "claude"
+      },
+      {
+        "pane_id": "w1:p1",
+        "tab_id": "w1:t1",
+        "workspace_id": "w1"
+      }
+    ]
+  }
+}

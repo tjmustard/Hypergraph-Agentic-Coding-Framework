@@ -1,0 +1,170 @@
+{
+  "wK:p2": {
+    "result": {
+      "process_info": {
+        "pane_id": "wK:p2",
+        "shell_pid": 2737785,
+        "foreground_processes": [
+          {
+            "pid": 2737785,
+            "name": "sh"
+          },
+          {
+            "pid": 2737788,
+            "name": "sh"
+          },
+          {
+            "pid": 2737881,
+            "name": "tmux: client"
+          }
+        ]
+      }
+    }
+  },
+  "wK:p4": {
+    "result": {
+      "process_info": {
+        "pane_id": "wK:p4",
+        "shell_pid": 2737792,
+        "foreground_processes": [
+          {
+            "pid": 2737792,
+            "name": "sh"
+          },
+          {
+            "pid": 2737799,
+            "name": "sh"
+          },
+          {
+            "pid": 3966622,
+            "name": "tmux: client"
+          }
+        ]
+      }
+    }
+  },
+  "wK:p5": {
+    "result": {
+      "process_info": {
+        "pane_id": "wK:p5",
+        "shell_pid": 2737813,
+        "foreground_processes": [
+          {
+            "pid": 249849,
+            "name": "tmux: client"
+          },
+          {
+            "pid": 2737813,
+            "name": "sh"
+          },
+          {
+            "pid": 2737820,
+            "name": "sh"
+          }
+        ]
+      }
+    }
+  },
+  "wK:p3": {
+    "result": {
+      "process_info": {
+        "pane_id": "wK:p3",
+        "shell_pid": 2737789,
+        "foreground_processes": [
+          {
+            "pid": 2737789,
+            "name": "sh"
+          },
+          {
+            "pid": 2737794,
+            "name": "sh"
+          },
+          {
+            "pid": 2737899,
+            "name": "tmux: client"
+          }
+        ]
+      }
+    }
+  },
+  "wK:p7": {
+    "result": {
+      "process_info": {
+        "pane_id": "wK:p7",
+        "shell_pid": 2737823,
+        "foreground_processes": [
+          {
+            "pid": 2737823,
+            "name": "sh"
+          },
+          {
+            "pid": 2737832,
+            "name": "sh"
+          },
+          {
+            "pid": 2737974,
+            "name": "tmux: client"
+          }
+        ]
+      }
+    }
+  },
+  "wK:p8": {
+    "result": {
+      "process_info": {
+        "pane_id": "wK:p8",
+        "shell_pid": 2737833,
+        "foreground_processes": [
+          {
+            "pid": 2737833,
+            "name": "sh"
+          },
+          {
+            "pid": 2737839,
+            "name": "sh"
+          },
+          {
+            "pid": 2737997,
+            "name": "tmux: client"
+          }
+        ]
+      }
+    }
+  },
+  "wK:p6": {
+    "result": {
+      "process_info": {
+        "pane_id": "wK:p6",
+        "shell_pid": 2737819,
+        "foreground_processes": [
+          {
+            "pid": 2737819,
+            "name": "sh"
+          },
+          {
+            "pid": 2737831,
+            "name": "sh"
+          },
+          {
+            "pid": 2737961,
+            "name": "tmux: client"
+          }
+        ]
+      }
+    }
+  },
+  "w1:p1": {
+    "result": {
+      "process_info": {
+        "pane_id": "w1:p1",
+        "shell_pid": 3564884,
+        "foreground_processes": [
+          {
+            "pid": 3564884,
+            "name": "zsh"
+          }
+        ]
+      }
+    }
+  }
+}

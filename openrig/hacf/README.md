@@ -305,25 +305,43 @@ the standing policy; this spec turns nothing on by itself.
 
 ## Seat config
 
-Three files hold the per-seat model, effort and context limits (v0.6.6):
+These files hold the per-seat settings (schema v2): each role's `model`, `effort`, `tools`,
+`skills`, `instructions`, `harness` and context limits, and the top-level `routing`.
 
-- `seat-config.yml` is HACF's defaults: the model of each of the seven roles (every seat on
-  `claude-opus-5-5` today), the sections it reads (`caps.yml` for the context keys) and the keys
-  reserved for later. An upgrade replaces it.
-- `overrides.yml`, beside it, is yours. In TJ's words: "The shipped config holds HACF's defaults.
-  The user's own changes live in a separate overrides file. Upgrades never touch it." No HACF tool
-  writes, creates or deletes it, and it is git-ignored in HACF's own repository; a release export
-  refuses one. Its `schema:` line is optional (`hacf.seat-overrides/v1`). Example, the one-line
-  revert of a seat to Opus:
+- `seat-config.yml` (`hacf.seat-config/v2`) is HACF's defaults: the model and effort of the seven
+  roles (`claude-opus-5-5`, except `execute` on `claude-sonnet-5-5` at `medium` and `scribe` on
+  `claude-haiku-5-5`), the `routing:` block, the files it reads the other defaults from
+  (`sections:`) and the reserved key `mcp`. An upgrade replaces it.
+- `overrides.yml` (`hacf.seat-overrides/v2`), beside it, is yours. In TJ's words: "The shipped
+  config holds HACF's defaults. The user's own changes live in a separate overrides file. Upgrades
+  never touch it." No HACF tool writes, creates or deletes it, and it is git-ignored in HACF's own
+  repository; a release export refuses one. Its `schema:` line is optional (read as v2). Example,
+  the one-line revert of a seat to Opus:
   `seats: {scribe: {model: claude-opus-5-5}}`.
-- `presets/<name>.yml` (`hacf.seat-preset/v1`) is read only when `seat-config.yml` names it with
-  `preset:`. v0.6.6 ships none, and an override naming a missing preset is refused.
+- `presets/<name>.yml` (`hacf.seat-preset/v2`) is read only when `seat-config.yml` names it with
+  `preset:`. Six ship, none selected: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`,
+  `tiered`, `codex` and `agy`. Each states what was tested in a `tested:` line, which a preset must
+  carry.
 
-Precedence is default < preset < override, per role and per key; an override replaces one key's
-value and never merges inside it. `bin/seat-config.py validate` refuses an unknown role or key, a
-reserved key, a bad `effort`, `cap_tokens`, `behaviour` or `reset_scope`, a missing preset and a
-wrong schema, one line each (`<file>: <key path>: <reason>`). `bin/seat-config.py resolve --json`
-prints every value with its source (`default`, `preset:<name>` or `override`).
+`overrides.yml` and a preset may set these keys of a role under `seats:`:
+
+| Key | Value | Default |
+|---|---|---|
+| `model`, `effort` | a model name; `low`, `medium`, `high`, `xhigh` or `max` | `seat-config.yml` |
+| `tools` | `{add_deny: [tool], remove_deny: [tool]}` | the role's `tools_deny` in `roles.yml` |
+| `skills` | `{add: [skill], remove: [skill]}` | `uses.skills` in `agents/hacf/agent.yaml` |
+| `instructions` | `[local/<file>]`, your files under `agents/hacf/local/`, 64 KiB each at most | none |
+| `harness` | a runtime; one other than `claude-code`, `codex` or `pi` is reported, not applied | `agents/hacf/agent.yaml` |
+| `cap_tokens`, `behaviour`, `reset_scope` | the context limits | `caps.yml` |
+
+Precedence is default < preset < override, per role and per key. A later layer replaces a key's
+value and never merges inside it, except `tools` and `skills`: each layer's removes, then its
+adds, edit the default list. `bin/seat-config.py validate` refuses an unknown or reserved key, an
+unknown role, a bad value, a missing preset, a wrong schema and a breach of the floor
+(`AskUserQuestion` is always denied and `codebase-memory-mcp` is never denied), one line each
+(`<file>: <key path>: <reason>`). A v1 `seat-config.yml` or `overrides.yml` is still read, with
+v1's keys. `bin/seat-config.py resolve --json` prints every value with its source (`default`,
+`preset:<name>` or `override`; `tools` and `skills` join the layers that changed the list).
 
 The context guard takes its caps through `resolve` whenever `seat-config.yml` sits beside the
 `--caps` file; its command line and its decisions are unchanged, and without `seat-config.yml` it
@@ -332,6 +350,25 @@ guard keeps running on HACF's defaults, logs `caps_source=defaults (seat config 
 with `--apply`, raises one durable alert per distinct error: a queue row to `orch-lead@<rig>` and
 one to `operator-agent@kernel`, then a marker under `~/.hacf/<rig>/guard-alerts/`. A failed row is
 retried on the next tick.
+
+**Routing.** The top-level `routing:` block of `seat-config.yml` says where the seats' questions
+and updates go. Its four keys are `question.destination`, `update.destination` (each
+`{rule: discover}` or `{session: <address>}`), `tags` (`question`, `update`, `answer`, `extra`)
+and `format` (options A/B/C, one recommended). The shipped destinations are `discover`: the
+advisor when `advisor.lead` runs on the kernel rig, else the person from
+`rig gateway human list --json`. To route to a fixed seat, set it in `overrides.yml`:
+
+```yaml
+routing: {question: {destination: {session: <address>}}}
+```
+
+Each key is replaced whole, so a `tags` override states every tag it wants. Presets may not set
+routing. A seat reads the result before each question
+(`startup/protocol.md`, "Asking the person"):
+
+```bash
+python3 bin/seat-config.py resolve --section routing --json
+```
 
 A model reaches a running seat only through the commands that `bin/seat-config-upgrade.py` prints
 (`rig seat set-model` / `set-effort`, then a fresh launch); editing these files changes no live
@@ -361,8 +398,10 @@ never `codebase-memory-mcp`), whether it needs MCP servers, and its skills.
 and `rig.yaml` consistent. `rig.yaml` itself carries one rig-level `env:` key (v0.6.4); per-seat
 tool rules are still applied per seat, so it launches on every OpenRig this rig is tested against.
 The key, `ENABLE_CLAUDEAI_MCP_SERVERS: "false"`, turns off the account's claude.ai MCP connectors for
-every seat; project MCP servers such as `codebase-memory-mcp` stay. Every OpenRig version the compat
-check runs proves it with `rig spec validate`. The rules are native tool rules, not a
+the seats of rigs **created** with it. A rig created before the key was in its `rig.yaml` does not
+get it from `rig down`/`rig up --existing`, a fresh launch or a handover: it must be re-created, or
+OpenRig fixed (see `OPS.md`). Project MCP servers such as `codebase-memory-mcp` stay. Every OpenRig
+version the compat check runs proves it with `rig spec validate`. The rules are native tool rules, not a
 sandbox: the denies hold under `builtin:yolo`, where allows would not constrain anything, so the
 generator emits none. `OPS.md` is the operator's recipe for applying them per seat, the turn-1
 probe and the rollback; nothing applies them on its own.
@@ -374,6 +413,13 @@ beside it (`.claude/settings.local.json`). In parent-folder mode that is one lev
 project, so no project sees it. In project mode it is the project root: keep those files out of
 commits with `.git/info/exclude`, never by editing HACF's managed `.gitignore` block. The scribe
 still checks the project for stray rig files before it commits.
+
+## Team view
+
+`bin/herdr-view.py --rig <rig>` fixes the seats' tmux window sizes, reopens a detached Herdr view,
+lays the seats out from the rig's spec (the lead on top, then rows of three) and closes idle shells
+only. Run it after `rig up` and after a resume; `--dry-run` shows the plan first. See
+"The Herdr team view (herdr-view.py)" in [OPS.md](OPS.md).
 
 ## Files
 
@@ -394,7 +440,8 @@ bin/seat-config.py              validates and resolves seat-config.yml, presets 
 OPS.md                          applying roles.yml to a running rig per seat: probe, rollback
 bin/brief.sh                    the execute/audit brief, from the running rig's own run record
 bin/context-guard.sh            restarts one idle seat over the context cap at a durable point
-bin/view-layout.sh              arranges the team's Herdr view: the lead on top, build row, spec row
+bin/herdr-view.py               the team's Herdr view: window sizes, reopen, layout from the spec
+bin/view-layout.sh              deprecated (use herdr-view.py): arranges the seven seats' rows only
 bin/seat-rules.py               one role of roles.yml as `rig seat set-permissions --rules` JSON
 agents/hacf/agent.yaml          seven profiles, one per stage
 agents/hacf/guidance/*.md       one role file per seat

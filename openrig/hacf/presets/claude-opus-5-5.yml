@@ -1,0 +1,14 @@
+# Every seat on Claude Opus 5.5. It sets only model, so a default effort (execute: medium) still
+# applies under it.
+# Select it with `preset: claude-opus-5-5` in seat-config.yml; none is selected by default. Your
+# overrides.yml still wins over every value here. This file is HACF's: an upgrade replaces it.
+schema: hacf.seat-preset/v2
+tested: "B2 baseline: 20 slices with every seat on claude-opus-5-5 (dev/telemetry/h5-v066.md)"
+seats:
+  lead:      {model: claude-opus-5-5}
+  architect: {model: claude-opus-5-5}
+  red-team:  {model: claude-opus-5-5}
+  resolve:   {model: claude-opus-5-5}
+  execute:   {model: claude-opus-5-5}
+  audit:     {model: claude-opus-5-5}
+  scribe:    {model: claude-opus-5-5}

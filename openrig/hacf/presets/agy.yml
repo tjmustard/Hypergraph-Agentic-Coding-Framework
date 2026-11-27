@@ -1,0 +1,14 @@
+# Every seat on the agy harness. v0.6.7 validates and reports it but does not apply it: see
+# CHANGELOG.md, Known issues.
+# Select it with `preset: agy` in seat-config.yml; none is selected by default. Your
+# overrides.yml still wins over every value here. This file is HACF's: an upgrade replaces it.
+schema: hacf.seat-preset/v2
+tested: "stub smoke only (compat harness step, OPR.99.0.13.1); no live run; harness not appliable in v0.6.7 (R161)"
+seats:
+  lead:      {harness: agy}
+  architect: {harness: agy}
+  red-team:  {harness: agy}
+  resolve:   {harness: agy}
+  execute:   {harness: agy}
+  audit:     {harness: agy}
+  scribe:    {harness: agy}

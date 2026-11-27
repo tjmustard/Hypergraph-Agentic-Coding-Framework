@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # dev/openrig_watch_install.sh --worktree <path> --base <commit> [--notify-cmd <cmd>]
-#     [--row-destination <session>] [--evidence-root <dir>] [--dry-run]
+#     [--row-destination <session>] [--evidence-root <dir>] [--upgrade-destination <session>]
+#     [--harness <name>]... [--failure-notify-cmd <cmd>] [--dry-run]
 # dev/openrig_watch_install.sh --uninstall [--dry-run]
 #
 # Installs the daily OpenRig compat watcher for this user (release-0.6.2 R17, R19); idempotent, and
 # it prints every path it writes or removes. Install:
 #   1. resolves npm, node, uv and the host rig with `command -v` (any missing: exit 1, nothing
-#      written), and --notify-cmd when given (unresolvable: exit 1, nothing written);
+#      written), and --notify-cmd and --failure-notify-cmd when given (unresolvable: exit 1,
+#      nothing written);
 #   2. renders the host-only env file ~/.config/hacf-openrig-watch/env (PATH, HACF_WATCH_RIG,
-#      HACF_WATCH_WORKTREE, and only when given HACF_WATCH_NOTIFY_CMD, HACF_WATCH_ROW_DESTINATION
-#      and HACF_COMPAT_EVIDENCE_ROOT): the only place the host's tool paths and settings live.
+#      HACF_WATCH_WORKTREE, and only when given HACF_WATCH_NOTIFY_CMD, HACF_WATCH_ROW_DESTINATION,
+#      HACF_COMPAT_EVIDENCE_ROOT, HACF_WATCH_UPGRADE_DESTINATION, HACF_WATCH_HARNESSES and
+#      HACF_WATCH_FAILURE_NOTIFY_CMD): the only place the host's tool paths and settings live.
 #      Without them the watcher calls no notifier and no rig, and keeps its evidence under
 #      ${XDG_STATE_HOME:-~/.local/state}/hacf/evidence;
 #   3. creates the watcher worktree with `git worktree add -b swimlane/openrig-accepted <path>
@@ -17,11 +20,14 @@
 #      already be a clean worktree on that branch: it is fast-forwarded to <commit> (`merge
 #      --ff-only`), so the installed timer runs the new code from its next run; one with
 #      uncommitted changes or with commits not in <commit> is refused before anything is written;
-#   4. copies dev/systemd/hacf-openrig-watch.{service,timer} to ~/.config/systemd/user/;
+#   4. copies dev/systemd/hacf-openrig-watch.{service,timer} and hacf-openrig-watch-failed.service
+#      (the unit's OnFailure=) to ~/.config/systemd/user/;
 #   5. systemctl --user daemon-reload; systemctl --user enable --now hacf-openrig-watch.timer;
 #   6. runs the watcher's --check-env under the unit's env file (systemd-run --user --wait --pipe)
-#      and fails the install if it fails.
-# --uninstall disables the timer and removes the two units and the env file, then reloads; it keeps
+#      and fails the install if it fails;
+#   7. only with --row-destination: runs the watcher's --row-check under the unit's environment
+#      (one real queue row) and fails the install if the row does not land.
+# --uninstall disables the timer and removes the three units and the env file, then reloads; it keeps
 # the state dir, the evidence and the worktree with its branch (they may hold unmerged accept
 # commits) and prints the `git worktree remove` command. --dry-run prints the actions and changes
 # nothing: no file, no systemctl, no git. Linger stays off (the maintainer's choice).
@@ -30,6 +36,8 @@ set -uo pipefail
 usage() {
     printf '%s\n' "usage: dev/openrig_watch_install.sh --worktree <path> --base <commit> [--dry-run]" \
         "           [--notify-cmd <cmd>] [--row-destination <session>] [--evidence-root <dir>]" \
+        "           [--upgrade-destination <session>] [--harness <name>]..." \
+        "           [--failure-notify-cmd <cmd>]" \
         "       dev/openrig_watch_install.sh --uninstall [--dry-run]" >&2
 }
 die() {
@@ -38,9 +46,11 @@ die() {
 }
 
 worktree="" base="" dry=0 uninstall=0 notify_cmd="" row_dest="" evidence_root=""
+upgrade_dest="" failure_cmd="" harnesses=()
 while [[ $# -gt 0 ]]; do
     case $1 in
-    --worktree | --base | --notify-cmd | --row-destination | --evidence-root)
+    --worktree | --base | --notify-cmd | --row-destination | --evidence-root | \
+        --upgrade-destination | --harness | --failure-notify-cmd)
         [[ $# -ge 2 && -n $2 && $2 != *$'\n'* ]] || {
             usage
             die "$1 needs a one-line value" 2
@@ -51,6 +61,15 @@ while [[ $# -gt 0 ]]; do
         --notify-cmd) notify_cmd=$2 ;;
         --row-destination) row_dest=$2 ;;
         --evidence-root) evidence_root=$2 ;;
+        --upgrade-destination) upgrade_dest=$2 ;;
+        --failure-notify-cmd) failure_cmd=$2 ;;
+        --harness)
+            [[ $2 =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || {
+                usage
+                die "bad harness name '$2' (nothing written)" 2
+            }
+            harnesses+=("$2")
+            ;;
         esac
         shift
         ;;
@@ -73,7 +92,7 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 conf_dir="$HOME/.config/hacf-openrig-watch"
 env_file="$conf_dir/env"
 unit_dir="$HOME/.config/systemd/user"
-units=(hacf-openrig-watch.service hacf-openrig-watch.timer)
+units=(hacf-openrig-watch.service hacf-openrig-watch.timer hacf-openrig-watch-failed.service)
 branch=swimlane/openrig-accepted
 mode=""
 [[ $dry -eq 1 ]] && mode="dry-run: "
@@ -90,7 +109,8 @@ act() {
 
 # --- --uninstall -------------------------------------------------------------------------------------
 if [[ $uninstall -eq 1 ]]; then
-    [[ -z $worktree$base$notify_cmd$row_dest$evidence_root ]] ||
+    [[ -z $worktree$base$notify_cmd$row_dest$evidence_root$upgrade_dest$failure_cmd &&
+        ${#harnesses[@]} -eq 0 ]] ||
         die "--uninstall takes no install option (--worktree, --base, --notify-cmd, ...)" 2
     old_worktree="" old_evidence=""
     if [[ -f $env_file ]]; then
@@ -142,6 +162,12 @@ if [[ -n $notify_cmd ]]; then
     [[ -n $notifier && $notifier == /* ]] ||
         die "--notify-cmd $notify_cmd does not resolve on PATH (nothing written)"
 fi
+failure_notifier=""
+if [[ -n $failure_cmd ]]; then
+    failure_notifier=$(command -v -- "$failure_cmd" 2>/dev/null || true)
+    [[ -n $failure_notifier && $failure_notifier == /* ]] ||
+        die "--failure-notify-cmd $failure_cmd does not resolve on PATH (nothing written)"
+fi
 if [[ -n $evidence_root ]]; then
     [[ $evidence_root == /* ]] || evidence_root="$(pwd)/$evidence_root"
     evidence_root=$(realpath -m -- "$evidence_root")
@@ -185,6 +211,7 @@ add_dir "$(dirname -- "${found[npm]}")"
 add_dir "$(dirname -- "${found[node]}")"
 add_dir "$(dirname -- "${found[uv]}")"
 [[ -n $notifier ]] && add_dir "$(dirname -- "$notifier")"
+[[ -n $failure_notifier ]] && add_dir "$(dirname -- "$failure_notifier")"
 add_dir /usr/bin
 add_dir /bin
 unit_path=$(
@@ -196,6 +223,12 @@ env_content=$(printf 'PATH=%s\nHACF_WATCH_RIG=%s\nHACF_WATCH_WORKTREE=%s\n' \
 [[ -z $notify_cmd ]] || env_content+=$'\n'"HACF_WATCH_NOTIFY_CMD=$notify_cmd"
 [[ -z $row_dest ]] || env_content+=$'\n'"HACF_WATCH_ROW_DESTINATION=$row_dest"
 [[ -z $evidence_root ]] || env_content+=$'\n'"HACF_COMPAT_EVIDENCE_ROOT=$evidence_root"
+[[ -z $upgrade_dest ]] || env_content+=$'\n'"HACF_WATCH_UPGRADE_DESTINATION=$upgrade_dest"
+if [[ ${#harnesses[@]} -gt 0 ]]; then
+    harness_list=$(printf '%s\n' "${harnesses[@]}" | awk '!seen[$0]++' | paste -s -d, -)
+    env_content+=$'\n'"HACF_WATCH_HARNESSES=$harness_list"
+fi
+[[ -z $failure_notifier ]] || env_content+=$'\n'"HACF_WATCH_FAILURE_NOTIFY_CMD=$failure_notifier"
 
 # --- 2. the env file -----------------------------------------------------------------------------------
 say "resolved: npm=${found[npm]} node=${found[node]} uv=${found[uv]} rig=${found[rig]} notifier=${notifier:-none}"
@@ -249,4 +282,15 @@ act "run systemctl --user enable --now hacf-openrig-watch.timer" \
 act "run systemd-run --user --wait --pipe -p EnvironmentFile=$env_file /bin/bash $worktree/dev/openrig_watch.sh --check-env" \
     systemd-run --user --wait --pipe -p "EnvironmentFile=$env_file" /bin/bash \
     "$worktree/dev/openrig_watch.sh" --check-env
+# --- 7. the row path, under the unit's own environment ----------------------------------------------
+if [[ -n $row_dest ]]; then
+    row_env="Environment=TMPDIR=$HOME/.cache/hacf-tmp/openrig-watch XDG_CACHE_HOME=$HOME/.cache/hacf-openrig-watch"
+    row_cmd=(systemd-run --user --wait --pipe -p "EnvironmentFile=$env_file" -p "$row_env"
+        /bin/bash "$worktree/dev/openrig_watch.sh" --row-check)
+    retry="systemd-run --user --wait --pipe -p EnvironmentFile=$env_file -p \"$row_env\" /bin/bash $worktree/dev/openrig_watch.sh --row-check"
+    say "run $retry"
+    if [[ $dry -eq 0 ]]; then
+        "${row_cmd[@]}" || die "the row path check failed; retry with: $retry"
+    fi
+fi
 say "installed; disable with: systemctl --user disable --now hacf-openrig-watch.timer"

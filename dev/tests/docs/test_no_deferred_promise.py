@@ -1,7 +1,7 @@
-"""No document promises a version for an item v0.6.6 deferred (OPR.0.6.6.1, MR 6).
+"""No document promises a version for an item v0.6.6 or v0.6.7 deferred (OPR.0.6.6.1, OPR.0.6.7.1).
 
-The deferred items are "deferred, unplanned": the README and the CHANGELOG's `[Unreleased]` and
-`[0.6.6]` sections may name them but never pair one with a `v0.6.` or `v0.7.` version as a target.
+The README and the CHANGELOG's `[Unreleased]`, `[0.6.7]` and `[0.6.6]` sections may name a deferred
+item but never pair one with a `v0.6.` or `v0.7.` version as a target.
 A "line" here is one bullet (a bullet and its wrapped continuation lines). Released sections
 (`[0.6.5]` and older) are history and are not scanned. Stdlib only; reads files, writes nothing.
 """
@@ -21,6 +21,9 @@ DEFERRED = (
     re.compile(r"symbol_impact --include-tests"),
     re.compile(r"`\.mcp\.json` `env` block"),
     re.compile(r"shared uv caches", re.IGNORECASE),
+    re.compile(r"community harness", re.IGNORECASE),
+    re.compile(r"harness: agy"),
+    re.compile(r"no `PROGRESS\.md`"),  # the progress report's "tracked" rule (OPR.99.0.15.7)
 )
 TARGET = re.compile(r"\bv0\.[67]\.\d+")
 
@@ -44,11 +47,13 @@ def _bullets(text: str) -> list[str]:
 
 
 def _changelog_sections() -> str:
-    """The `[Unreleased]` and `[0.6.6]` sections of the CHANGELOG."""
+    """The `[Unreleased]`, `[0.6.7]` and `[0.6.6]` sections of the CHANGELOG."""
     text = CHANGELOG.read_text(encoding="utf-8")
     start = text.index("## [Unreleased]")
     end = text.index("## [0.6.5]")
-    return text[start:end]
+    section = text[start:end]
+    assert "## [0.6.7]" in section and "## [0.6.6]" in section
+    return section
 
 
 def _offenders(text: str) -> list[str]:
@@ -65,8 +70,8 @@ def test_readme_pairs_no_deferred_item_with_a_version() -> None:
     assert _offenders(README.read_text(encoding="utf-8")) == []
 
 
-def test_changelog_unreleased_and_0_6_6_pair_no_deferred_item_with_a_version() -> None:
-    """The CHANGELOG sections of this release promise no version for a deferred item."""
+def test_changelog_unreleased_to_0_6_6_pair_no_deferred_item_with_a_version() -> None:
+    """The CHANGELOG sections since v0.6.6 promise no version for a deferred item."""
     assert _offenders(_changelog_sections()) == []
 
 

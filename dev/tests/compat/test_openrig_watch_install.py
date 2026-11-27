@@ -279,6 +279,7 @@ def test_uninstall_dry_run_and_real_with_stubs(tmp_path: Path) -> None:
     for line in ("dry-run: run systemctl --user disable --now hacf-openrig-watch.timer",
                  f"dry-run: remove {units}/hacf-openrig-watch.service",
                  f"dry-run: remove {units}/hacf-openrig-watch.timer",
+                 f"dry-run: remove {units}/hacf-openrig-watch-failed.service",
                  f"dry-run: remove {host.home}/.config/hacf-openrig-watch/env",
                  "dry-run: run systemctl --user daemon-reload",
                  f"git worktree remove {host.worktree}"):  # fmt: skip
@@ -402,7 +403,7 @@ def test_service_template_keys() -> None:
         "Type": "oneshot",
         "EnvironmentFile": "%h/.config/hacf-openrig-watch/env",
         "ExecStart": "/bin/bash ${HACF_WATCH_WORKTREE}/dev/openrig_watch.sh",
-        "TimeoutStartSec": "2700",
+        "TimeoutStartSec": "21600",
         "Nice": "10",
         "IOSchedulingClass": "idle",
         "MemoryMax": "1536M",
@@ -412,6 +413,7 @@ def test_service_template_keys() -> None:
                        "XDG_CACHE_HOME=%h/.cache/hacf-openrig-watch",
     }  # fmt: skip
     assert "Install" not in service  # the timer is what is enabled
+    assert service["Unit"]["OnFailure"] == "hacf-openrig-watch-failed.service"
 
 
 def test_timer_template_keys() -> None:

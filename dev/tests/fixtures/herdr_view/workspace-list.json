@@ -1,0 +1,16 @@
+{
+  "result": {
+    "workspaces": [
+      {
+        "workspace_id": "wK",
+        "label": "demo-hacf",
+        "focused": true
+      },
+      {
+        "workspace_id": "w1",
+        "label": "demo-other",
+        "focused": false
+      }
+    ]
+  }
+}

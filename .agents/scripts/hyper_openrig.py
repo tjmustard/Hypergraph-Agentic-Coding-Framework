@@ -90,7 +90,7 @@ EXIT_REFUSED = 5
 # R3); load_contract() reads it and narrows to FALLBACK_RIG_VERSIONS on any doubt. A new version
 # joins that file only after dev/tests/contract/test_openrig_live.py passes on it.
 CONTRACT_REL = ".agents/config/openrig_contract.yml"
-FALLBACK_RIG_VERSIONS = ("0.6.13", "0.7.16", "0.7.21")
+FALLBACK_RIG_VERSIONS = ("0.6.13", "0.7.16", "0.7.21", "0.7.23")
 CONTRACT_MAX_BYTES = 64 * 1024
 CONTRACT_KEYS = ("schema", "accepted", "range", "probe")
 CONTRACT_ENTRY_KEYS = ("version", "integrity", "verdict", "accepted_by")

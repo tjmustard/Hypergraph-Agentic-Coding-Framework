@@ -1,0 +1,44 @@
+[
+  {
+    "rigId": "01DEMORIGID0000000000000000",
+    "rigName": "demo-hacf",
+    "logicalId": "orch.lead",
+    "canonicalSessionName": "orch-lead@demo-hacf"
+  },
+  {
+    "rigId": "01DEMORIGID0000000000000000",
+    "rigName": "demo-hacf",
+    "logicalId": "build.execute",
+    "canonicalSessionName": "build-execute@demo-hacf"
+  },
+  {
+    "rigId": "01DEMORIGID0000000000000000",
+    "rigName": "demo-hacf",
+    "logicalId": "build.audit",
+    "canonicalSessionName": "build-audit@demo-hacf"
+  },
+  {
+    "rigId": "01DEMORIGID0000000000000000",
+    "rigName": "demo-hacf",
+    "logicalId": "desk.scribe",
+    "canonicalSessionName": "desk-scribe@demo-hacf"
+  },
+  {
+    "rigId": "01DEMORIGID0000000000000000",
+    "rigName": "demo-hacf",
+    "logicalId": "spec.architect",
+    "canonicalSessionName": "spec-architect@demo-hacf"
+  },
+  {
+    "rigId": "01DEMORIGID0000000000000000",
+    "rigName": "demo-hacf",
+    "logicalId": "spec.red-team",
+    "canonicalSessionName": "spec-red-team@demo-hacf"
+  },
+  {
+    "rigId": "01DEMORIGID0000000000000000",
+    "rigName": "demo-hacf",
+    "logicalId": "spec.resolve",
+    "canonicalSessionName": "spec-resolve@demo-hacf"
+  }
+]

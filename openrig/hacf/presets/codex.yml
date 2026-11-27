@@ -1,0 +1,14 @@
+# Every seat on the codex harness. It sets no model, because no codex model was tested: set one
+# per seat in overrides.yml, or the Claude models of seat-config.yml stay resolved.
+# Select it with `preset: codex` in seat-config.yml; none is selected by default. Your
+# overrides.yml still wins over every value here. This file is HACF's: an upgrade replaces it.
+schema: hacf.seat-preset/v2
+tested: "not tested on HACF"
+seats:
+  lead:      {harness: codex}
+  architect: {harness: codex}
+  red-team:  {harness: codex}
+  resolve:   {harness: codex}
+  execute:   {harness: codex}
+  audit:     {harness: codex}
+  scribe:    {harness: codex}

@@ -18,19 +18,28 @@ from pathlib import Path
 
 import pytest
 from conftest import REPO_ROOT
+from openrig_versions import unlisted_patches
 
 sys.path.insert(0, str(REPO_ROOT / "dev"))
 import openrig_compat as oc  # noqa: E402
 
 SCRIPT = REPO_ROOT / "dev" / "openrig_compat.sh"
 INTEGRITY = "sha512-" + "A" * 86 + "=="
-EVIDENCE_NAME = "openrig-compat-0.7.22-20261123T060000Z"
+
+
+def _person_only(text: str) -> str:
+    """The contract text without its watcher entry lines (the accept tests must not see them)."""
+    return "".join(
+        ln for ln in text.splitlines(keepends=True)
+        if not (oc._ENTRY_RE.match(ln) and "accepted_by: watcher" in ln)
+    )  # fmt: skip
 
 
 def _shipped_contract(extra: str = "") -> object:
-    raw = (REPO_ROOT / oc.CONTRACT_PATH).read_bytes()
+    text = _person_only((REPO_ROOT / oc.CONTRACT_PATH).read_text(encoding="utf-8"))
     if extra:
-        raw = _with_entries(raw.decode(), extra).encode()
+        text = _with_entries(text, extra)
+    raw = text.encode()
     return oc._shipped(REPO_ROOT)._parse_contract(raw)
 
 
@@ -46,13 +55,24 @@ def _watcher_line(version: str) -> str:
             "accepted_by: watcher}\n")  # fmt: skip
 
 
+# Candidate versions derived from the person-only contract: none of them is listed, whatever
+# watcher entries the file under test carries (OPR.99.0.12.2).
+_BASE = _shipped_contract()
+V1, V2, V3, V4, V5 = unlisted_patches(_BASE, 5)
+_PEOPLE = [e.version for e in _BASE.accepted if e.accepted_by == "person"]
+PERSON_TOP = max(_PEOPLE, key=lambda v: tuple(int(x) for x in v.split(".")))
+_TOP_PATCH = int(PERSON_TOP.split(".")[2])
+_MIN_PATCH = _BASE.range[0][2]
+_MINOR = ".".join(PERSON_TOP.split(".")[:2])
+EVIDENCE_NAME = f"openrig-compat-{V1}-20261123T060000Z"
+
 # ---------------------------------------------------------------------------------------------
 # Mini-requirement 1: the patch table (mission R15)
 
 PATCH_TABLE = [
-    ("0.7.22", True), ("0.8.0", False), ("1.7.22", False), ("0.7.15", False), ("0.7.20", False),
-    ("0.7.21", False), ("0.7.22-rc.1", False), ("0.7.22+build.1", False), ("0.7.022", False),
-    ("v0.7.22", False), ("", False),
+    (V1, True), ("0.8.0", False), ("1.7.22", False), (f"{_MINOR}.{_MIN_PATCH - 1}", False),
+    (f"{_MINOR}.{_TOP_PATCH - 1}", False), (PERSON_TOP, False), ("0.7.22-rc.1", False),
+    ("0.7.22+build.1", False), ("0.7.022", False), ("v0.7.22", False), ("", False),
 ]  # fmt: skip
 
 
@@ -62,10 +82,10 @@ def test_patch_rule_against_the_shipped_contract(version: str, want: bool) -> No
     assert oc.is_patch_of_accepted_minor(version, _shipped_contract()) is want
 
 
-@pytest.mark.parametrize(("version", "want"), [("0.7.23", True), ("0.7.22", False)])
+@pytest.mark.parametrize(("version", "want"), [(V2, True), (V1, False)])
 def test_patch_rule_counts_watcher_entries(version: str, want: bool) -> None:
     """Patch rule counts watcher entries."""
-    contract = _shipped_contract(_watcher_line("0.7.22"))
+    contract = _shipped_contract(_watcher_line(V1))
     assert oc.is_patch_of_accepted_minor(version, contract) is want
 
 
@@ -93,12 +113,12 @@ def _repo(tmp_path: Path, extra_entries: str = "", branch: str = oc.ACCEPT_BRANC
     for name in ("hyper_openrig.py", "_runtime.py"):
         if (REPO_ROOT / ".agents/scripts" / name).exists():
             shutil.copy(REPO_ROOT / ".agents/scripts" / name, root / ".agents/scripts")
-    text = (REPO_ROOT / oc.CONTRACT_PATH).read_text(encoding="utf-8")
+    text = _person_only((REPO_ROOT / oc.CONTRACT_PATH).read_text(encoding="utf-8"))
     if extra_entries:
         text = _with_entries(text, extra_entries)
     (root / oc.CONTRACT_PATH).write_text(text, encoding="utf-8")
-    (root / oc.FIXTURE_ROOT / "0.7.21").mkdir(parents=True)
-    (root / oc.FIXTURE_ROOT / "0.7.21/meta.json").write_text("{}\n", encoding="utf-8")
+    (root / oc.FIXTURE_ROOT / PERSON_TOP).mkdir(parents=True)
+    (root / oc.FIXTURE_ROOT / f"{PERSON_TOP}/meta.json").write_text("{}\n", encoding="utf-8")
     (root / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q", "-b", branch, str(root)], check=True)
     for key, value in (("user.name", "Test Person"), ("user.email", "test@example.invalid"),
@@ -109,20 +129,21 @@ def _repo(tmp_path: Path, extra_entries: str = "", branch: str = oc.ACCEPT_BRANC
     return root
 
 
-def _green_verdict(version: str = "0.7.22") -> dict:
+def _green_verdict(version: str = V1) -> dict:
     steps = [{"name": name, "result": "ok", "rc": 0, "seconds": 1.0, "detail": ""}
              for name in oc.REQUIRED_STEPS]  # fmt: skip
     return {
         "version": version, "verdict": "PASS", "failed_step": None, "baseline": "0.7.21",
         "person_baseline": "0.7.21", "watched_diff": {}, "help_diff": {}, "json_paths_added": {},
         "setup_error": None, "timings": {"install": 1.0}, "steps": steps, "integrity": INTEGRITY,
+        "harness": {"agy": "ok"},
         "problems": {"captures": [], "help": []},
     }  # fmt: skip
 
 
-def _evidence(tmp_path: Path, verdict: object = None, version: str = "0.7.22",
+def _evidence(tmp_path: Path, verdict: object = None, version: str = V1,
               raw: bytes | None = None) -> Path:  # fmt: skip
-    evidence = tmp_path / "evidence" / EVIDENCE_NAME.replace("0.7.22", version)
+    evidence = tmp_path / "evidence" / EVIDENCE_NAME.replace(V1, version)
     (evidence / "baseline-candidate/captures").mkdir(parents=True)
     (evidence / "baseline-candidate/meta.json").write_text('{"version": "x"}\n', encoding="utf-8")
     (evidence / "baseline-candidate/captures/01-a.json").write_text("{}\n", encoding="utf-8")
@@ -145,23 +166,21 @@ def test_accept_makes_one_commit_of_exactly_two_paths(tmp_path: Path) -> None:
     """Accept makes one commit of exactly two paths."""
     root = _repo(tmp_path)
     evidence = _evidence(tmp_path, _green_verdict())
-    got = oc.accept(
-        root, "0.7.22", evidence, OK, expect_head=_git(root, "rev-parse", "HEAD").strip()
-    )
+    got = oc.accept(root, V1, evidence, OK, expect_head=_git(root, "rev-parse", "HEAD").strip())
     assert got["result"] == "accepted", got
     assert _commits(root) == 2
     assert got["sha"] == _git(root, "rev-parse", "HEAD").strip()
     shown = sorted(_git(root, "show", "--name-only", "--format=", "HEAD").split())
-    assert shown == sorted([oc.CONTRACT_PATH, f"{oc.FIXTURE_ROOT}/0.7.22/meta.json",
-                            f"{oc.FIXTURE_ROOT}/0.7.22/captures/01-a.json"])  # fmt: skip
+    assert shown == sorted([oc.CONTRACT_PATH, f"{oc.FIXTURE_ROOT}/{V1}/meta.json",
+                            f"{oc.FIXTURE_ROOT}/{V1}/captures/01-a.json"])  # fmt: skip
     message = _git(root, "log", "-1", "--format=%B")
-    assert message.splitlines()[0] == "openrig-compat: accept rig 0.7.22 (watcher)"
+    assert message.splitlines()[0] == f"openrig-compat: accept rig {V1} (watcher)"
     assert message.splitlines()[1] == ""
     assert f"HACF-Compat-Verdict: {evidence.name}" in message.splitlines()
     assert "Agentic-Assistant" not in message and "Co-authored-by" not in message.lower()
     assert _git(root, "status", "--porcelain") == ""
     contract = oc._shipped(root)._parse_contract((root / oc.CONTRACT_PATH).read_bytes())
-    entry = next(e for e in contract.accepted if e.version == "0.7.22")
+    entry = next(e for e in contract.accepted if e.version == V1)
     assert (entry.accepted_by, entry.integrity, entry.verdict) == ("watcher", INTEGRITY,
                                                                    evidence.name)  # fmt: skip
     assert _git(root, "symbolic-ref", "--short", "HEAD").strip() == oc.ACCEPT_BRANCH
@@ -171,11 +190,11 @@ def test_accept_tests_failed_restores_the_tree(tmp_path: Path) -> None:
     """Accept tests failed restores the tree."""
     root = _repo(tmp_path)
     before = (root / oc.CONTRACT_PATH).read_bytes()
-    got = oc.accept(root, "0.7.22", _evidence(tmp_path, _green_verdict()), NOT_OK)
+    got = oc.accept(root, V1, _evidence(tmp_path, _green_verdict()), NOT_OK)
     assert got["result"] == "tests-failed"
     assert _commits(root) == 1
     assert (root / oc.CONTRACT_PATH).read_bytes() == before
-    assert not (root / oc.FIXTURE_ROOT / "0.7.22").exists()
+    assert not (root / oc.FIXTURE_ROOT / V1).exists()
     assert _git(root, "status", "--porcelain", "--untracked-files=all") == ""
 
 
@@ -185,19 +204,16 @@ def test_accept_runs_the_tests_on_the_tree_to_be_committed(tmp_path: Path) -> No
     probe = [sys.executable, "-c",
              "import pathlib, sys;"
              " t = pathlib.Path('.agents/config/openrig_contract.yml').read_text();"
-             " sys.exit(0 if '0.7.22' in t and pathlib.Path("
-             f"'{oc.FIXTURE_ROOT}/0.7.22/meta.json').is_file() else 9)"]  # fmt: skip
-    assert (
-        oc.accept(root, "0.7.22", _evidence(tmp_path, _green_verdict()), probe)["result"]
-        == "accepted"
-    )
+             f" sys.exit(0 if '{V1}' in t and pathlib.Path("
+             f"'{oc.FIXTURE_ROOT}/{V1}/meta.json').is_file() else 9)"]  # fmt: skip
+    assert oc.accept(root, V1, _evidence(tmp_path, _green_verdict()), probe)["result"] == "accepted"
 
 
 def test_accept_refuses_a_tree_the_tests_changed(tmp_path: Path) -> None:
     """Accept refuses a tree the tests changed."""
     root = _repo(tmp_path)
     scribble = [sys.executable, "-c", "open('stray.txt', 'w').write('x')"]
-    got = oc.accept(root, "0.7.22", _evidence(tmp_path, _green_verdict()), scribble)
+    got = oc.accept(root, V1, _evidence(tmp_path, _green_verdict()), scribble)
     assert got["result"] == "error" and "beyond the two" in got["reason"]
     assert _commits(root) == 1
     assert _git(root, "status", "--porcelain", "--untracked-files=all").split() == [
@@ -209,7 +225,7 @@ def test_accept_refuses_a_tree_the_tests_changed(tmp_path: Path) -> None:
 def test_accept_wrong_branch(tmp_path: Path) -> None:
     """Accept wrong branch."""
     root = _repo(tmp_path, branch="main")
-    got = oc.accept(root, "0.7.22", _evidence(tmp_path, _green_verdict()), OK)
+    got = oc.accept(root, V1, _evidence(tmp_path, _green_verdict()), OK)
     assert got["result"] == "wrong-branch" and _commits(root) == 1
 
 
@@ -217,7 +233,7 @@ def test_accept_detached_head(tmp_path: Path) -> None:
     """Accept detached head."""
     root = _repo(tmp_path)
     _git(root, "checkout", "-q", "--detach")
-    got = oc.accept(root, "0.7.22", _evidence(tmp_path, _green_verdict()), OK)
+    got = oc.accept(root, V1, _evidence(tmp_path, _green_verdict()), OK)
     assert got["result"] == "wrong-branch"
 
 
@@ -232,7 +248,7 @@ def test_accept_dirty_tree(how: str, tmp_path: Path) -> None:
     elif how == "staged":
         (root / "new.txt").write_text("x", encoding="utf-8")
         _git(root, "add", "new.txt")
-    got = oc.accept(root, "0.7.22", _evidence(tmp_path, _green_verdict()), OK,
+    got = oc.accept(root, V1, _evidence(tmp_path, _green_verdict()), OK,
                     started_clean=how != "started-dirty")  # fmt: skip
     assert got["result"] == "dirty-tree" and _commits(root) == 1
 
@@ -240,7 +256,7 @@ def test_accept_dirty_tree(how: str, tmp_path: Path) -> None:
 def test_accept_head_moved(tmp_path: Path) -> None:
     """Accept head moved."""
     root = _repo(tmp_path)
-    got = oc.accept(root, "0.7.22", _evidence(tmp_path, _green_verdict()), OK, expect_head="0" * 40)
+    got = oc.accept(root, V1, _evidence(tmp_path, _green_verdict()), OK, expect_head="0" * 40)
     assert got["result"] == "head-moved" and _commits(root) == 1
 
 
@@ -253,35 +269,35 @@ def test_accept_not_a_patch(tmp_path: Path) -> None:
 
 def test_accept_review_streak(tmp_path: Path) -> None:
     """Three watcher entries after the newest person entry: the 4th is REVIEW (F13)."""
-    root = _repo(tmp_path, "".join(_watcher_line(v) for v in ("0.7.22", "0.7.23", "0.7.24")))
-    got = oc.accept(root, "0.7.25", _evidence(tmp_path, _green_verdict("0.7.25"), "0.7.25"), OK)
+    root = _repo(tmp_path, "".join(_watcher_line(v) for v in (V1, V2, V3)))
+    got = oc.accept(root, V4, _evidence(tmp_path, _green_verdict(V4), V4), OK)
     assert got["result"] == "review-streak" and _commits(root) == 1
     # two watcher entries: the third is still accepted
-    root2 = _repo(tmp_path / "two", "".join(_watcher_line(v) for v in ("0.7.22", "0.7.23")))
-    evidence = _evidence(tmp_path / "two", _green_verdict("0.7.24"), "0.7.24")
-    got = oc.accept(root2, "0.7.24", evidence, OK)
+    root2 = _repo(tmp_path / "two", "".join(_watcher_line(v) for v in (V1, V2)))
+    evidence = _evidence(tmp_path / "two", _green_verdict(V3), V3)
+    got = oc.accept(root2, V3, evidence, OK)
     assert got["result"] == "accepted", got
 
 
 def test_watcher_streak_resets_after_a_person_entry() -> None:
     """Watcher streak resets after a person entry."""
-    lines = "".join(_watcher_line(v) for v in ("0.7.22", "0.7.23", "0.7.24"))
-    person = (f'  - {{version: "0.7.25", integrity: "{INTEGRITY}", verdict: "x", '
+    lines = "".join(_watcher_line(v) for v in (V1, V2, V3))
+    person = (f'  - {{version: "{V4}", integrity: "{INTEGRITY}", verdict: "x", '
               "accepted_by: person}\n")  # fmt: skip
-    assert oc.watcher_streak("0.7.25", _shipped_contract(lines)) == 3
-    assert oc.watcher_streak("0.7.26", _shipped_contract(lines + person)) == 0
+    assert oc.watcher_streak(V4, _shipped_contract(lines)) == 3
+    assert oc.watcher_streak(V5, _shipped_contract(lines + person)) == 0
 
 
 def test_accept_refuses_an_existing_fixture_dir(tmp_path: Path) -> None:
     """Accept refuses an existing fixture dir."""
     root = _repo(tmp_path)
-    (root / oc.FIXTURE_ROOT / "0.7.22").mkdir()
-    (root / oc.FIXTURE_ROOT / "0.7.22/keep").write_text("x", encoding="utf-8")
+    (root / oc.FIXTURE_ROOT / V1).mkdir()
+    (root / oc.FIXTURE_ROOT / f"{V1}/keep").write_text("x", encoding="utf-8")
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "pre-existing")
-    got = oc.accept(root, "0.7.22", _evidence(tmp_path, _green_verdict()), OK)
+    got = oc.accept(root, V1, _evidence(tmp_path, _green_verdict()), OK)
     assert got["result"] == "error" and _commits(root) == 2
-    assert (root / oc.FIXTURE_ROOT / "0.7.22/keep").read_text() == "x"
+    assert (root / oc.FIXTURE_ROOT / f"{V1}/keep").read_text() == "x"
 
 
 def _verdict_sweep() -> list[tuple[str, object]]:
@@ -299,7 +315,7 @@ def _verdict_sweep() -> list[tuple[str, object]]:
                 continue  # a valid type for this key; covered by the value checks below
             cases.append((f"{key}={bad!r}", {**green, key: bad}))
     cases += [
-        ("other version", {**green, "version": "0.7.23"}),
+        ("other version", {**green, "version": V2}),
         ("failed step", {**green, "failed_step": "help"}),
         ("setup error", {**green, "setup_error": "npm"}),
         ("watched diff", {**green, "watched_diff": {"scope-audit.js": {"0.7.21": "differs"}}}),
@@ -321,7 +337,7 @@ def test_accept_sweep_never_commits_without_a_green_pass(label: str, verdict: ob
                                                          tmp_path: Path) -> None:  # fmt: skip
     """Accept sweep never commits without a green PASS."""
     root = _repo(tmp_path)
-    got = oc.accept(root, "0.7.22", _evidence(tmp_path, copy.deepcopy(verdict)), OK)
+    got = oc.accept(root, V1, _evidence(tmp_path, copy.deepcopy(verdict)), OK)
     assert got["result"] == "not-pass", (label, got)
     assert _commits(root) == 1
     assert _git(root, "status", "--porcelain", "--untracked-files=all") == ""
@@ -335,7 +351,7 @@ def test_accept_sweep_never_commits_without_a_green_pass(label: str, verdict: ob
 def test_accept_hostile_verdict_bytes(raw: bytes, tmp_path: Path) -> None:
     """Accept hostile verdict bytes."""
     root = _repo(tmp_path)
-    got = oc.accept(root, "0.7.22", _evidence(tmp_path, raw=raw), OK)
+    got = oc.accept(root, V1, _evidence(tmp_path, raw=raw), OK)
     assert got["result"] == "not-pass", got
     assert _commits(root) == 1
 
@@ -343,10 +359,10 @@ def test_accept_hostile_verdict_bytes(raw: bytes, tmp_path: Path) -> None:
 def test_accept_missing_verdict_and_candidate(tmp_path: Path) -> None:
     """Accept missing verdict and candidate."""
     root = _repo(tmp_path)
-    assert oc.accept(root, "0.7.22", _evidence(tmp_path), OK)["result"] == "not-pass"
+    assert oc.accept(root, V1, _evidence(tmp_path), OK)["result"] == "not-pass"
     evidence = _evidence(tmp_path / "b", _green_verdict())
     shutil.rmtree(evidence / "baseline-candidate")
-    assert oc.accept(root, "0.7.22", evidence, OK)["result"] == "error"
+    assert oc.accept(root, V1, evidence, OK)["result"] == "error"
     assert _commits(root) == 1
 
 
@@ -355,7 +371,7 @@ def test_accept_refuses_a_broken_contract_file(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     (root / oc.CONTRACT_PATH).write_text("schema: 1\naccepted: [\n", encoding="utf-8")
     _git(root, "commit", "-qam", "break it")
-    got = oc.accept(root, "0.7.22", _evidence(tmp_path, _green_verdict()), OK)
+    got = oc.accept(root, V1, _evidence(tmp_path, _green_verdict()), OK)
     assert got["result"] == "error" and _commits(root) == 2
 
 
@@ -363,17 +379,15 @@ def test_accept_cli_records_the_result_in_verdict_json(tmp_path: Path, capsys) -
     """Accept cli records the result in verdict json."""
     root = _repo(tmp_path)
     evidence = _evidence(tmp_path, _green_verdict())
-    rc = oc.main(["accept", "--root", str(root), "--version", "0.7.22", "--evidence", str(evidence),
+    rc = oc.main(["accept", "--root", str(root), "--version", V1, "--evidence", str(evidence),
                   "--", *OK])  # fmt: skip
     assert rc == 0
     data = json.loads((evidence / "verdict.json").read_text())
     assert data["accept"]["result"] == "accepted" and data["accept"]["sha"]
     assert "accept accepted" in capsys.readouterr().out
     # a REVIEW: no commit, the reason recorded
-    evidence = _evidence(
-        tmp_path / "r", {**_green_verdict("0.7.23"), "verdict": "REVIEW"}, "0.7.23"
-    )
-    rc = oc.main(["accept", "--root", str(root), "--version", "0.7.23", "--evidence", str(evidence),
+    evidence = _evidence(tmp_path / "r", {**_green_verdict(V2), "verdict": "REVIEW"}, V2)
+    rc = oc.main(["accept", "--root", str(root), "--version", V2, "--evidence", str(evidence),
                   "--", *OK])  # fmt: skip
     assert (
         rc == 1
@@ -381,7 +395,7 @@ def test_accept_cli_records_the_result_in_verdict_json(tmp_path: Path, capsys) -
     )
     # an unreadable verdict.json: the result goes to accept.json
     evidence = _evidence(tmp_path / "u", raw=b"{")
-    oc.main(["accept", "--root", str(root), "--version", "0.7.22", "--evidence", str(evidence),
+    oc.main(["accept", "--root", str(root), "--version", V1, "--evidence", str(evidence),
              "--", *OK])  # fmt: skip
     assert json.loads((evidence / "accept.json").read_text())["result"] == "not-pass"
     assert _commits(root) == 2

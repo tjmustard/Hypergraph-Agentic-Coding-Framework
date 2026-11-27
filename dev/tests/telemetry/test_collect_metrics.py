@@ -690,7 +690,8 @@ def test_output_modes_and_key_order(world: World) -> None:
     code, card = run_window(world, "--label", "lbl")
     assert code == 0
     # OPR.99.0.8.3 MR 2: `context` is added after every v0.6.3 key
-    assert list(card) == [*KEY_ORDER, "label", "context"]
+    # OPR.99.0.15.2 MR 1: `samples` is added after `context`
+    assert list(card) == [*KEY_ORDER, "label", "context", "samples"]
     assert stat.S_IMODE(world.out.stat().st_mode) == 0o700
     for path in world.outputs():
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
@@ -871,7 +872,12 @@ def test_context_backward_compatible(world: World) -> None:
     build_db(world)
     _code, card = run_window(world, "--label", "lbl")
     golden = GOLDEN.read_text(encoding="utf-8")
-    old = {k: v for k, v in card.items() if k not in ("generated_at", "context")}
+    old = {k: v for k, v in card.items() if k not in ("generated_at", "context", "samples")}
+    # OPR.99.0.15.2 MR 1 adds `samples`: additive too, compared exactly here instead
+    assert card["samples"] == {
+        "a@hacf": {"context": 1, "context_without_session": 0, "provider_window": 0},
+        "b@hacf": {"context": 2, "context_without_session": 0, "provider_window": 0},
+    }
     # OPR.99.0.8.4 MR 4 adds escape_parts (and its sources) to each slice entry: additive keys,
     # left out here so every v0.6.3 value is still compared byte for byte
     for entry in old["slices"]:
@@ -936,10 +942,17 @@ def test_no_series_without_flag(world: World) -> None:
 R063 = [f"OPR.0.6.3.{i}" for i in range(1, 7)]
 REAL_ITERATIONS = [1, 1, 2, 2, 1, 1]  # the shape of the real release-0.6.3 loop records
 MARKER = "escape_tracking: v1"
+# OPR.99.0.15.5: the contract text, and the JSON a detail file may carry, compact and spaced
+MARKERS = [MARKER, '{"base":"abc","escape_tracking":"v1"}', '{"escape_tracking": "v1"}']
+MARKER_IDS = ["text", "json-compact", "json-spaced"]
 
 
 def release_repo(
-    tmp: Path, events: dict[str, list[str]], replan: bool = True, marker: set[str] = frozenset()
+    tmp: Path,
+    events: dict[str, list[str]],
+    replan: bool = True,
+    marker: set[str] = frozenset(),
+    marker_text: str = MARKER,
 ) -> Path:
     """A repo shaped like release-0.6.3: six slice commits; PROGRESS.md events per slice.
 
@@ -959,7 +972,7 @@ def release_repo(
         (slice_dir / "SPEC.md").write_text(f"---\nid: {sid}\n---\n# x\n", encoding="utf-8")
         lines = ["- 2026-11-01T00:00:00+00:00 compiled - created"]
         if sid in marker:
-            lines.append(f"- 2026-11-01T00:01:00+00:00 executing - <base> abc; {MARKER}")
+            lines.append(f"- 2026-11-01T00:01:00+00:00 executing - <base> abc; {marker_text}")
         for n, event in enumerate(events.get(sid, [])):
             lines.append(f"- 2026-11-01T00:0{n + 2}:00+00:00 {event} - x")
         (slice_dir / "PROGRESS.md").write_text(
@@ -1019,10 +1032,12 @@ def test_escapes_all_records_release_063(world: World, tmp_path: Path) -> None:
     assert "OPR.0.6.3.1: blocked unknown (no halt records before v0.6.4)" in card["unknowns"]
 
 
-def test_escapes_all_records_with_markers_still_5(world: World, tmp_path: Path) -> None:
+@pytest.mark.parametrize("text", MARKERS, ids=MARKER_IDS)
+def test_escapes_all_records_with_markers_still_5(world: World, tmp_path: Path, text: str) -> None:
     """P22: with the marker on every slice the total is still exactly 5 and no part is null."""
     build_db(world)
-    card = run_repo(world, release_repo(tmp_path, ALL_RECORDS, marker=set(R063)))
+    repo = release_repo(tmp_path, ALL_RECORDS, marker=set(R063), marker_text=text)
+    card = run_repo(world, repo)
     rows = slices_of(card)
     assert sum(rows[s]["escapes"] for s in R063) == 5
     assert all(v is not None for s in R063 for v in rows[s]["escape_parts"].values())
@@ -1087,11 +1102,15 @@ def test_escapes_without_loops_dir(world: World, tmp_path: Path) -> None:
     ],
     ids=["marker-no-lines", "marker-one-fail", "no-marker"],
 )
-def test_tracking_marker(world: World, tmp_path: Path, events, marked: bool, parts) -> None:
+@pytest.mark.parametrize("text", MARKERS, ids=MARKER_IDS)
+def test_tracking_marker(
+    world: World, tmp_path: Path, events, marked: bool, parts, text: str
+) -> None:
     """P22 (lead ruling): an executing line with escape_tracking: v1 makes no-halt mean 0."""
     build_db(world)
     sid = "OPR.0.6.3.1"
-    repo = release_repo(tmp_path, {sid: events}, replan=False, marker={sid} if marked else set())
+    marker = {sid} if marked else set()
+    repo = release_repo(tmp_path, {sid: events}, replan=False, marker=marker, marker_text=text)
     row = slices_of(run_repo(world, repo))[sid]
     assert {k: row["escape_parts"][k] for k in parts} == parts
 
@@ -1107,6 +1126,29 @@ def test_marker_must_be_on_an_executing_line(world: World, tmp_path: Path) -> No
     )
     row = slices_of(run_repo(world, repo))["OPR.0.6.3.1"]
     assert row["escape_parts"]["blocked"] is None
+
+
+@pytest.mark.parametrize(
+    ("event", "detail"),
+    [
+        ("executing", "escape_tracking: v10"),
+        ("executing", '{"escape_tracking":"v10"}'),
+        ("executing", '{"escape_tracking":"v2"}'),
+        ("executed", '{"escape_tracking":"v1"}'),
+        ("blocked", '{"escape_tracking":"v1"}'),
+    ],
+    ids=["text-v10", "json-v10", "json-v2", "json-on-executed", "json-on-blocked"],
+)
+def test_lines_that_are_not_the_marker(tmp_path: Path, event: str, detail: str) -> None:
+    """OPR.99.0.15.5 (f): another version, or a non-executing line, is not the marker."""
+    sid = "OPR.0.6.3.1"
+    repo = release_repo(tmp_path, {}, replan=False)
+    progress = repo / "missions" / "release-0.6.3" / "slices" / "01-s1" / "PROGRESS.md"
+    progress.write_text(
+        progress.read_text(encoding="utf-8") + f"- 2026-11-01T00:09:00+00:00 {event} - {detail}\n",
+        encoding="utf-8",
+    )
+    assert cm.progress_events(repo, sid)[2] is False
 
 
 def test_replan_of_counted_once(world: World, tmp_path: Path) -> None:
@@ -1338,6 +1380,91 @@ def test_h5_no_prices_means_no_usd(world: World) -> None:
     assert row["mixed"] is False
 
 
+# Slice OPR.99.0.15.5: a record whose four priced counts are all 0 costs $0 at every rate.
+
+SYNTHETIC = "<synthetic>"
+
+
+def limit_line(ts: str, msg_id: str) -> str:
+    """A zero-token record Claude Code writes itself, in the shape of its limit message."""
+    line = json.loads(usage_line(ts, msg_id, f"req-{msg_id}", model=SYNTHETIC))
+    line["isApiErrorMessage"] = True
+    return json.dumps(line)
+
+
+def priced_card(world: World, lines: list[str]) -> dict:
+    """One priced scorecard where seat b's transcript holds exactly `lines`."""
+    build_db(world)
+    write_b(world, lines, sub=[])
+    code, card = run_window(world, "--prices", str(write_prices(world)))
+    assert code == 0
+    return card
+
+
+def usd_reasons(card: dict) -> list[str]:
+    """Return the scorecard's `usd unknown` reasons."""
+    return [r for r in card["unknowns"] if "usd unknown" in r]
+
+
+def test_zero_token_synthetic_record_keeps_usd_known(world: World) -> None:
+    """(a) Priced records plus one price-less zero-token record: usd is the priced sum."""
+    card = priced_card(
+        world,
+        [
+            usage_line("2026-11-01T12:00:00.000Z", "msg-p1", "req-p1", fresh=10, out=2),
+            limit_line("2026-11-01T12:30:00.000Z", "msg-z1"),
+        ],
+    )
+    entry = seat_slices(card, "b@hacf")["OPR.9.1.2"]
+    assert entry["usd"] == 30.0
+    assert entry["turns"] == 2
+    assert entry["models"] == [SYNTHETIC, "m-1"] and entry["mixed"] is True
+    assert entry["usage_by_model"][SYNTHETIC] == {
+        "fresh_in": 0,
+        "cache_write": 0,
+        "cache_read": 0,
+        "output": 0,
+    }
+    assert usd_reasons(card) == []
+
+
+@pytest.mark.parametrize("count", ["fresh", "cw", "cr", "out"])
+def test_priceless_record_with_any_token_stays_unknown(world: World, count: str) -> None:
+    """(b) One token of any kind on a price-less model: usd is null, with the reason."""
+    card = priced_card(
+        world,
+        [
+            usage_line("2026-11-01T12:00:00.000Z", "msg-p1", "req-p1", fresh=10, out=2),
+            usage_line("2026-11-01T12:30:00.000Z", "msg-u1", "req-u1", model="m-9", **{count: 1}),
+        ],
+    )
+    assert seat_slices(card, "b@hacf")["OPR.9.1.2"]["usd"] is None
+    assert usd_reasons(card) == ["b@hacf: OPR.9.1.2: usd unknown: no price for m-9"]
+
+
+def test_zero_token_record_without_a_model_costs_nothing(world: World) -> None:
+    """(c) A zero-token record with no model id adds $0 and no reason."""
+    card = priced_card(
+        world,
+        [
+            usage_line("2026-11-01T12:00:00.000Z", "msg-p1", "req-p1", fresh=10, out=2),
+            usage_line("2026-11-01T12:30:00.000Z", "msg-z1", "req-z1", model=None),
+        ],
+    )
+    entry = seat_slices(card, "b@hacf")["OPR.9.1.2"]
+    assert entry["usd"] == 30.0
+    assert "unknown" in entry["usage_by_model"]
+    assert usd_reasons(card) == []
+
+
+def test_entry_of_only_zero_token_records_costs_zero(world: World) -> None:
+    """(d) Nothing but zero-token records: usd is 0, not null."""
+    card = priced_card(world, [limit_line("2026-11-01T12:30:00.000Z", "msg-z1")])
+    entry = seat_slices(card, "b@hacf")["OPR.9.1.2"]
+    assert entry["usd"] == 0 and isinstance(entry["usd"], float)
+    assert usd_reasons(card) == []
+
+
 @pytest.mark.parametrize(
     ("edit", "key"),
     [
@@ -1427,3 +1554,264 @@ def test_h5_aggregate_size_unknown_is_a_reason(world: World) -> None:
         "files": 0,
         "lines": 0,
     }
+
+
+# --------------------------------------------------------------------------- the two sample lanes
+# (OPR.99.0.15.2 MR 1: OpenRig's rate-limit-window samples carry no session by design)
+
+
+def add_window_rows(world: World, seat: str, *captured: str) -> None:
+    """Add provider_window rows as OpenRig writes them: window columns and no session."""
+    for when in captured:
+        world.writer.execute(
+            "INSERT INTO usage_samples (lane, seat_session, captured_at, window, "
+            "window_used_percent, resets_at) VALUES ('provider_window', ?, ?, 'five_hour', "
+            "12.5, '2026-11-01T14:00:00.000Z')",
+            (seat, when),
+        )
+    world.writer.commit()
+
+
+def sessionless(card: dict) -> list[str]:
+    """Return the scorecard's "samples without a session id" reasons."""
+    return [reason for reason in card["unknowns"] if "without a session id" in reason]
+
+
+def test_window_lane_is_not_a_gap(world: World) -> None:
+    """A window-lane-only seat is listed and counted in `samples`, never as missing a session."""
+    build_db(world)
+    add_window_rows(world, "e@hacf", "2026-11-01T09:00:00.000Z", "2026-11-01T09:05:00.000Z")
+    # outside [since, until), and another rig: neither is counted
+    add_window_rows(world, "e@hacf", UNTIL.replace("Z", ".000Z"), "2026-10-31T23:59:59.000Z")
+    add_window_rows(world, "f@hacf-exp", "2026-11-01T09:00:00.000Z")
+    add_window_rows(world, "b@hacf", SINCE.replace("Z", ".000Z"))
+    code, card = run_window(world)
+    assert code == 0
+    assert sessionless(card) == []
+    assert [s["seat"] for s in card["seats"]] == ["a@hacf", "b@hacf", "e@hacf"]
+    assert card["samples"]["e@hacf"] == {
+        "context": 0,
+        "context_without_session": 0,
+        "provider_window": 2,
+    }
+    assert card["samples"]["b@hacf"] == {
+        "context": 2,
+        "context_without_session": 0,
+        "provider_window": 1,
+    }
+    assert sorted(card["samples"]) == ["a@hacf", "b@hacf", "e@hacf"]
+
+
+def test_context_sample_without_session_is_counted(world: World) -> None:
+    """A context row without a session id keeps the exact reason and is counted, not attributed."""
+    build_db(world)
+    world.writer.execute(
+        "INSERT INTO usage_samples (lane, seat_session, captured_at) "
+        "VALUES ('context', 'b@hacf', '2026-11-01T12:31:00.000Z')"
+    )
+    add_window_rows(world, "b@hacf", "2026-11-01T12:32:00.000Z")
+    _code, card = run_window(world)
+    assert sessionless(card) == ["b@hacf: 1 samples without a session id"]
+    assert card["samples"]["b@hacf"] == {
+        "context": 3,
+        "context_without_session": 1,
+        "provider_window": 1,
+    }
+    assert seat_slices(card, "b@hacf")["OPR.9.1.2"]["turns"] == 2
+
+
+def test_database_without_lane(world: World) -> None:
+    """Without a `lane` column every row is a context row, as before; the window count is null."""
+    build_db(world, tables=("context_usage", "queue_items"))
+    world.writer.execute(
+        "CREATE TABLE usage_samples (seat_session TEXT, captured_at TEXT, native_session_id TEXT)"
+    )
+    for native in ("sb", None):
+        world.writer.execute(
+            "INSERT INTO usage_samples VALUES ('b@hacf', '2026-11-01T12:00:00.000Z', ?)", (native,)
+        )
+    world.writer.commit()
+    _code, card = run_window(world)
+    assert "usage_samples.lane missing" in card["unknowns"]
+    assert sessionless(card) == ["b@hacf: 1 samples without a session id"]
+    assert card["samples"] == {
+        "b@hacf": {"context": 2, "context_without_session": 1, "provider_window": None}
+    }
+
+
+def test_samples_without_native_column(world: World) -> None:
+    """Without `native_session_id` the count of sessionless samples is unknown, never zero."""
+    build_db(world, native=False)
+    _code, card = run_window(world)
+    assert sessionless(card) == []
+    assert card["samples"]["a@hacf"] == {
+        "context": 1,
+        "context_without_session": None,
+        "provider_window": 0,
+    }
+
+
+def test_samples_without_the_table(world: World) -> None:
+    """With no usage_samples table `samples` is empty."""
+    build_db(world, tables=("context_usage", "queue_items"))
+    _code, card = run_window(world)
+    assert card["samples"] == {}
+
+
+# --------------------------------------------------------------------------- the sessions table
+
+SESSIONS_DDL = """
+CREATE TABLE sessions (
+  id TEXT PRIMARY KEY, node_id TEXT, session_name TEXT NOT NULL, status TEXT, resume_type TEXT,
+  resume_token TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')) {last_seen}
+)"""
+NO_RECORD = "token totals unknown: no transcript record in the window"
+# OpenRig writes sqlite's `YYYY-MM-DD HH:MM:SS` form, in UTC
+INSIDE = ("2026-11-01 08:00:00", "2026-11-01 20:00:00")
+
+
+def add_sessions(world: World, *rows: tuple, last_seen: bool = True) -> None:
+    """Create the sessions table and add (seat, resume_type, token, created, last_seen) rows."""
+    world.writer.execute(SESSIONS_DDL.format(last_seen=", last_seen_at TEXT" if last_seen else ""))
+    columns = ["id", "session_name", "resume_type", "resume_token", "created_at"]
+    columns += ["last_seen_at"] if last_seen else []
+    marks = ", ".join("?" for _ in columns)
+    for number, row in enumerate(rows):
+        values = (f"row-{number}", *row)[: len(columns)]
+        world.writer.execute(
+            f"INSERT INTO sessions ({', '.join(columns)}) VALUES ({marks})", values
+        )
+    world.writer.commit()
+
+
+def occupant(seat: str, token: str | None, kind: str = "claude_id", when=INSIDE) -> tuple:
+    """One sessions row: the seat's occupant with this Claude session id."""
+    return (seat, kind, token, *when)
+
+
+def unsampled_db(world: World) -> None:
+    """A database whose usage_samples hold provider_window rows only: no context lane."""
+    build_db(world, tables=("queue_items",))
+    world.writer.execute(USAGE_DDL.format(native=", native_session_id TEXT"))
+    add_window_rows(world, "b@hacf", "2026-11-01T09:00:00.000Z", "2026-11-01T12:00:00.000Z")
+
+
+def test_sessions_table_finds_an_unsampled_occupant(world: World) -> None:
+    """(a) With no context lane, the occupant in `sessions` gives its transcript's numbers."""
+    unsampled_db(world)
+    add_sessions(world, occupant("b@hacf", "sb"))
+    code, card = run_window(world)
+    assert code == 0
+    entries = seat_slices(card, "b@hacf").values()
+    assert sum(e["turns"] for e in entries) == 2  # the main turn and the subagent's
+    assert sum(e["total"] for e in entries) == 36  # 10 + 2 and 20 + 4
+    assert sum(s["total"] for s in card["slices"]) == 36
+    assert card["context"]["b@hacf"]["turns"] == 1
+    assert card["sources"]["jsonl"] == 2
+    assert "context_usage missing" in card["unknowns"]
+    assert not [u for u in card["unknowns"] if u.startswith(("sessions.", "token totals"))]
+
+
+def test_sessions_table_alone_names_the_seat(world: World) -> None:
+    """A seat known to the sessions table only is a seat; an open occupancy end is kept."""
+    build_db(world, tables=("queue_items",))
+    add_sessions(world, ("b@hacf", "claude_id", "sb", "not a time", None))
+    _code, card = run_window(world)
+    assert [s["seat"] for s in card["seats"]] == ["b@hacf"]
+    assert sum(s["total"] for s in card["slices"]) == 36
+
+
+@pytest.mark.parametrize(
+    ("created", "last_seen", "read"),
+    [
+        ("2026-10-30 08:00:00", "2026-10-31 23:59:59", 0),  # ended before since
+        ("2026-11-02 00:00:00", "2026-11-02 08:00:00", 0),  # began at until
+        ("2026-10-30 08:00:00", "2026-11-01 00:00:00", 2),  # last seen at since
+        ("2026-11-01 23:59:59", "unreadable", 2),
+    ],
+)
+def test_sessions_occupancy_chooses_the_transcripts(
+    world: World, created: str, last_seen: str, read: int
+) -> None:
+    """(b) A row whose occupancy misses the window is not opened."""
+    unsampled_db(world)
+    add_sessions(world, ("b@hacf", "claude_id", "sb", created, last_seen))
+    _code, card = run_window(world)
+    assert card["sources"]["jsonl"] == read
+
+
+def test_sessions_rows_of_other_kinds_and_rigs_are_ignored(world: World) -> None:
+    """(c) Another resume_type, an empty token and another rig's suffix add nothing."""
+    unsampled_db(world)
+    add_sessions(
+        world,
+        occupant("b@hacf", "sb", kind="codex_id"),
+        occupant("b@hacf", ""),
+        occupant("b@hacf", None),
+        occupant("c@other", "sc"),
+        occupant("d@hacf-exp", "sd"),
+        occupant("f@HACF", "sc"),
+    )
+    _code, card = run_window(world)
+    assert card["sources"]["jsonl"] == 0
+    assert [s["seat"] for s in card["seats"]] == ["b@hacf"]
+
+
+def test_sessions_table_absent_changes_nothing(world: World) -> None:
+    """(d) Without the table there is no new unknown and the numbers are those of today."""
+    build_db(world)
+    _code, card = run_window(world)
+    assert not [u for u in card["unknowns"] if "sessions" in u or u.startswith(NO_RECORD)]
+    assert sum(s["total"] for s in card["slices"]) > 0
+
+
+@pytest.mark.parametrize(
+    "column", ["session_name", "resume_type", "resume_token", "created_at", "last_seen_at"]
+)
+def test_sessions_column_missing_is_a_reason(world: World, column: str) -> None:
+    """(e) A table lacking one of the five columns is one unknown and is not used."""
+    unsampled_db(world)
+    add_sessions(world, occupant("e@hacf", "sb"))
+    world.writer.execute(f"ALTER TABLE sessions RENAME COLUMN {column} TO renamed")
+    world.writer.commit()
+    code, card = run_window(world)
+    assert code == 0
+    assert [u for u in card["unknowns"] if u.startswith("sessions.")] == [
+        f"sessions.{column} missing"
+    ]
+    assert [s["seat"] for s in card["seats"]] == ["b@hacf"]
+    assert card["sources"]["jsonl"] == 0
+
+
+def test_seats_without_a_record_are_unknown(world: World) -> None:
+    """(f) Seats found but no in-window record: the totals are unknown, never 0."""
+    unsampled_db(world)
+    write_b(world, [ctx_line("2026-10-31T12:00:00.000Z", "msg-old", 1000)], sub=[])
+    add_sessions(world, occupant("b@hacf", "sb"), occupant("b@hacf", "no-transcript"))
+    code, card = run_window(world)
+    assert code == 0
+    assert f"{NO_RECORD} (1 sessions read)" in card["unknowns"]
+    assert card["slices"]
+    for entry in card["slices"]:
+        assert (entry["total"], entry["cost_weighted"]) == ("unknown", "unknown")
+
+
+def test_seat_found_by_window_rows_only_is_unknown(world: World) -> None:
+    """The eta shape with no session source at all reads no session and says so."""
+    unsampled_db(world)
+    _code, card = run_window(world)
+    assert f"{NO_RECORD} (0 sessions read)" in card["unknowns"]
+    assert {s["total"] for s in card["slices"]} == {"unknown"}
+
+
+def test_session_in_two_sources_is_read_once(world: World) -> None:
+    """(g) The same session from usage_samples, context_usage and sessions counts once."""
+    build_db(world)
+    _code, before = run_window(world)
+    for path in world.outputs():
+        path.unlink()
+    twice = occupant("a@hacf", "sa")
+    add_sessions(world, twice, twice, occupant("b@hacf", "sb"))
+    _code, after = run_window(world)
+    for key in ("sources", "seats", "slices", "unknowns", "context"):
+        assert after[key] == before[key], key

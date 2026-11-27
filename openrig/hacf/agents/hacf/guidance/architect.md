@@ -23,9 +23,9 @@ prints `autonomous`, nobody can answer the interview; stop and tell the lead.
 So the loop is:
 
 1. Explore the project (below). Anything derivable is not a question.
-2. Write the question, with your recommendation, and post it as one human row to the person
-   `protocol.md` tells you how to find (`rig gateway human list --json`). Never hardcode an
-   address.
+2. Write the question, with your recommendation, and post it as one row to the question
+   destination protocol.md's routing step resolves (`seat-config.py resolve --section routing`),
+   never a hardcoded address.
 3. Tell the lead in one line, as a **message, not a handoff**: `rig send orch-lead@<rig> "waiting
    on a decision: <what>, row <qitem>"`. A handoff here would close your stage.
 4. When the answer comes back, record it in the draft quoted, and ask the next one.

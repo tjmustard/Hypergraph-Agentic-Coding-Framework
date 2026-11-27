@@ -4,10 +4,16 @@
 usage: seat-rules.py [--roles <file>] (--role <role> | --all) [--json]
        seat-rules.py [--roles <file>] --check
 
-  --role <r> --json  prints {"allow": [], "deny": [<the role's tools_deny, in table order>]}
+  --role <r> --json  prints {"allow": [], "deny": [<the role's denies>]}
   --all --json       prints {<role>: <rules>} for every role
   --check            the allowlist check and the key-free check; prints every problem and exits 1
                      when there is one, else prints `ok` and exits 0
+
+When the roles file's directory holds seat-config.yml, the denies are the resolved ones: the
+role's tools_deny with the preset's and overrides.yml's tools edits, from bin/seat-config.py,
+which also enforces the floor. A directory it refuses exits 2, each problem on its own line.
+Without seat-config.yml they are tools_deny, in table order. --check always compares the unedited
+tools_deny, and accepts an agent.yaml skill that a preset or overrides.yml adds to the role.
 
 It reads roles.yml beside its own folder (openrig/hacf/roles.yml) unless --roles names another
 file; --check reads agents/hacf/agent.yaml and rig.yaml beside that roles.yml. It never emits an
@@ -20,19 +26,33 @@ or a missing or invalid file.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
-import re
 import sys
 from pathlib import Path
 
 import yaml
 
+
+def _load_seat_config():
+    """The one resolver, bin/seat-config.py, as a module; no bytecode is written beside it."""
+    path = Path(__file__).resolve().parent / "seat-config.py"
+    spec = importlib.util.spec_from_file_location("seat_config", path)
+    module = importlib.util.module_from_spec(spec)
+    before, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = before
+    return module
+
+
+seat_config = _load_seat_config()
 SCHEMA = "hacf.roles/v1"
-REQUIRED_DENY = "AskUserQuestion"
-# A bare MCP server deny (roles v2): `mcp__<server>`, one server segment with no `__` in it.
-MCP_SERVER_DENY = re.compile(r"mcp__[A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*")
-# TJ: keep codebase-memory-mcp wherever MCP is on, so no role may deny it.
-KEPT_MCP = "codebase-memory-mcp"
+# The floor, defined once in seat-config.py.
+REQUIRED_DENY = seat_config.REQUIRED_DENY
+MCP_SERVER_DENY = seat_config.MCP_SERVER_DENY
+KEPT_MCP = seat_config.KEPT_MCP
 # rig.yaml stays key-free: OpenRig daemons up to 0.7.18 refuse unknown member keys.
 FORBIDDEN_RIG_KEYS = (
     "claude_permissions",
@@ -49,6 +69,10 @@ DEFAULT_ROLES = Path(__file__).resolve().parent.parent / "roles.yml"
 
 class Refusal(Exception):
     """A missing or invalid input: exit 2 with one line."""
+
+
+class ConfigRefused(Exception):
+    """seat-config.py refused the directory: exit 2 with its problem lines."""
 
 
 def load_yaml(path: Path, what: str):
@@ -99,6 +123,29 @@ def rules_for(entry: dict) -> dict[str, list[str]]:
     return {"allow": [], "deny": list(entry["tools_deny"])}
 
 
+def applied_rules(roles_path: Path, roles: dict[str, dict]) -> dict[str, dict[str, list[str]]]:
+    """{role: --rules JSON}: the resolved denies, or the table's without seat-config.yml."""
+    loaded = load_config(roles_path)
+    if loaded is None:
+        return {name: rules_for(entry) for name, entry in roles.items()}
+    cells = seat_config.resolve(loaded, section="seats")
+    return {name: {"allow": [], "deny": cells[name]["tools"]["value"]["deny"]} for name in roles}
+
+
+def load_config(roles_path: Path) -> dict | None:
+    """seat-config.py's reading of the roles file's directory; None without seat-config.yml."""
+    base = roles_path.parent
+    if not (base / seat_config.SEAT_CONFIG).exists():
+        return None
+    problems = seat_config.Problems()
+    loaded = seat_config.load_all(
+        str(base), str(base / seat_config.CAPS), problems, roles_path=str(roles_path)
+    )
+    if problems.lines:
+        raise ConfigRefused(problems.lines)
+    return loaded
+
+
 def forbidden_keys(node, where: str = "rig.yaml") -> list[str]:
     """Return the path of every forbidden key, at any depth of node."""
     found = []
@@ -136,6 +183,7 @@ def check(roles_path: Path) -> list[str]:
     profiles = agent["profiles"]
     used = {m.get("profile") for m in rig_members(rig)}
     problems = []
+    config, consulted = None, False
 
     # The allowlist check: the table, agent.yaml and rig.yaml name the same roles and skills.
     for name, profile in profiles.items():
@@ -144,7 +192,11 @@ def check(roles_path: Path) -> list[str]:
             continue
         uses = (profile or {}).get("uses") or {}
         for skill in uses.get("skills") or []:
-            if skill not in roles[name]["skills"]:
+            if skill in roles[name]["skills"]:
+                continue
+            if not consulted:  # only a grant the table lacks needs the resolver
+                config, consulted = load_config(roles_path), True
+            if config is None or skill not in seat_config.added_skills(config, name):
                 problems.append(
                     f"agent.yaml profile {name!r} grants skill {skill!r},"
                     f" not in roles.yml {name}.skills"
@@ -202,15 +254,19 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         roles = load_roles(args.roles)
         if args.all:
-            print(json.dumps({name: rules_for(entry) for name, entry in roles.items()}, indent=2))
+            print(json.dumps(applied_rules(args.roles, roles), indent=2))
             return 0
         if args.role not in roles:
             raise Refusal(f"unknown role {args.role!r}; roles.yml has {', '.join(roles)}")
-        entry = roles[args.role]
-        if mcp_value(entry["mcp"]) == "off":
+        rules = applied_rules(args.roles, roles)[args.role]
+        if mcp_value(roles[args.role]["mcp"]) == "off":
             print(MCP_NOTE, file=sys.stderr)
-        print(json.dumps(rules_for(entry), indent=2))
+        print(json.dumps(rules, indent=2))
         return 0
+    except ConfigRefused as exc:
+        for line in exc.args[0]:
+            print(f"seat-rules.py: seat-config: {line}", file=sys.stderr)
+        return 2
     except Refusal as exc:
         print(f"seat-rules.py: {exc}", file=sys.stderr)
         return 2

@@ -486,12 +486,12 @@ def test_audit_iter2_cut_help_repro() -> None:
 def test_committed_baseline_help_texts_are_whole() -> None:
     """Every committed help text passes check_help_text, and each [command] one lists help."""
     texts = sorted(FIXTURES.glob("*/help/*.txt"))
-    assert len(texts) == 18
+    assert len(texts) == 27
     parents = 0
     for path in texts:
         parsed = oc.check_help_text(path.read_text(encoding="utf-8"), str(path))
         parents += "help" in parsed["commands"]
-    assert parents == 6
+    assert parents == 9
 
 
 def test_run_help_seed_refuses_a_cut_parent_text(tmp_path: Path) -> None:
@@ -763,6 +763,8 @@ def _green_state(state: Path, seed: bool = False) -> None:
     state.mkdir(parents=True, exist_ok=True)
     names = oc.SEED_REQUIRED_STEPS if seed else oc.REQUIRED_STEPS
     (state / "steps.tsv").write_text("".join(f"{n}\t0\t1\t0\t\n" for n in names), "utf-8")
+    entry = {"status": "ok", "detail": "", "files": [], "diff": {}}
+    oc.write_json(state / "harness.json", {"harness": {"agy": entry}, "setup": []})
     oc.write_json(
         state / "help.json",
         {
