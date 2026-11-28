@@ -14,7 +14,8 @@ records; plan and apply print each seat's `rig seat set-permissions` command and
 never run them (OPS.md, "Upgrading a live spec (v0.6.5)"). Live seats change at their next fresh
 launch at a durable point, one seat at a time, never by a mass restart.
 
-- The always-HACF set (OPS.md, bin/*) is replaced from the source in full; a missing file is added.
+- The always-HACF set (OPS.md, bin/*, host.example.yml) is replaced from the source in full; a
+  missing file is added.
 - The defaults files (roles.yml, caps.yml, seat-config.yml) are replaced when the live file is HACF
   text (its git blob id is HACF's at HEAD or at a v* tag). A locally edited caps.yml or
   seat-config.yml is kept and plan prints how to move the change into overrides.yml; a locally
@@ -116,6 +117,8 @@ ALWAYS = (
     "bin/seat-config-upgrade.py",
     "bin/seat-config.py",
     "bin/progress-report.py",
+    "bin/hacf-host.py",
+    "host.example.yml",
 )
 DEFAULTS = ("caps.yml", "seat-config.yml", "roles.yml")  # kept when locally edited (R87)
 OVERRIDES = "overrides.yml"  # the user's file: in no copy, backup, restore or checksum (R85)

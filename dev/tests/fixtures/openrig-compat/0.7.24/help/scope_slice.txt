@@ -1,0 +1,27 @@
+Usage: rig scope slice [options] [command]
+
+Slice-tier commands
+
+Options:
+  -h, --help                                     display help for command
+
+Commands:
+  ls [options]                                   List slices in a mission (or across all missions)
+  show [options] <slice-path>                    Inspect a single slice (frontmatter + README + children)
+  create [options] <mission> <slug>              Create a new slice with SPEC.md, slice.yaml, PROGRESS.md, PROOF.md, and proof/. Conventions SSOT: docs/reference/sdlc-conventions.md (installed: $OPENRIG_HOME/reference/sdlc-conventions.md).
+  ship [options] <slice-path> <release-mission>  Ship a slice to a release mission (preserves git history)
+  close [options] <slice-path>                   Close a slice (move to <mission>/closed/ by default, or update status in place with --in-place)
+  move [options] <slice-path> <dest-mission>     Move a slice between missions (re-numbers in destination)
+  progress [options] <slice-path>                Update a slice's progress rail deterministically (append a row, or set a row's status)
+  repair [options] <slice-path>                  Backfill a slice's missing PROGRESS.md + conform mandatory frontmatter (id/stage/verified); idempotent
+  stage [options] <slice-path> <new-stage>       Set a slice's epistemic stage (wip | provisional | established | canonical | superseded | retired); superseded needs --successor
+  verified [options] <slice-path>                Stamp a slice's verified line: <today> against <source> (provenance mandatory; overwrites the prior line)
+  approve [options] <slice-path>                 Approve a slice: writes the frontmatter stamp + an append-only audit row (daemon-side, one operation). --scope spec = the PLAN-LOCK (PRD-matches-intent; this artifact set gets built); delivery (default) = the PROOF-LOCK (terminal sign-off). Approval is freeze/sign-off, never proven-green. Conventions SSOT: docs/reference/sdlc-conventions.md (installed: $OPENRIG_HOME/reference/sdlc-conventions.md).
+  help [command]                                 display help for command
+
+Workspace: the parent option --workspace selects the missions root this command reads.
+  rig scope --workspace <project root> slice <verb> ...
+A project root uses its project.yaml missions.root, else its missions/ folder; a
+folder named missions is used as is. Use it for a catalog project, for example
+$(rig config get workspace.projects_root)/<project>. Without --workspace,
+OPENRIG_WORK_ROOT applies, then the configured workspace.slices_root.

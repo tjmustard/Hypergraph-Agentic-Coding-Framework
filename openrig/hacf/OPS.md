@@ -134,7 +134,7 @@ python3 openrig/hacf/bin/seat-config-upgrade.py apply --live-spec <live spec dir
 python3 openrig/hacf/bin/seat-config-upgrade.py restore <backup dir>
 ```
 
-- **plan** writes nothing and shows every change: the always-HACF files (OPS.md, bin/*), the
+- **plan** writes nothing and shows every change: the always-HACF files (OPS.md, bin/*, host.example.yml), the
   defaults files (roles.yml, caps.yml, seat-config.yml; see the next subsection), the adapted files (agents/**, startup/**, CULTURE.md, README.md, HARDENING.md;
   one that is unmodified HACF text is replaced, a locally edited one is kept and its diff shown,
   `--take-hacf <rel>` replaces it), the one rig.yaml key (`env.ENABLE_CLAUDEAI_MCP_SERVERS`, or
@@ -266,6 +266,228 @@ and the old rig is archived. That is the operator's or the person's call: never 
 a seat never runs `rig down` or `rig up` itself.
 Until then, roles v2's bare denies cover the claude.ai connectors.
 Never take the rig down and up to apply a seat rule; seat rules take a fresh launch per seat.
+
+## Host operations
+
+`bin/hacf-host.py` runs this machine's HACF teams by one host config and one host state, which
+every project's copy shares. `python3 <Rig spec>/bin/hacf-host.py --help` lists the verbs, the
+environment variables and the state dir. A verb this build does not have yet prints
+`not in this build` and exits 2. `<Rig spec>` is the rig spec folder; where it has no
+`bin/hacf-host.py`, use `<project root>/openrig/hacf/bin/hacf-host.py` instead.
+
+### The heavy-job scheduler
+
+Run each heavy command (tests, benchmarks, model runs) through the scheduler:
+
+```sh
+python3 <Rig spec>/bin/hacf-host.py job run --job <name> [--ram-mb N] [--gpu] [--rig <r>] [--wait-s N] -- <command>
+python3 <Rig spec>/bin/hacf-host.py job status
+```
+
+- One heavy job runs at a time on this user's machine. `job run` exits with the command's own code.
+- **Needs.** `--ram-mb` is the job's memory in MB: it starts only when `MemAvailable` reaches the
+  larger of 6144 MB and `--ram-mb` plus `reserve_mb`. `--gpu` also waits while `nvidia-smi` lists
+  a compute process or a process matches `foreign_heavy_patterns`.
+- **Tiers.** Jobs are served by their rig's tier in `priority`, then by arrival. The rig is
+  `--rig`, else the seat's own.
+- **Order.** While the first job in line does not fit, a later job that fits may run (backfill),
+  until the first has waited `reserve_after_minutes` (default 10). The machine is then reserved for
+  it.
+- During an idle point, only a mapped rig that is not at a boundary starts a job.
+- A command run inside a job runs at once, with no second wait.
+- A wait that runs out (`--wait-s`, default 3600 seconds) prints `host busy` and exits 75. So
+  **exit 75 means busy: retry later. It is never a verdict** on the command.
+
+### The host config
+
+The file is `${XDG_CONFIG_HOME:-~/.config}/hacf/host.yml`. It is the person's: HACF never writes
+it. Every key is optional, and a missing file means all defaults. `host.example.yml` in the rig
+spec lists every key; copy it there, edit the copy, and check it:
+
+```sh
+python3 <Rig spec>/bin/hacf-host.py config check
+```
+
+### The rig's kit
+
+The question check reads a rig's question destination with `bin/seat-config.py` of that rig's HACF
+kit. So that check, and with it auto-park, needs the project rig's kit at v0.6.7 or later: an older
+one reads `kit older than v0.6.7`, and the rig is never parked until its kit is upgraded. The
+restore-failed question row and the park information row are not sent for it either. The kit is the
+rig's live spec as `rig specs ls` lists it. A rig missing from that list is found in
+`$OPENRIG_HOME/specs/<rig>/` (default `~/.openrig`) when that dir's `rig.yaml` names it, it holds
+no symlink in place of a checked file or dir, and you own it. Otherwise it is
+`<project root>/openrig/hacf`.
+
+### Reading the host
+
+```sh
+python3 <Rig spec>/bin/hacf-host.py status --json      # every rig, the heavy job, the supervisor
+python3 <Rig spec>/bin/hacf-host.py status --md        # the same, written to status.md
+python3 <Rig spec>/bin/hacf-host.py status             # the same as status --md
+python3 <Rig spec>/bin/hacf-host.py boundary <rig>     # exit 0 at a slice boundary, 1 not, 2 unmapped
+```
+
+**The status file.** `status --md` writes `status.md` and `status.json` into the host state dir
+(`${XDG_STATE_HOME:-~/.local/state}/hacf/host/`) and prints the path of `status.md`. Read that
+file in any terminal: one table of rigs (state, what `rig ps` shows, tier, parks in the last 24
+hours, the last restore's seconds), then the heavy job and its queue, the idle point, the
+supervisor and the last 20 park and restore lines. It is a snapshot: run the command again to
+refresh it. An unknown state means the rig's record cannot be read. `status` calls no model and no
+network, changes no rig, and `--json` writes nothing.
+
+`boundary` answers only for a rig mapped in `projects`, and anything it cannot
+read counts as not at a boundary, with the reason.
+
+### Pause, resume, park and restore
+
+These stop and start rigs. They are the person's, or the operator's on the person's word.
+
+```sh
+python3 <Rig spec>/bin/hacf-host.py pause <rig> --reason <text> [--stop]
+python3 <Rig spec>/bin/hacf-host.py resume <rig>
+python3 <Rig spec>/bin/hacf-host.py park <rig>
+python3 <Rig spec>/bin/hacf-host.py restore <rig>
+```
+
+- **pause** marks a rig `paused-by-person` and writes its resume point
+  (`rigs/<rig>.resume.md` in the host state dir). The rig keeps running; `--stop` also parks it.
+- **resume** restores the rig if it is stopped, clears the mark and sends the lead seat one
+  message that names the resume point. It never starts a stopped rig that HACF holds no snapshot
+  of: the refusal says how the person starts that one before resuming it.
+- **park** stops a rig and marks it `parked-waiting`; **restore** brings back a `parked-waiting`
+  or `restore-failed` rig.
+- **The boundary rule.** `pause` and `park` act only on a rig at a slice boundary (see
+  `boundary <rig>` above); otherwise they print the failing checks and exit 1.
+- **Park's order.** Resume point; `rig snapshot`, which must then show in `rig snapshot list` as
+  usable; the boundary again; the stop (OpenRig's `down`); then every seat must read stopped.
+  Without a verified snapshot, or when the boundary changed, the rig is left running.
+- **Verified restore.** It waits until `MemAvailable` reaches seats × `seat_ram_mb` plus
+  `reserve_mb`, and parks no other rig to get it. It then starts the same rig again from the
+  stop's snapshot (or runs `rig restore` of the manual snapshot when the stop recorded none) and
+  accepts only `fully_restored` from the expected snapshot. A refusal with no seat running is
+  retried after 2, 4 and 8 minutes. If the memory does not come in
+  `autopark.restore_timeout_s` seconds, nothing is started and the command exits 75.
+- **`restore-failed`.** A partial or failed restore, another snapshot, a timeout, unreadable
+  output, or a stop that cannot be verified marks the rig `restore-failed`. Nothing retries it:
+  one question row goes to the project's question destination (routing, "Asking the person") with
+  the options "restore it again" and "leave it stopped". If the destination cannot be resolved,
+  no row is sent, and `supervisor.log` in the host state dir says why. Look at the rig before you
+  restore or resume it.
+- **Paused files.** A rig named in a `paused_files` file (one name per line, `#` comments) is
+  paused by the person. `pause`, `park`, `restore` and `resume` refuse it; remove the line
+  yourself, because HACF never edits those files. While one of those files cannot be read, the
+  four verbs refuse every rig.
+- Only one of these verbs acts on a rig at a time; a second exits 75. They act only on a rig
+  mapped in `projects`.
+
+### Auto-park
+
+Auto-park stops a team that only waits for the person, and brings it back when there is work. **It
+is off by default**: nothing is parked unless `autopark.enabled` is `true` in `host.yml`. Linux
+with a systemd user session only.
+
+```sh
+python3 <Rig spec>/bin/hacf-host.py supervise --once --dry-run    # what one pass would do
+python3 <Rig spec>/bin/hacf-host.py supervisor install [--dry-run-mode]
+python3 <Rig spec>/bin/hacf-host.py supervisor status
+python3 <Rig spec>/bin/hacf-host.py supervisor remove
+```
+
+**Dry run first.** `supervisor install --dry-run-mode` runs a pass every 2 minutes that only logs
+what it would do, with auto-park enabled or not. Read `supervisor.log` in the host state dir for a
+working day, and install without the flag once every `would-park` and `would-restore` line is what
+you would have done.
+
+**When a rig is parked.** All of these have held for `grace_minutes` (default 15), counted from
+the later of the first pass that found the rig eligible and the rig's last seat output as OpenRig
+reports it (`lastActivityAt` of each running seat; a seat without one makes the rig not eligible):
+
+- it is mapped in `projects`, not ignored, not paused and not `restore-failed`;
+- it is at a slice boundary (`boundary <rig>`);
+- it has sent the person at least one question row that is still open: to the project's question
+  destination or one in `human.destinations`, or with the routing question tag or one in
+  `human.tags`. A row with a tag in `autopark.fyi_tags` is never a question;
+- no row it could act on is addressed to its seats: a pending or in-progress row with no
+  `fyi_tags` tag. A blocked row neither parks a rig nor keeps it up.
+
+Anything that cannot be read or judged parks nothing. The grace starts again when any of this
+stops holding (the log says why), after a park that was called off, and after a gap with no pass
+longer than the unit's time limit plus 2 minutes.
+
+- **The cap.** One rig is parked at most `max_parks_per_day` times (default 3) in any 24 hours.
+- **One at a time.** A pass parks at most one rig, the lowest priority tier first, and restores at
+  most one, the highest tier first. The others are logged as queued and `supervisor status` shows
+  them.
+- A park sends one information row to the project's update destination, with the resume point.
+
+**When a parked rig is restored.** The supervisor restores only the rigs it parked: **a rig you
+parked stays parked** until you run `restore <rig>`. It restores one when a row the rig can act on
+exists, whenever that row arrived, or when every question row it waited on is over. Claiming such a
+question row and rows with an `fyi_tags` tag restore nothing. During an idle point restores wait.
+The supervisor does not wait for memory: a rig that does not fit is tried again on a later pass.
+The restore is the verified one above, and a failed one is `restore-failed`, never retried.
+
+**A record that cannot start.** A due rig whose record holds no snapshot id, or no `parks` entry,
+is marked `restore-failed` with one question row that names the record, and the same pass goes on
+to the next due rig. A record that cannot be read or judged is never rewritten, because it may be
+your pause: `status --json` and `supervisor status` list it as `unreadable record: <path>`.
+
+**Hands off paused rigs.** A rig paused by `pause`, or named in a paused file, is never parked,
+restored or written to. While a paused file cannot be read, nothing is parked or restored.
+
+**The timer.** `install` copies the script to
+`${XDG_DATA_HOME:-~/.local/share}/hacf/host/bin/`, so no project's checkout changes what runs,
+and writes `hacf-host-supervise.service` and `.timer` under
+`${XDG_CONFIG_HOME:-~/.config}/systemd/user/`. The service carries your shell's `PATH`, without
+seat-bin entries, and the host variables you have set, so run `install` from a login shell; it
+refuses when `rig` is not on that `PATH`. Run `install` again after `rig`, Node or
+`autopark.restore_timeout_s` changes: the service's time limit is that value plus 360 seconds, and
+`status` warns when it has fallen behind. An older script never installs over a newer one. A stop
+at the time limit marks the park or restore it cut `restore-failed` and sends the question row.
+
+### The idle point
+
+An idle point drains the machine before maintenance, such as an OpenRig upgrade. The operator, on
+the person's word:
+
+```sh
+python3 <Rig spec>/bin/hacf-host.py idle-point request --purpose openrig-upgrade:<V> [--ttl <hours>]
+python3 <Rig spec>/bin/hacf-host.py idle-point wait [--timeout <seconds>]
+# upgrade the host, only after `wait` printed `idle reached`
+python3 <Rig spec>/bin/hacf-host.py idle-point release
+python3 <Rig spec>/bin/hacf-host.py idle-point status [--json]
+```
+
+**What it blocks** while it is in force:
+
+- New heavy jobs: only a mapped rig that is not at a boundary starts one, so a slice in flight can
+  finish. Jobs of rigs at a boundary, of unmapped rigs and with no rig wait.
+- The lead's new slice handoffs. A slice already in flight finishes.
+- Restores by auto-park. Parks go on.
+
+**What it never does:** it never installs, upgrades, stops or parks anything. It only says when the
+machine is idle.
+
+- **One at a time, and it ends.** A second `request` exits 1 naming the one in force. It expires
+  after `--ttl` hours (default 6), and an expired one counts as absent. `release` ends it at once.
+- **`wait`** reads every 30 seconds, for at most `--timeout` seconds (default 3600). Every rig that
+  `rig ps` does not show stopped, except those in `ignore_rigs`, must be mapped and at a slice
+  boundary, parked with no seat running, or paused; and no job may hold the heavy-job lock. A
+  running rig that is unmapped counts as in flight, even a paused one: map it in `projects` or
+  list it in `ignore_rigs`.
+- **Its result.** Exit 0 prints `idle reached` with each rig as `boundary`, `parked` or `paused`.
+  A timeout is exit 75 and names what is still in flight. Exit 1 means no idle point is in force:
+  request first.
+- A heavy command that runs outside `job run` holds no lock, so `wait` does not see it:
+  `job status` lists such processes.
+
+### Who runs what
+
+- **Seats run only** `job run`, `job status`, `status`, `boundary` and `idle-point status`.
+  A seat never parks, pauses, resumes or restores a rig.
+- **The person, or the operator on the person's word,** runs `pause`, `resume`, `park`, `restore`, `idle-point request|release`, `supervise` and `supervisor`.
+  A seat of a mapped rig is refused.
 
 ## The Herdr team view (herdr-view.py)
 

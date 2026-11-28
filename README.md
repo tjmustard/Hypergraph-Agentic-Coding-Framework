@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-    <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/releases/latest"><img src="https://img.shields.io/badge/release-v0.6.7-blue" alt="Latest Release"/></a>
+    <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/releases/latest"><img src="https://img.shields.io/badge/release-v0.6.8-blue" alt="Latest Release"/></a>
     <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/stargazers"><img src="https://img.shields.io/github/stars/tjmustard/Hypergraph-Agentic-Coding-Framework?style=social" alt="GitHub stars"/></a>
     <a href="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework/blob/main/LICENSE"><img src="https://img.shields.io/github/license/tjmustard/Hypergraph-Agentic-Coding-Framework" alt="License"/></a>
 </p>
@@ -488,6 +488,15 @@ The engine caps spending per phase (`autonomy.max_budget_usd_per_phase`) and per
 - **A rig `env:` key** is stored by OpenRig 0.7.23 only when a rig is created, so `ENABLE_CLAUDEAI_MCP_SERVERS` reaches only the seats of rigs created with it (`openrig/hacf/OPS.md`). A draft for an upstream report is not yet filed.
 - **`harness: agy`** (or any community harness) in a seat config is validated and reported but not applied: OpenRig 0.7.23 has no per-seat path for a community harness.
 - **The progress report** leaves Lint / format / types, Licence check, Regressions caught and the recommended / not split of Decisions 'not recorded' by design. Its "tracked" rule skips an audited slice that has no `PROGRESS.md` at the tag, and for a release with no such file the reason can name the wrong cause; both are left for a later release.
+- Host operations: HACF trees older than v0.6.8 take the heavy-job lock directly and can run ahead of the priority queue; only one heavy job still runs at a time.
+- Host operations: Auto-park is off by default, and its supervisor runs only with a systemd user session (Linux).
+- Host operations: OpenRig gaps found while building the host layer (no held rig state, no row-arrival hook, best-effort snapshots, no per-rig memory figure) are drafted for an upstream report, not filed.
+- Host operations: The park and restore cycle ran live on OpenRig 0.7.23 only, with one seat; 0.7.24 has not been run live. The grace rule fixed after the trial has had no dry-run trial, and the test rig's row closing is tested with fakes only.
+- Host operations: A rig whose HACF kit is older than v0.6.7 is never parked.
+- Host operations: The grace is not re-read just before `rig down`, and the effect of idle pane output on it is not measured.
+- Host operations: `status` shows `running` for a stopped rig with no HACF record; manual park and restore write no `park` or `restore` line to `supervisor.log`; the log does not record each pass's park conditions.
+- Host operations: A signal sent straight to the `job run` process frees the heavy-job lock after its 10 second grace.
+- Host operations: Changes to host scripts outside HACF are not made, and the advisor experiment's run is not part of this release.
 - **Per-seat models** (v0.6.6): build-execute (`claude-sonnet-5-5`, medium) and desk-scribe (`claude-haiku-5-5`) ship as tiered defaults because they held in the H5 experiment; every other seat, including orch-lead, stays on `claude-opus-5-5`. The result is directional, in API list-price dollars, not the bill (`dev/telemetry/h5-v066.md`). The shipped model ids age while HACF is parked: override a retired id in `overrides.yml`. A fresh `rig up` runs each seat on the harness default until the commands seat-config-upgrade prints are run, and restoring to v0.6.5 leaves `overrides.yml`, which v0.6.5 does not read.
 - **Live seats' first-turn context** (about 48.7k-50.4k tokens) is above the headless probe's 36.9k-41.9k; not re-measured in v0.6.6.
 
@@ -512,6 +521,7 @@ The engine caps spending per phase (`autonomy.max_budget_usd_per_phase`) and per
 - [x] v0.6.5: the upgrade path for an existing team (seat-config plan/apply/restore, the saved installer copy and the kept pin, the `.mcp.json` entry following the recorded install method), a per-project code-graph runtime for HACF's own runs with `index --if-stale`, the working-tree privacy scan, and the upgrade copy test
 - [x] v0.6.6: the per-seat config format (`seat-config.yml` defaults, your own `overrides.yml`), seat-config-upgrade printing each seat's model commands with an Opus revert, tiered models for the seats that held, the H5 cost and token telemetry, and the KI-3, K10, D2, KI-6 and K9 fixes
 - [x] v0.6.7: per-seat config v2 (`tools`, `skills`, `instructions`, `harness`, `routing`) with six presets and upgrade apply lines, the `progress-report.py` and `herdr-view.py` tools, OpenRig 0.7.23 accepted, the export gate's OpenRig contract step, a daily watcher with a self-test, upgrade requests and an outbox, the compat harness step, and fixes to the progress report, seat config, the watcher and compat runs
+- [x] v0.6.8: host operations (`hacf-host.py`: the heavy-job scheduler, slice boundaries, pause, resume, park and restore, opt-in auto-park that is off by default, the idle point and the cross-rig status view), OpenRig 0.7.24 accepted, the dev-only test rig, host sweep and advisor experiment kit, and fixes to job-run signals, compat runs, the watcher, kit lookup, restore checks and auto-park's grace
 - [ ] HACF is paused while later versions are planned; deferred items (KI-1, KI-2, KI-4, KI-5, K11, `symbol_impact --include-tests`, the `.mcp.json` `env` block, shared uv caches) are deferred, unplanned
 - [ ] v0.7.0: legacy flat MiniPRDs are no longer read (no earlier than 2027-01-31)
 

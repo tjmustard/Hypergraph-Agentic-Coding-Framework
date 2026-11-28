@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "rig",
+    "scope",
+    "--workspace",
+    "<T><TMP>/repo",
+    "slice",
+    "create",
+    "release-0.6.0",
+    "rig-close",
+    "--json"
+  ],
+  "exit_code": 0,
+  "git_status_after": [
+    " M missions/release-0.6.0/mission.yaml",
+    "?? missions/release-0.6.0/slices/.nn-02",
+    "?? missions/release-0.6.0/slices/02-rig-close/PROGRESS.md",
+    "?? missions/release-0.6.0/slices/02-rig-close/PROOF.md",
+    "?? missions/release-0.6.0/slices/02-rig-close/SPEC.md",
+    "?? missions/release-0.6.0/slices/02-rig-close/slice.yaml"
+  ],
+  "stderr": "",
+  "stdout": "{\n  \"ok\": true,\n  \"slice\": {\n    \"mission\": \"release-0.6.0\",\n    \"name\": \"02-rig-close\",\n    \"id\": \"OPR.0.6.0.2\",\n    \"path\": \"<T><TMP>/repo/missions/release-0.6.0/slices/02-rig-close\",\n    \"readmePath\": \"<T><TMP>/repo/missions/release-0.6.0/slices/02-rig-close/SPEC.md\",\n    \"template\": \"placeholder\"\n  }\n}\n",
+  "step": "slice-create-rig-close"
+}

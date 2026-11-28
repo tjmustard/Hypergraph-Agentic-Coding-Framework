@@ -421,6 +421,15 @@ lays the seats out from the rig's spec (the lead on top, then rows of three) and
 only. Run it after `rig up` and after a resume; `--dry-run` shows the plan first. See
 "The Herdr team view (herdr-view.py)" in [OPS.md](OPS.md).
 
+## Host operations (v0.6.8)
+
+`bin/hacf-host.py` shares one machine between HACF teams: heavy commands go through
+`job run`, one at a time, by priority and declared memory and GPU needs. Its config is
+`${XDG_CONFIG_HOME:-~/.config}/hacf/host.yml`; copy `host.example.yml` there and edit the copy,
+which HACF never writes. The supervisor that parks and restores rigs is opt-in: nothing is parked
+unless that config sets `autopark.enabled: true`.
+See "Host operations" in [OPS.md](OPS.md) for the verbs and who may run them.
+
 ## Files
 
 ```

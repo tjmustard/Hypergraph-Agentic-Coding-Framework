@@ -7,6 +7,148 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-11-27
+
+### Added
+- OpenRig 0.7.24 is accepted by the person, with its compat baseline; its one watched change
+  (`scaffold-placeholder.js` no longer counts a blank numbered item as authored) matches HACF's own
+  lint.
+- Advisor experiment kit (dev only, not installed): `dev/experiments/advisor/` and advisor and helper columns in `collect_metrics.py`.
+- Host sweep (dev only, not installed): `dev/scripts/host_sweep.py [--apply] [--json]` lists, and
+  with `--apply` removes, only HACF's own leftovers: compat run dirs whose owner is dead (or that
+  have no owner record and are over 24 hours old), their orphaned loopback listeners, and
+  `hacf-test-<project>-<stamp>` rigs over 6 hours old. A listener is signalled only after its
+  command line, run dir, user and start time are re-checked.
+- Dev test rig (dev only, not installed): `dev/test_rig.py run --project <root> [--seats <ids>]
+  [--full --approval <qitem>] [--keep-copy] -- <test argv>` copies a project under `$TMPDIR`, cuts
+  its `rig.yaml` down to the chosen seats, launches it as `hacf-test-<project>-<stamp>` inside one
+  heavy-job scheduler job, runs the command, and always deletes that rig, verified absent, and the
+  copy. The delete is refused for any name but this run's own; a full-size rig needs an approval
+  row. The command also gets `HACF_TEST_RIG_COPY`; a copy with an absolute or escaping symlink or
+  a `.git` file is refused; an unfinished or failed `rig up` is stopped before the delete; and the
+  heavy lock is held until the cleanup has finished.
+- The cross-rig status view: `hacf-host.py status --json` shows each rig with its project, tier,
+  state (`running`, `paused-by-person`, `parked-waiting`, `restore-failed`, `unmapped` or
+  `ignored`), what `rig ps` says, parks in the last 24 hours and the last restore's seconds, plus
+  the heavy job's holder and queue, the idle point, foreign heavy processes, the supervisor and the
+  last park and restore lines. `status --md`, the same as bare `status`, writes it to `status.md`
+  and `status.json` in the host state dir. Every form is zero-token and runs no `rig` command but
+  `ps`.
+- The idle point: `hacf-host.py idle-point request --purpose <text> [--ttl <hours>]`, `wait
+  [--timeout <s>]`, `release` and `status [--json]` drain a host before maintenance. While one is
+  in force, only rigs with a slice in flight start heavy jobs, leads hand off no new slice and
+  auto-park restores nothing. `wait` exits 0 only when every running rig is at a boundary, parked
+  or paused and no heavy job holds the lock (an unmapped running rig counts as in flight), and 75
+  at its timeout. It never installs, upgrades, stops or parks anything, and it expires after 6
+  hours by default. The OpenRig watcher's upgrade request names the commands.
+- A supervisor-parked rig whose record cannot start a restore (no snapshot id, or no park entry)
+  is marked `restore-failed` with one question row and no longer holds the pass's one restore.
+  `status --json` and `supervisor status` list records that cannot be read.
+- Auto-park, opt-in and off by default (`autopark.enabled: false`): `hacf-host.py supervise
+  --once [--dry-run]` parks a mapped rig that has only waited on the person's question rows for
+  `grace_minutes` at a slice boundary, and restores a rig it parked when a row it can act on
+  arrives or those rows are over. At most `max_parks_per_day` parks per rig, one park and one
+  restore per pass, paused rigs untouched, restores deferred during an idle point, anything
+  unknown parks nothing, every decision in `supervisor.log`. `supervisor install|remove|status`
+  runs a copy of the script every 2 minutes under a systemd user timer (Linux only), with the
+  installing shell's `PATH` and host variables; an older copy never replaces a newer one.
+  OPS.md "Auto-park" has the rules.
+- Pause, resume, park and restore: `hacf-host.py pause <rig> --reason <text> [--stop]`,
+  `resume <rig>`, `park <rig>` and `restore <rig>` for the person, or the operator on the person's
+  word (a seat of a mapped rig is refused). They act only on a mapped rig, and `pause` and `park`
+  only at a slice boundary. A park verifies its snapshot, reads the boundary again before
+  `rig down` and verifies that every seat stopped. A restore waits for memory and accepts only
+  `fully_restored` from the expected snapshot; a refusal with no seat running is retried after 2,
+  4 and 8 minutes; anything else marks the rig `restore-failed` and sends one question row, with no
+  retry. Rigs listed in `paused_files` are left alone, and those files are never edited.
+- The kit carries the host tool: `bin/hacf-host.py` and `host.example.yml` come with `--rig`, and
+  `seat-config-upgrade.py` adds or replaces both in a live spec. OPS.md has a new "Host
+  operations" section (the scheduler, the host config, and who may run which verb), the lead's
+  guidance sends heavy commands through `job run`, and the rig README points to both.
+- The heavy-job scheduler: `hacf-host.py job run --job <name> [--ram-mb N] [--gpu] [--rig <r>]
+  [--wait-s N] -- <argv>` runs one heavy job at a time on a host. Jobs queue by the priority tiers
+  of `host.yml`, then by arrival. While the first in line does not fit, a later job that fits may
+  run, until the first has waited `reserve_after_minutes` (default 10); the host is then reserved
+  for it. A job starts only with `MemAvailable` >= max(6144 MB, its `--ram-mb` + `reserve_mb`);
+  a `--gpu` job also waits for `nvidia-smi` and `foreign_heavy_patterns`. During an idle point
+  only a mapped rig that is not at a boundary is admitted. A wait that runs out exits 75.
+  `hacf-host.py job status [--json]` shows the holder, the queue and the host. HACF's own
+  `dev/scripts/host_gate.py` is now a client of this code, with the same command line,
+  environment variables, lock path and exit codes.
+- `openrig/hacf/bin/hacf-host.py`, the core of the host tool: the shared host state dir
+  (`hacf.host/v1`, atomic writes under a lock, unknown keys kept; newer state makes an older
+  client write nothing and exit 75), the host config
+  `${XDG_CONFIG_HOME:-~/.config}/hacf/host.yml` (`hacf.host-config/v1`: priority tiers, the
+  explicit rig → project binding and `ignore_rigs`), `config check [--json]`, which also warns
+  about each running rig that is neither bound nor ignored, and a `status --json` skeleton.
+  `openrig/hacf/host.example.yml` lists every key at its default. A verb a build does not have
+  prints `not in this build`.
+- `hacf-host.py boundary <rig> [--json]` says whether a rig mapped in `host.yml` is at a slice
+  boundary, from fresh reads: every seat idle and needing nothing, no in-progress queue row
+  addressed to it, every slice of its project `compiled`, `audited` or `superseded`, and no heavy
+  lock held or job queued. Anything unknown is "not at a boundary", with the reason; exit 0 yes,
+  1 no, 2 for an unmapped or ignored rig. It only reads. The same script now has the writer of a
+  rig's resume point (`rigs/<rig>.resume.md`), which `pause` and `park` call.
+
+### Fixed
+- Host operations: a restore by `rig up --existing` is verified from the top-level `snapshotId`
+  that OpenRig 0.7.23 and 0.7.24 return. Before, every such restore was marked `restore-failed`.
+- Auto-park: the grace counts from the later of the first eligible pass and the running seats'
+  newest `lastActivityAt` in `rig ps`, so output between two passes restarts it. A running seat
+  without that time makes the rig not eligible.
+- Dev test rig: a test rig's question and update routing is pinned to a stub seat inside it and
+  checked before the launch, and its open queue rows are closed before the rig is deleted.
+- The host tool finds a project rig's kit in OpenRig's specs dir when `rig specs ls` does not
+  list it yet, and names a kit older than v0.6.7 instead of a raw seat-config error.
+- `hacf-host.py job run` (and HACF's `host_gate.py run`) now handles SIGTERM, SIGINT and SIGHUP
+  from before it waits for the lock: a stop that arrives before the command starts ends the run
+  with no command, the lock and ticket released, and exit 128 + signal.
+- An OpenRig compat run killed before its cleanup no longer leaves its loopback listener running:
+  the listener exits when its parent is gone, and the run dir records its owner.
+- The OpenRig watcher installer, run from a seat, now refuses before writing anything: it never
+  records the seat's `rig` shim, and `--uninstall` and install both stop without a user session
+  bus (`DBUS_SESSION_BUS_ADDRESS=disabled:...` or no `XDG_RUNTIME_DIR`), also with `--dry-run`.
+- The host supervisor finds an installed project's HACF kit in the rig's OpenRig live spec, so its
+  question check, restore-failed escalation and park FYI no longer fail on a path only the HACF
+  repo has.
+- The watcher's checker self-test no longer reports `checker broke` for a version that matches its
+  own baseline: `help` now lists only baselines whose help text changed. An expectation recorded
+  under the old rule is re-recorded once.
+
+### Known issues
+- A client from before v0.6.8 takes the heavy-job lock without a ticket, so it can run ahead of
+  queued jobs whatever their priority. Only one heavy job still runs at a time.
+- The auto-park service's time limit (`restore_timeout_s` + 360 seconds) does not cover the worst
+  pass: the 2, 4 and 8 minute retries of a refused restore, or a slow park before a restore, can
+  reach it. systemd then stops the pass; the park or restore it cut is marked `restore-failed` and
+  one question row is sent.
+- HACF trees older than v0.6.8 take the heavy-job lock directly and can run ahead of the priority
+  queue; only one heavy job still runs at a time.
+- Auto-park is off by default, and its supervisor runs only with a systemd user session (Linux).
+- OpenRig gaps found while building the host layer (no held rig state, no row-arrival hook,
+  best-effort snapshots, no per-rig memory figure) are drafted for an upstream report, not filed.
+- The live auto-park trial was a dry run and found three defects (a good restore judged failed, the
+  grace sampled only between passes, a test rig's question reaching a real destination). They are
+  fixed under Fixed above; the new grace rule is tested with fakes only and has had no dry-run
+  trial, and auto-park stays off.
+- The park and restore cycle after those fixes ran live on OpenRig 0.7.23 only, with one seat;
+  0.7.24 has not been run live.
+- The dev test rig's closing of its open queue rows is tested with a fake `rig` only: the live
+  cycle made no row.
+- The grace is judged in the supervisor's pass; the check just before `rig down` does not read
+  `lastActivityAt` again. Whether output a pane repeats while idle keeps a rig from parking is not
+  measured.
+- A rig whose HACF kit is older than v0.6.7 reads as unknown in the supervisor's question check and
+  is never parked.
+- `status` shows `running` for a stopped rig that has no HACF record.
+- A manual park or restore writes no `park` or `restore` line to `supervisor.log`, so the park log,
+  the restore timings and the daily park count cover the supervisor's cycles only.
+- `supervisor.log` does not record each pass's five park conditions.
+- A signal sent straight to the `job run` process frees the heavy-job lock after its 10 second
+  grace, even if the job is still cleaning up.
+- Changes to host scripts outside HACF, so that they skip parked and paused rigs, are not made.
+- The advisor experiment's run is not part of this release.
+
 ## [0.6.7] - 2026-11-27
 
 ### Added

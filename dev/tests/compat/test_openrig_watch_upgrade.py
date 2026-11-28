@@ -217,7 +217,7 @@ def test_an_unparsable_version_defers_the_self_test_twice_then_one_row(b: Box) -
 
 def test_a_final_record_holds_the_comparison_fields(b: Box) -> None:
     """The fields, and accept_sha only for `accepted`."""
-    ev = b.evidence_for(CAND, help_diff={"z": 1, "a": 2}, watched_diff={"w": {}})
+    ev = b.evidence_for(CAND, help_diff={"z": CHANGED, "a": CHANGED}, watched_diff={"w": {}})
     oc.watch_record(b.state, CAND, "accepted", str(ev), True)
     rec = json.loads((b.state / f"verdicts/{CAND}.json").read_text())
     assert (rec["verdict"], rec["watched"], rec["help"]) == ("PASS", ["w"], ["a", "z"])
@@ -278,7 +278,7 @@ def test_a_difference_is_broke_and_lists_each_field(b: Box) -> None:
     """Same baselines: every differing field, and the expectation is untouched."""
     _judge(b)
     held = _expectation(b)
-    result, text = _judge(b, **REVIEWED, help_diff={"h": 1})
+    result, text = _judge(b, **REVIEWED, help_diff={"h": CHANGED})
     assert result == "broke"
     for part in ('verdict: expected "PASS" got "REVIEW"', "watched: expected [] got",
                  'help: expected [] got ["h"]', "harness: expected"):  # fmt: skip
@@ -359,6 +359,169 @@ def test_rule_2_ignores_a_fail_record(b: Box) -> None:
     b.state.mkdir()
     _verdict_record(b, "FAIL", verdict="FAIL")
     assert _judge(b)[0] == "recorded-first"
+
+
+# ---------------------------------------------------------------------------------------------
+# OPR.99.0.16.16: `help` is the baselines with a non-empty help diff; old-rule records
+
+UNCHANGED = {"0.7.21": {}}  # a real run's help_diff: every compared baseline is a key
+CHANGED = {"cmd": {"added_flags": ["--f"]}}
+REPLACES = "replaces an expectation recorded under the old help rule; "
+
+
+def _old_rule(path: Path, **over: object) -> bytes:
+    """Rewrite a record as one from before the rule: no help_rule, `help` lists every key."""
+    record = json.loads(path.read_text())
+    record.pop("help_rule", None)
+    record.update({"help": ["0.7.21"], **over})
+    oc.write_json(path, record)
+    return path.read_bytes()
+
+
+def _held_old_rule(b: Box, version: str, **good: object) -> None:
+    _judge(b, version, help_diff=UNCHANGED, **good)
+    _old_rule(b.state / f"selftest/{version}.json")
+
+
+def test_rule_1_with_a_real_runs_help_diff(b: Box) -> None:
+    """A listed version that matches its own baseline: recorded fixed, then ok."""
+    version = _listed_with_baseline(b, True)
+    own = {"baseline": version, "person_baseline": version, "help_diff": {version: {}}}
+    result, text = _judge(b, version, **own)
+    assert result == "recorded-fixed", text
+    assert _expectation(b, version)["help"] == []
+    assert _judge(b, version, **own)[0] == "ok"
+
+
+def test_help_lists_only_the_baselines_with_a_difference(b: Box) -> None:
+    """comparison_fields, the final record, and rule 1 against a real difference."""
+    diff = {"x": {}, "y": CHANGED}
+    ev = b.evidence_for(CAND, help_diff=diff)
+    assert oc.comparison_fields(ev, CAND)["help"] == ["y"]
+    oc.watch_record(b.state, CAND, "REVIEW", str(ev), True)
+    assert json.loads((b.state / f"verdicts/{CAND}.json").read_text())["help"] == ["y"]
+    version = _listed_with_baseline(b, True)
+    result, text = _judge(b, version, help_diff=diff)
+    assert result == "broke" and 'help: expected [] got ["y"]' in text
+    assert _expectation(b, version) is None
+
+
+@pytest.mark.parametrize("source", ["fixed", "watcher-verdict", "first-result"])
+def test_every_written_record_carries_the_help_rule(source: str, b: Box) -> None:
+    """The final record and each source of an expectation."""
+    version = _listed_with_baseline(b, True) if source == "fixed" else "9.0.0"
+    if source == "watcher-verdict":
+        b.state.mkdir()
+        _verdict_record(b, "PASS", help_diff=UNCHANGED)
+        final = json.loads((b.state / "verdicts/9.0.0.json").read_text())
+        assert final["help_rule"] == "differing"
+    _judge(b, version, help_diff=UNCHANGED)
+    held = _expectation(b, version)
+    assert held["source"] == source and held["help_rule"] == "differing"
+
+
+def test_a_record_without_the_fields_has_no_help_rule(b: Box) -> None:
+    """Nothing was derived, so no rule is claimed."""
+    b.state.mkdir()
+    oc.watch_record(b.state, CAND, "REVIEW", str(b.evidence / "gone"), True)
+    assert "help_rule" not in json.loads((b.state / f"verdicts/{CAND}.json").read_text())
+
+
+@pytest.mark.parametrize("source", ["fixed", "first-result"])
+def test_an_old_rule_expectation_is_recorded_again(source: str, b: Box) -> None:
+    """Same baselines, only the old `help` value differs: re-recorded, never broke."""
+    version = _listed_with_baseline(b, True) if source == "fixed" else "9.0.0"
+    _held_old_rule(b, version)
+    result, text = _judge(b, version, help_diff=UNCHANGED)
+    assert result == ("recorded-fixed" if source == "fixed" else "recorded-first"), text
+    assert text.startswith(f"{REPLACES}source={source}; ")
+    held = _expectation(b, version)
+    assert held["help"] == [] and held["help_rule"] == "differing"
+    assert _judge(b, version, help_diff=UNCHANGED)[0] == "ok"
+
+
+def test_an_old_rule_expectation_stays_when_nothing_replaces_it(b: Box) -> None:
+    """A FAIL has no basis and a setup error records nothing: the old file is not touched."""
+    _held_old_rule(b, "9.0.0")
+    before = (b.state / "selftest/9.0.0.json").read_bytes()
+    assert _judge(b, verdict="FAIL")[0] == "nobasis-fail"
+    assert _judge(b, verdict="SETUP-ERROR", setup_error="boom")[0] == "broke"
+    assert (b.state / "selftest/9.0.0.json").read_bytes() == before
+
+
+def test_a_first_expectation_replaces_nothing(b: Box) -> None:
+    """No `replaces` text without an old-rule expectation, also after a baselines change."""
+    assert not _judge(b, help_diff=UNCHANGED)[1].startswith(REPLACES)
+    assert not _judge(b, baseline="0.7.23")[1].startswith(REPLACES)
+
+
+def _tree(root: Path) -> dict[str, bytes]:
+    return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("case", ["unchanged", "evidence-gone", "evidence-other", "differs"])
+def test_rule_2_derives_an_old_records_help_from_its_evidence(case: str, b: Box) -> None:
+    """Read only; an unusable evidence dir is no basis, a real difference is broke."""
+    b.state.mkdir()
+    diff = {"0.7.21": CHANGED} if case == "differs" else UNCHANGED
+    _verdict_record(b, "PASS", help_diff=diff)
+    path = b.state / "verdicts/9.0.0.json"
+    before = _old_rule(path)
+    ev = Path(json.loads(before)["evidence"])
+    if case == "evidence-gone":
+        (ev / "verdict.json").unlink()
+    elif case == "evidence-other":
+        data = json.loads((ev / "verdict.json").read_text())
+        (ev / "verdict.json").write_text(json.dumps({**data, "version": "9.0.1"}))
+    evidence = _tree(ev)
+    result, text = _judge(b, help_diff=UNCHANGED)
+    want = {"unchanged": "recorded-watcher", "differs": "broke"}.get(case, "recorded-first")
+    assert result == want, text
+    if case == "differs":
+        assert 'help: expected ["0.7.21"] got []' in text and _expectation(b) is None
+    else:
+        assert _expectation(b)["help"] == []
+    assert path.read_bytes() == before and _tree(ev) == evidence
+
+
+def test_the_recorded_0_7_23_expectation_is_replaced_by_rule_1(b: Box) -> None:
+    """The shape recorded under the old rule, then a listed 0.7.23 against its own baseline."""
+    _listed_with_baseline(b, True)
+    base = b.worktree / "dev/tests/fixtures/openrig-compat/0.7.23/harness/agy"
+    base.mkdir(parents=True, exist_ok=True)
+    oc.write_json(b.state / "selftest/0.7.23.json", {
+        "baselines": ["0.7.21", "0.7.21"], "harness": {"agy": "unreferenced"},
+        "help": ["0.7.21"], "recorded": "2026-11-26T14:35:59Z", "source": "watcher-verdict",
+        "verdict": "REVIEW", "version": "0.7.23", "watched": ["SLICE_MANIFEST"]})  # fmt: skip
+    result, text = _judge(b, "0.7.23", baseline="0.7.23", person_baseline="0.7.23",
+                          help_diff={"0.7.23": {}})  # fmt: skip
+    assert result == "recorded-fixed", text
+    assert text.startswith(REPLACES)
+    assert _expectation(b, "0.7.23")["help"] == []
+
+
+def test_the_recorded_0_7_24_verdict_is_a_rule_2_basis(b: Box) -> None:
+    """The final record listed its unchanged baseline; its evidence gives no help difference."""
+    _unlist(b, "0.7.24")
+    run = {"verdict": "REVIEW", "watched_diff": {"scaffold-placeholder.js": {}},
+           "baseline": "0.7.23", "person_baseline": "0.7.23",
+           "help_diff": {"0.7.23": {}}}  # fmt: skip
+    ev = b.evidence_for("0.7.24", "step3", **run)
+    oc.write_json(b.state / "verdicts/0.7.24.json", {
+        "baselines": ["0.7.23", "0.7.23"], "evidence": str(ev), "final": True,
+        "harness": {"agy": "ok"}, "help": ["0.7.23"], "integrity": INTEGRITY,
+        "outcome": "REVIEW", "time": "2026-11-27T14:33:03Z", "verdict": "REVIEW",
+        "version": "0.7.24", "watched": ["scaffold-placeholder.js"]})  # fmt: skip
+    result, text = _judge(b, "0.7.24", **run)
+    assert result == "recorded-watcher", text
+    assert _expectation(b, "0.7.24")["help"] == []
+
+
+def test_an_old_rule_accepted_record_stays_eligible(b: Box) -> None:
+    """The upgrade reconcile never reads `help`."""
+    b.accepted("1.0.0", help=["0.7.21"])
+    assert "help_rule" not in json.loads((b.state / "verdicts/1.0.0.json").read_text())
+    assert b.plan()["open"]["version"] == "1.0.0"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -760,6 +923,11 @@ def test_the_request_row_and_every_body_field(b: Box) -> None:
     )
     positions = [body.index(text) for text in wanted]
     assert positions == sorted(positions)
+    assert (
+        "Coordinated idle point: `python3 <project>/openrig/hacf/bin/hacf-host.py idle-point "
+        f"request --purpose openrig-upgrade:{CAND}`, then `idle-point wait`, upgrade, then "
+        "`idle-point release`."
+    ) in body.splitlines()
     before = [r for r in b.to(DESTINATION) if "upgrade requested" in _summary(r)]
     assert len(before) == 1 and "--verify" in before[0]["argv"]
     assert key in before[0]["body"] and "qitem-20261126000000-" in before[0]["body"]

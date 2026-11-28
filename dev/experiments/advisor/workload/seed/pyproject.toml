@@ -1,0 +1,18 @@
+[project]
+name = "stockroom"
+version = "0.1.0"
+description = "A tiny stock ledger kept in one JSON file."
+requires-python = ">=3.10"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+# The installed HACF kit is vendored code: the project's lint and the pre-commit hook leave it out.
+[tool.ruff]
+line-length = 100
+extend-exclude = [".agents/", "openrig/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

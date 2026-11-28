@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -486,12 +487,12 @@ def test_audit_iter2_cut_help_repro() -> None:
 def test_committed_baseline_help_texts_are_whole() -> None:
     """Every committed help text passes check_help_text, and each [command] one lists help."""
     texts = sorted(FIXTURES.glob("*/help/*.txt"))
-    assert len(texts) == 27
+    assert len(texts) == 36
     parents = 0
     for path in texts:
         parsed = oc.check_help_text(path.read_text(encoding="utf-8"), str(path))
         parents += "help" in parsed["commands"]
-    assert parents == 9
+    assert parents == 12
 
 
 def test_run_help_seed_refuses_a_cut_parent_text(tmp_path: Path) -> None:
@@ -1072,6 +1073,85 @@ def test_listener_records_a_connection(tmp_path: Path) -> None:
     assert oc.connection_count(tmp_path / "missing") is None
 
 
+def _running(pid: int) -> bool:
+    """Whether the pid is a process that has not exited (a zombie has)."""
+    try:
+        text = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return False
+    return text[text.rfind(")") + 2] not in "ZX"
+
+
+# A short-lived parent: it spawns `listen`, prints the listener's pid and waits to be killed.
+LISTENER_PARENT = """\
+import subprocess, sys, time
+child = subprocess.Popen([sys.executable, *sys.argv[2:]], stderr=open(sys.argv[1], "wb"))
+print(child.pid, flush=True)
+time.sleep(120)
+"""
+
+
+def test_the_listener_exits_when_its_parent_is_killed(tmp_path: Path) -> None:
+    """MR 2: a SIGKILLed parent leaves no listener behind, within 2 s (OPR.99.0.16.10)."""
+    port_file, log, err = tmp_path / "port", tmp_path / "conn.log", tmp_path / "err"
+    parent = subprocess.Popen(  # noqa: S603
+        [
+            sys.executable,
+            "-c",
+            LISTENER_PARENT,
+            str(err),
+            str(MODULE),
+            "listen",
+            "--port-file",
+            str(port_file),
+            "--log",
+            str(log),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    child = None
+    try:
+        child = int(parent.stdout.readline())
+        deadline = time.monotonic() + 20
+        while not port_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert port_file.exists()
+        time.sleep(0.5)
+        assert _running(child), "the listener must stay while its parent lives"
+        parent.kill()
+        parent.wait(timeout=10)
+        deadline = time.monotonic() + 2
+        while _running(child) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert not _running(child), "the listener outlived its parent by 2 s"
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=10)
+        parent.stdout.close()
+        if child is not None and _running(child):  # only ever the listener this test spawned
+            if str(port_file).encode() in Path(f"/proc/{child}/cmdline").read_bytes():
+                os.kill(child, signal.SIGKILL)
+    assert err.read_text() == "parent gone\n"
+    assert oc.connection_count(log) == 0
+
+
+def test_the_listener_exits_0_on_a_new_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """MR 2: the parent recorded at start is compared on each accept timeout; exit 0."""
+    parents = iter([4000, 4000, 4000])
+    monkeypatch.setattr(oc.os, "getppid", lambda: next(parents, 1))
+    monkeypatch.setattr(oc.signal, "signal", lambda *_: None)
+    started = time.monotonic()
+    log = tmp_path / "conn.log"
+    assert oc.serve(tmp_path / "port", log, stop_after=10) == 0
+    assert time.monotonic() - started < 5
+    assert capsys.readouterr().err == "parent gone\n"
+    assert oc.connection_count(log) == 0
+
+
 # ---------------------------------------------------------------------------------------------
 # The shell script's refusals (all before any install)
 
@@ -1186,6 +1266,63 @@ def test_the_sandbox_catches_a_fall_through(tmp_path: Path) -> None:
     assert "openrig-compat 0.7.21: SETUP-ERROR" in proc.stdout
     evidence = list((tmp_path / "fake-home/.local/state/hacf/evidence").iterdir())
     assert len(evidence) == 1 and str(evidence[0]) in proc.stdout
+
+
+# A stub npm that records the run dir's owner record and what its listener pid runs.
+OWNER_PROBE = """#!{python}
+import json, os
+from pathlib import Path
+state = Path(os.environ["TMPDIR"]).parent / "state"
+record = json.loads((state / "owner.json").read_text())
+listener = Path("/proc", str(record.get("listener_pid", 0)), "cmdline")
+seen = {{
+    "record": record,
+    "caller": os.getppid(),
+    "listener": listener.read_bytes().decode().split(chr(0)) if listener.exists() else [],
+    "state": sorted(p.name for p in state.iterdir()),
+    "run_dir": str(state.parent),
+}}
+Path({out!r}).write_text(json.dumps(seen))
+raise SystemExit(1)
+"""
+
+
+def test_a_run_records_its_owner_and_listener(tmp_path: Path) -> None:
+    """MR 1: state/owner.json names the script's pid, its start and its listener."""
+    ondisk, bins = tmp_path / "ondisk", tmp_path / "probe-bin"
+    ondisk.mkdir()
+    bins.mkdir()
+    out = tmp_path / "owner-seen.json"
+    npm = bins / "npm"
+    npm.write_text(OWNER_PROBE.format(python=sys.executable, out=str(out)), encoding="utf-8")
+    npm.chmod(0o755)
+    path = f"{bins}:{tmp_path / 'fallthrough-stubs'}:/usr/bin:/bin"
+    proc = _run_script(["0.7.21"], str(ondisk), tmp_path, {"PATH": path})
+    assert proc.returncode == 2, proc.stderr
+    seen = json.loads(out.read_text())
+    record = seen["record"]
+    assert set(record) == {"pid", "started_at", "listener_pid"}
+    assert record["pid"] == seen["caller"]
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", record["started_at"])
+    assert any(a.endswith("/openrig_compat.py") for a in seen["listener"])
+    assert "listen" in seen["listener"]
+    assert f"{seen['run_dir']}/state/port" in seen["listener"]
+    assert "owner.json.tmp" not in seen["state"]
+    assert Path(seen["run_dir"]).parent == ondisk.resolve()
+    assert re.fullmatch(r"openrig-compat-[A-Za-z0-9]{6}", Path(seen["run_dir"]).name)
+    assert not Path(seen["run_dir"]).exists()
+
+
+def test_the_owner_record_comes_before_anything_else_in_the_run_dir() -> None:
+    """MR 1: written right after mktemp and again after the spawn, through a rename."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    made = text.index("T=$(mktemp -d")
+    first = text.index("\nowner_record\n")
+    spawn = text.index('--log "$T/state/connections.log" &')
+    second = text.index('\nowner_record "$listener_pid"\n')
+    assert made < first < text.index("--accept: the tree's HEAD") < spawn < second
+    assert second < text.index("for _ in $(seq 1 100)")
+    assert 'mv -f -- "$T/state/owner.json.tmp" "$T/state/owner.json"' in text
 
 
 def test_the_script_runs_under_the_host_lock(tmp_path: Path) -> None:

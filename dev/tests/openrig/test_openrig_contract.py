@@ -105,7 +105,7 @@ def test_malformed_contract_falls_back(tmp_path: Path, case: str) -> None:
         path.write_text(CASES[case], encoding="utf-8")
     contract = hyper_openrig.load_contract(path)
     _assert_fallback(contract, path)
-    assert hyper_openrig.contract_rig_version(contract) == "0.7.23"
+    assert hyper_openrig.contract_rig_version(contract) == "0.7.24"
 
 
 def test_missing_contract_falls_back(tmp_path: Path) -> None:
@@ -209,11 +209,11 @@ def test_watcher_entry_does_not_move_rig_version(tmp_path: Path) -> None:
 
 
 def test_shipped_contract() -> None:
-    """The shipped file parses as `file`: four person entries and one range."""
+    """The shipped file parses as `file`: five person entries and one range."""
     contract = hyper_openrig.load_contract(SHIPPED)
     assert contract.source == "file" and contract.warning is None
     people = [e for e in contract.accepted if e.accepted_by == "person"]
-    assert [e.version for e in people] == ["0.6.13", "0.7.16", "0.7.21", "0.7.23"]
+    assert [e.version for e in people] == ["0.6.13", "0.7.16", "0.7.21", "0.7.23", "0.7.24"]
     assert all(e.integrity.startswith("sha512-") and e.verdict for e in people)
     assert contract.range == ((0, 7, 16),)
     assert contract.probe_schema == 1
@@ -235,9 +235,9 @@ def test_rig_version_is_highest_person_entry() -> None:
     assert hyper_openrig.ACCEPTED_RIG_VERSIONS == hyper_openrig.load_contract(SHIPPED).versions
 
 
-def test_the_0_7_23_baseline_holds_the_agy_harness_and_a_review() -> None:
+def _assert_reviewed_baseline(version: str) -> None:
     """R156: the accepted baseline has harness/agy/ and a REVIEW.md, and names no private path."""
-    base = REPO / "dev" / "tests" / "fixtures" / "openrig-compat" / "0.7.23"
+    base = REPO / "dev" / "tests" / "fixtures" / "openrig-compat" / version
     assert (base / "harness" / "agy").is_dir() and any((base / "harness" / "agy").iterdir())
     assert (base / "REVIEW.md").is_file()
     roots = ["/" + "home/", "/" + "Users/"]  # built here: this file must hold neither
@@ -251,6 +251,16 @@ def test_the_0_7_23_baseline_holds_the_agy_harness_and_a_review() -> None:
         if needle.encode() in p.read_bytes()
     ]
     assert hits == []
+
+
+def test_the_0_7_23_baseline_holds_the_agy_harness_and_a_review() -> None:
+    """The 0.7.23 baseline is complete and private-path free (R156)."""
+    _assert_reviewed_baseline("0.7.23")
+
+
+def test_the_0_7_24_baseline_holds_the_agy_harness_and_a_review() -> None:
+    """The 0.7.24 baseline is complete and private-path free (R156, P100)."""
+    _assert_reviewed_baseline("0.7.24")
 
 
 def _show(*args: str) -> subprocess.CompletedProcess:
@@ -267,7 +277,7 @@ def _show(*args: str) -> subprocess.CompletedProcess:
 
 
 MARKER = "HACF_COMPAT_WATCHER_VERSIONS"
-PERSON_PINNED = ["0.6.13", "0.7.16", "0.7.21", "0.7.23"]
+PERSON_PINNED = ["0.6.13", "0.7.16", "0.7.21", "0.7.23", "0.7.24"]
 
 
 def _version_key(version: str) -> tuple[int, ...]:
@@ -334,7 +344,7 @@ def test_check_accepted_cases() -> None:
     assert check_accepted([*PEOPLE, _entry("0.7.22", "watcher")], "0.7.22,0.7.22") is not None
     assert check_accepted([*PEOPLE[:2], _entry("0.7.21", "watcher")], "0.7.21") is not None
     assert check_accepted([*PEOPLE, _entry("0.7.22", "person")], "0.7.22") is not None
-    assert highest_person(PERSON_PINNED) == "0.7.23"
+    assert highest_person(PERSON_PINNED) == "0.7.24"
 
 
 def test_contract_show() -> None:
@@ -346,8 +356,9 @@ def test_contract_show() -> None:
         assert f"  {version}  accepted_by: person" in proc.stdout
     assert "verdict: openrig-compat-0.7.21-20261123T075801Z" in proc.stdout
     assert "verdict: openrig-compat-0.7.23-20261126T044840Z" in proc.stdout
+    assert "verdict: openrig-compat-0.7.24-20261127T143203Z" in proc.stdout
     assert "range: 0.7.x (x >= 16)" in proc.stdout
-    assert "RIG_VERSION: 0.7.23" in proc.stdout
+    assert "RIG_VERSION: 0.7.24" in proc.stdout
 
     proc = _show("--json")
     assert proc.returncode == 0, proc.stderr

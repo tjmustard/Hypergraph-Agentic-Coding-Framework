@@ -1,0 +1,155 @@
+{
+  "date": "2026-11-27T16:24:20Z",
+  "hacf_tree": "4dcfd98c5c50d96ddeec7256212822a8369e3e41",
+  "harness_absent": [],
+  "harnesses": [
+    "agy"
+  ],
+  "help_commands": [
+    {
+      "flags": [
+        "--workspace"
+      ],
+      "words": [
+        "proof"
+      ]
+    },
+    {
+      "flags": [
+        "--artifact-type",
+        "--candidate-sha",
+        "--file",
+        "--json",
+        "--mission",
+        "--money-evidence",
+        "--name",
+        "--verdict"
+      ],
+      "words": [
+        "proof",
+        "add"
+      ]
+    },
+    {
+      "flags": [
+        "--workspace"
+      ],
+      "words": [
+        "scope"
+      ]
+    },
+    {
+      "flags": [
+        "--json",
+        "--mission"
+      ],
+      "words": [
+        "scope",
+        "audit"
+      ]
+    },
+    {
+      "flags": [],
+      "words": [
+        "scope",
+        "slice"
+      ]
+    },
+    {
+      "flags": [
+        "--json",
+        "--mission",
+        "--note",
+        "--reason"
+      ],
+      "words": [
+        "scope",
+        "slice",
+        "close"
+      ]
+    },
+    {
+      "flags": [
+        "--depends-on",
+        "--intent",
+        "--json",
+        "--title"
+      ],
+      "words": [
+        "scope",
+        "slice",
+        "create"
+      ]
+    },
+    {
+      "flags": [
+        "--json",
+        "--mission",
+        "--state"
+      ],
+      "words": [
+        "scope",
+        "slice",
+        "ls"
+      ]
+    },
+    {
+      "flags": [
+        "--add",
+        "--json",
+        "--mission"
+      ],
+      "words": [
+        "scope",
+        "slice",
+        "progress"
+      ]
+    }
+  ],
+  "integrity": "sha512-NstGokw+if8X01nFsFUqQs/OM3Ua7JS2wRi2fWROFbLvKEO64kYDFhagkyTLyUaI3+2ICoGpLevhIqvcedbfSQ==",
+  "rig_version_output": "0.7.24 (c03db5d2)",
+  "version": "0.7.24",
+  "watched": [
+    [
+      "lifecycle-manifest.js",
+      "daemon/dist/domain/lifecycle-manifest.js",
+      null
+    ],
+    [
+      "mission-composition.js",
+      "dist/lib/scope/mission-composition.js",
+      null
+    ],
+    [
+      "scope-audit.js",
+      "dist/lib/scope/scope-audit.js",
+      null
+    ],
+    [
+      "scaffold-placeholder.js",
+      "dist/lib/scope/scaffold-placeholder.js",
+      null
+    ],
+    [
+      "missionManifest",
+      "dist/commands/scope.js",
+      "missionManifest"
+    ],
+    [
+      "SLICE_MANIFEST",
+      "dist/commands/scope.js",
+      "SLICE_MANIFEST"
+    ],
+    [
+      "PROJECT_MANIFEST",
+      "daemon/dist/domain/workspace/default-workspace-scaffold.js",
+      "PROJECT_MANIFEST"
+    ],
+    [
+      "WORKSPACE_CATALOG",
+      "daemon/dist/domain/workspace/default-workspace-scaffold.js",
+      "WORKSPACE_CATALOG"
+    ]
+  ],
+  "watched_missing": []
+}

@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "rig",
+    "scope",
+    "--workspace",
+    "<T><TMP>/rig-workspace/projects/nested-repo",
+    "slice",
+    "ls",
+    "--state",
+    "all",
+    "--json"
+  ],
+  "exit_code": 0,
+  "git_status_after": [],
+  "stderr": "",
+  "stdout": "{\n  \"ok\": true,\n  \"count\": 1,\n  \"slices\": [\n    {\n      \"mission\": \"release-0.6.0\",\n      \"name\": \"01-nested-spike\",\n      \"nn\": 1,\n      \"slug\": \"nested-spike\",\n      \"id\": \"OPR.0.6.0.1\",\n      \"status\": \"placeholder\",\n      \"path\": \"<T><TMP>/rig-workspace/projects/nested-repo/missions/release-0.6.0/slices/01-nested-spike\"\n    }\n  ]\n}\n",
+  "step": "nested-slice-ls"
+}

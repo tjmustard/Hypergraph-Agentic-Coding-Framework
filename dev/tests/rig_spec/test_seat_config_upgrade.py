@@ -47,6 +47,8 @@ ALWAYS = (
     "bin/seat-config-upgrade.py",
     "bin/seat-config.py",
     "bin/progress-report.py",
+    "bin/hacf-host.py",
+    "host.example.yml",
 )
 LEAD, EXEC = f"orch-lead@{RIG}", f"build-execute@{RIG}"
 RECORDED = FIXTURES / "rig-ps-full-0.7.21.json"  # a real 0.7.21 record, normalised (R79)

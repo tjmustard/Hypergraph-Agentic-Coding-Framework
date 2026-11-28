@@ -15,6 +15,7 @@ accepted:
   - {version: "0.7.16", integrity: "sha512-rqxFs1JdKjO4c2D8lx8xFWN76OSV72i8qWata0dzVrWdy10zRPnSgY273hImiReyGOAilIMkBNU98Mfv+o2hKQ==", verdict: "release-0.6.1 OPR.0.6.1.9", accepted_by: person}
   - {version: "0.7.21", integrity: "sha512-qMjMZnL+c37q6fhHQ30Py+w3VQFE51U5muG07Qd+oVrNdD0wTShATvuHkKinGYfLOsKV+quOUiS1WSw3sVAe6Q==", verdict: "openrig-compat-0.7.21-20261123T075801Z", accepted_by: person}
   - {version: "0.7.23", integrity: "sha512-qd5EVPk9gdQMOe18g2S0p8/qXXjgupQtu7ZEqLa33e9cTFYLVjZqSQgwoWoTcdGxCFR4mOVVdG0NKMrcT7ILpA==", verdict: "openrig-compat-0.7.23-20261126T044840Z", accepted_by: person}
+  - {version: "0.7.24", integrity: "sha512-NstGokw+if8X01nFsFUqQs/OM3Ua7JS2wRi2fWROFbLvKEO64kYDFhagkyTLyUaI3+2ICoGpLevhIqvcedbfSQ==", verdict: "openrig-compat-0.7.24-20261127T143203Z", accepted_by: person}
 range:
   - {major: 0, minor: 7, min_patch: 16}
 probe: {schema: 1}

@@ -1378,8 +1378,10 @@ def serve(port_file: Path, log: Path, stop_after: float | None = None) -> int:
     """Listen on an ephemeral loopback port; log one line per accepted connection until SIGTERM.
 
     The port is written to port_file once listening. Each connection is logged (and fsynced)
-    before it is closed, so the count survives the listener being stopped.
+    before it is closed, so the count survives the listener being stopped. The listener also
+    exits when its parent is gone (checked on each accept timeout), so a killed run leaves none.
     """
+    parent = os.getppid()
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("127.0.0.1", 0))
@@ -1396,6 +1398,10 @@ def serve(port_file: Path, log: Path, stop_after: float | None = None) -> int:
         try:
             conn, peer = sock.accept()
         except (socket.timeout, InterruptedError):
+            if os.getppid() != parent:
+                # stderr, never the log: every line of the log counts as a connection.
+                print("parent gone", file=sys.stderr, flush=True)
+                break
             continue
         except OSError:
             continue
@@ -2683,6 +2689,9 @@ INSTALLED_RE = re.compile(r"([0-9]+\.[0-9]+\.[0-9]+)(?: \(.*\))?")
 SHA_RE = re.compile(r"[0-9a-f]{40,64}")
 RESULT_FIELDS = ("verdict", "watched", "help", "harness", "baselines")
 ACCEPTED_BRANCH = "refs/heads/swimlane/openrig-accepted"
+# Marks a record whose `help` lists only the baselines with a difference (OPR.99.0.16.16). A record
+# without it listed every compared baseline, so its `help` is never compared as it stands.
+HELP_RULE = "differing"
 
 
 def watch_installed(state: Path, raw: str) -> str:
@@ -2742,7 +2751,8 @@ def comparison_fields(evidence: Path, version: str) -> dict:
     out = {
         "verdict": data["verdict"],
         "watched": sorted(data["watched_diff"]),
-        "help": sorted(data["help_diff"]),
+        # help_diff keeps one key per compared baseline; an empty object means no difference
+        "help": sorted(v for v, d in data["help_diff"].items() if isinstance(d, dict) and d),
         "harness": data.get("harness"),
         "baselines": [data["baseline"], data["person_baseline"]],
     }
@@ -2765,7 +2775,7 @@ def watch_record(state: Path, version: str, outcome: str, evidence: str, final: 
         fields = comparison_fields(Path(evidence), version)
         if outcome != "accepted":
             fields.pop("accept_sha", None)
-        record.update(fields)
+        record.update(fields, help_rule=HELP_RULE)
     except CompatInputError as exc:
         print(f"warning: {exc}", file=sys.stderr)
         _history(state, f"record: {version} without comparison fields")
@@ -2799,6 +2809,22 @@ def _fixed_expectation(worktree: Path, version: str, harnesses: Sequence[str]) -
     return {"verdict": verdict, "watched": [], "help": [], "harness": harness}
 
 
+def _with_current_help(final: dict, version: str) -> dict | None:
+    """A final record with `help` under HELP_RULE; None when it cannot be derived.
+
+    An older record's `help` is re-derived from its evidence dir. Nothing is written.
+    """
+    if "help_rule" in final:
+        return final
+    evidence = final.get("evidence")
+    if not isinstance(evidence, str):
+        return None
+    try:
+        return {**final, "help": comparison_fields(Path(evidence), version)["help"]}
+    except CompatInputError:
+        return None
+
+
 def watch_selftest(
     state: Path, worktree: Path, version: str, evidence: str, rc: int, harnesses: Sequence[str]
 ) -> tuple[str, str]:
@@ -2822,6 +2848,9 @@ def watch_selftest(
     held = _read_record(path)
     if held is not None and not _fields_ok(held):
         held = None
+    replaces = ""
+    if held is not None and "help_rule" not in held:  # recorded under the old rule: absent
+        held, replaces = None, "replaces an expectation recorded under the old help rule; "
     if got is None:
         return "broke", _one_line(f"SETUP-ERROR: {setup}")
     why = f"setup error: {setup}; " if got["verdict"] == "SETUP-ERROR" else ""
@@ -2832,9 +2861,10 @@ def watch_selftest(
 
     def record(source: str, fields: dict) -> tuple[str, str]:
         entry = {k: fields[k] for k in RESULT_FIELDS}
-        write_json(path, {"version": version, **entry, "source": source, "recorded": _utc()})
+        meta = {"help_rule": HELP_RULE, "source": source, "recorded": _utc()}
+        write_json(path, {"version": version, **entry, **meta})
         short = {"watcher-verdict": "watcher", "first-result": "first"}.get(source, source)
-        return f"recorded-{short}", _one_line(f"source={source}; {_stated(entry)}")
+        return f"recorded-{short}", _one_line(f"{replaces}source={source}; {_stated(entry)}")
 
     try:
         fixed = _fixed_expectation(worktree, version, harnesses)
@@ -2851,6 +2881,7 @@ def watch_selftest(
         and final.get("final") is True
         and _fields_ok(final)
         and "FAIL" not in (final["verdict"], final.get("outcome"))
+        and (final := _with_current_help(final, version)) is not None
     ):
         if all(final[k] == got[k] for k in RESULT_FIELDS):
             return record("watcher-verdict", final)
@@ -3016,6 +3047,9 @@ def _request(version: str, rec: dict, installed: str, raw: str, worktree: Path, 
             "",
             f"Requested: @openrig/cli@{version}, from {raw}.",
             f'Condition: "{CONDITION}" The operator decides idleness.',
+            "Coordinated idle point: `python3 <project>/openrig/hacf/bin/hacf-host.py idle-point "
+            f"request --purpose openrig-upgrade:{version}`, then `idle-point wait`, upgrade, then "
+            "`idle-point release`.",
             "HACF status: accepted locally by the watcher only; installed projects reach "
             f"{version} through the range probe until a HACF release lists it.",
             f"Rollback target: {installed}.",

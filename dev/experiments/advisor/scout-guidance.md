@@ -1,0 +1,1 @@
+Search helper: for searches across the repo (finding files, symbols, usages) you may use the `hacf-scout` subagent. It returns paths and line ranges only. Open every line you rely on yourself. Never pass or fail anything on its words.

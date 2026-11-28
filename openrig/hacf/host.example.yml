@@ -1,0 +1,57 @@
+# HACF host config (hacf.host-config/v1): how hacf-host.py runs the HACF teams on one machine.
+#
+# Copy this file to ${XDG_CONFIG_HOME:-~/.config}/hacf/host.yml and edit your copy; HACF never
+# writes it. Every key is optional and shown here at its default; a missing file means all
+# defaults. Check your copy with: python3 hacf-host.py config check
+
+# The format of this file.
+schema: hacf.host-config/v1
+
+# Priority tiers, highest first. An item is a rig name, or a list of rig names of equal rank:
+#   [my-project-hacf, [second-hacf, third-hacf]]
+# Unlisted rigs share one tier below every listed one; empty means all rigs rank equally.
+priority: []
+
+# The project each rig works on, as <rig>: <absolute project root that holds missions/>:
+#   projects:
+#     my-project-hacf: /path/to/project
+# A running rig that is neither here nor in ignore_rigs is "unmapped": it is never parked.
+projects: {}
+
+# Rigs that are never HACF teams. A rig cannot be both here and in projects.
+ignore_rigs: []
+
+# Memory in MB to keep free on top of a heavy job's declared need.
+reserve_mb: 2048
+
+# Minutes the first job in the queue waits before the host is reserved for it.
+reserve_after_minutes: 10
+
+# Estimated memory in MB of one seat, used to estimate what restoring a rig needs.
+seat_ram_mb: 330
+
+# Regular expressions over `ps -eo args` that mark other programs' heavy processes.
+foreign_heavy_patterns: []
+
+# Files that list rigs you have paused, one name per line (absolute paths; ~ is allowed).
+paused_files: []
+
+# Where your questions go, in addition to each project's own routing.
+human:
+  # More queue destinations that reach you.
+  destinations: []
+  # More queue tags that mark a row as a question for you.
+  tags: []
+
+# Parking a rig whose only open work waits on you, and restoring it.
+autopark:
+  # Nothing is parked automatically unless this is true.
+  enabled: false
+  # Minutes a rig must stay eligible before it is parked.
+  grace_minutes: 15
+  # Most times one rig is parked in any 24 hours.
+  max_parks_per_day: 3
+  # Rows with one of these tags are information only and never restore a parked rig.
+  fyi_tags: [hacf:update]
+  # Seconds a restore may take before it counts as failed.
+  restore_timeout_s: 900

@@ -14,6 +14,9 @@ Nor the code-graph runtime (lead ruling P32): the run's controller makes one sho
 CBM_RUNTIME_DIR. xdist workers and subprocesses inherit it, and hyper_codegraph.py keeps a
 caller's value, so no test creates a per-project dir under `$XDG_RUNTIME_DIR/hacf-cbm/`.
 pytest_unconfigure removes the dir by its literal path.
+
+Nor the user's host state: a heavy job a test starts queues its ticket under HACF_HOST_STATE_DIR,
+which `_isolated_host_state` points at a temp dir after the run itself has taken the real lock.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -65,6 +69,9 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 DEV_SCRIPTS_DIR = REPO_ROOT / "dev" / "scripts"
 _HEAVY_LEASE = pytest.StashKey[object]()
+# The test modules that take a heavy lock of their own: each of their tests also gets its own
+# host state and reads no host config of the user's.
+HEAVY_LOCK_TESTS = frozenset({"test_host_gate.py", "test_check_sh.py", "test_gate.py"})
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -149,6 +156,32 @@ def pytest_unconfigure(config: pytest.Config) -> None:
     else:
         os.environ[host_gate.TOKEN_VAR] = inherited
     del config.stash[_HEAVY_LEASE]
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolated_host_state() -> Iterator[None]:
+    """Point HACF_HOST_STATE_DIR at a temp dir for the tests (never for the run's own lease).
+
+    pytest_configure has already taken the real lock by then, and the value is restored before
+    pytest_unconfigure releases it.
+    """
+    state = tempfile.mkdtemp(prefix="hacf-test-host-state-")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("HACF_HOST_STATE_DIR", state)
+        yield
+    shutil.rmtree(state, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_host_per_test(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fresh host state and an empty config dir for each test of HEAVY_LOCK_TESTS."""
+    if request.path.name not in HEAVY_LOCK_TESTS:
+        return
+    tmp_path = request.getfixturevalue("tmp_path")
+    monkeypatch.setenv("HACF_HOST_STATE_DIR", str(tmp_path / "hacf-host-state"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "hacf-xdg-config"))
 
 
 def clean_env(**extra: str) -> dict[str, str]:

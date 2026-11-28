@@ -152,6 +152,16 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# Who owns $T, read by dev/scripts/host_sweep.py: written at once, and again with the listener's pid.
+mkdir -p -- "$T/state"
+started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+owner_record() { # owner_record [<listener pid>]
+    printf '{"pid": %d, "started_at": "%s"%s}\n' "$$" "$started_at" \
+        "${1:+, \"listener_pid\": $1}" >"$T/state/owner.json.tmp" &&
+        mv -f -- "$T/state/owner.json.tmp" "$T/state/owner.json"
+}
+owner_record
+
 # --accept: the tree's HEAD and cleanliness before the run, so the commit is of what was tested.
 start_head="" start_clean=no
 if [[ $accept -eq 1 ]]; then
@@ -192,6 +202,7 @@ uv_cache=${UV_CACHE_DIR:-$(uv cache dir 2>/dev/null || true)}
 # --- The daemon-contact listener ----------------------------------------------------------------
 python3 "$compat" listen --port-file "$T/state/port" --log "$T/state/connections.log" &
 listener_pid=$!
+owner_record "$listener_pid"
 for _ in $(seq 1 100); do
     [[ -s $T/state/port ]] && break
     sleep 0.1

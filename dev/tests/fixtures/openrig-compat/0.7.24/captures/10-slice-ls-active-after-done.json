@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "rig",
+    "scope",
+    "--workspace",
+    "<T><TMP>/repo",
+    "slice",
+    "ls",
+    "--mission",
+    "release-0.6.0",
+    "--state",
+    "active",
+    "--json"
+  ],
+  "exit_code": 0,
+  "git_status_after": [],
+  "stderr": "",
+  "stdout": "{\n  \"ok\": true,\n  \"count\": 0,\n  \"slices\": []\n}\n",
+  "step": "slice-ls-active-after-done"
+}

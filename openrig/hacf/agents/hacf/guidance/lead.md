@@ -163,7 +163,19 @@ dispatched **by slice**, in the order of the mission's execution checklist
 `missions/<mission>/slices/<NN-slug>/SPEC.md`. Check `hyper_spec.py status --json` shows every
 `depends_on` slice `audited` before you dispatch the next.
 
+**Heavy commands** (pytest, check.sh, compat, model runs) share the machine:
+
+- run each through `python3 "<Rig spec>/bin/hacf-host.py" job run --job <name> [--ram-mb N] [--gpu] -- …`,
+  else `python3 "<project root>/openrig/hacf/bin/hacf-host.py" …` when the Rig spec has no `bin/hacf-host.py`;
+- Exit 75 means "busy, retry", never a verdict (OPS.md, "Host operations").
+
 ### Dispatching a slice
+
+Before you hand off a **new** slice, run
+`python3 "<Rig spec>/bin/hacf-host.py" idle-point status --json` (the project's copy when the Rig
+spec has none, as above). While one is in force, don't hand off: tell the person or operator the
+slice is waiting on the drain, and wait. A slice already in flight finishes, its oracle and
+check.sh included.
 
 Before each execute handoff, run `python3 .agents/scripts/hyper_spec.py lint --mission missions/<mission> --min-confidence 9`. It must exit 0: a
 compiled slice that records no score, or less than 9/10, goes back to resolve, never to the

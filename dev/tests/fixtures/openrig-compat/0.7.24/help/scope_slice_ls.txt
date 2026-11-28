@@ -1,0 +1,19 @@
+Usage: rig scope slice ls [options]
+
+List slices in a mission (or across all missions)
+
+Options:
+  --mission <name>  Restrict to a single mission
+  --state <state>   Filter: active (in flight, blocked included) | shipped
+                    (delivered in place: shipped or done) | closed (in closed/,
+                    or superseded, retired or closed in place) | all (default:
+                    "active")
+  --json            Machine-readable output
+  -h, --help        display help for command
+
+Workspace: the parent option --workspace selects the missions root this command reads.
+  rig scope --workspace <project root> slice ls ...
+A project root uses its project.yaml missions.root, else its missions/ folder; a
+folder named missions is used as is. Use it for a catalog project, for example
+$(rig config get workspace.projects_root)/<project>. Without --workspace,
+OPENRIG_WORK_ROOT applies, then the configured workspace.slices_root.

@@ -1815,3 +1815,149 @@ def test_session_in_two_sources_is_read_once(world: World) -> None:
     _code, after = run_window(world)
     for key in ("sources", "seats", "slices", "unknowns", "context"):
         assert after[key] == before[key], key
+
+
+# ------------------------------------------------------------------------- advisor (OPR.99.0.16.12)
+# R216, R218, P98: advisor iterations in their own columns, helpers split by agent type, the
+# client-cost residual, and `unknown` (never 0) for what cannot be read.
+
+ADVISOR_PRICES = FIXTURE_PRICES + (
+    "  m-adv: {fresh_in: 5000000, cache_write: 0, cache_read: 0, output: 7000000}\n"
+)
+COST_COLUMNS = ("advisor_fresh_in", "advisor_cache_write", "advisor_cache_read", "advisor_output")
+
+
+def advised_line(msg_id: str, model: str = "m-adv", field: bool = True, calls: int = 1) -> str:
+    """A seat record (10 in, 2 out) with advisor iterations of 3 in and 4 out each."""
+    line = json.loads(
+        usage_line("2026-11-01T12:00:00.000Z", msg_id, f"req-{msg_id}", fresh=10, out=2)
+    )
+    if calls:
+        call = {"type": "advisor_message", "model": model, "input_tokens": 3, "output_tokens": 4}
+        line["message"]["usage"]["iterations"] = [{"type": "message", "input_tokens": 10}]
+        line["message"]["usage"]["iterations"] += [call] * calls
+    if field:
+        line["advisorModel"] = "claude-opus-5-5"
+    return json.dumps(line)
+
+
+def advisor_card(world: World, lines: list[str], *extra: str, sub: list[str] = ()) -> dict:
+    """A priced scorecard where seat b's transcript holds `lines`."""
+    build_db(world)
+    write_b(world, lines, sub=list(sub))
+    prices = str(write_prices(world, ADVISOR_PRICES))
+    code, card = run_window(world, "--prices", prices, *extra)
+    assert code == 0
+    return card
+
+
+def b_entry(card: dict) -> dict:
+    """Seat b's slice entry."""
+    return seat_slices(card, "b@hacf")["OPR.9.1.2"]
+
+
+def test_advisor_iterations_have_their_own_columns_and_rate(world: World) -> None:
+    """The advisor's four counts, priced at its model's rate, never in the seat's columns."""
+    first = advised_line("msg-v1", calls=0)
+    # the iterations may arrive only on a later line of the same message
+    entry = b_entry(advisor_card(world, [first, advised_line("msg-v1"), advised_line("msg-v2")]))
+    assert [entry[key] for key in COST_COLUMNS] == [6, 0, 0, 8]
+    assert entry["advisor_tokens"] == 14
+    assert entry["advisor_usd"] == 6 * 5 + 8 * 7
+    assert entry["fresh_in"] == 20 and entry["output"] == 4 and entry["usd"] == 2 * 30.0
+    assert list(entry["usage_by_model"]) == ["m-1"]
+    assert entry["advisor_model_field_records"] == 2
+
+
+def test_advisor_model_without_a_price_is_null(world: World) -> None:
+    """An unpriced advisor model gives advisor_usd null and a reason, never zero."""
+    card = advisor_card(world, [advised_line("msg-v1", model="m-9")])
+    assert b_entry(card)["advisor_usd"] is None and b_entry(card)["usd"] == 30.0
+    assert any("advisor" in reason and "m-9" in reason for reason in card["unknowns"])
+
+
+def test_record_field_alone_is_zero_not_unknown(world: World) -> None:
+    """P98: the field marks nothing as configured; zero iterations are 0 tokens."""
+    entry = b_entry(advisor_card(world, [advised_line("msg-v1", calls=0)]))
+    assert entry["advisor_tokens"] == 0 and entry["advisor_model_field_records"] == 1
+
+
+@pytest.mark.parametrize("shape", ['["sb"]', '{"sessions": ["sb"]}'])
+def test_configured_without_iterations_is_unknown(world: World, shape: str) -> None:
+    """A session the runner configured, with no iterations anywhere, has unknown tokens."""
+    named = world.tmp / "configured.json"
+    named.write_text(shape)
+    card = advisor_card(
+        world, [advised_line("msg-v1", calls=0)], "--advisor-configured-json", str(named)
+    )
+    entry = b_entry(card)
+    assert entry["advisor_tokens"] == "unknown" and entry["advisor_usd"] is None
+    assert entry["advisor_fresh_in"] == "unknown"
+
+
+def test_helper_subagents_are_split(world: World) -> None:
+    """meta.json's agentType splits subagent usage; hacf-scout gets helper_* columns."""
+    build_db(world)
+    write_b(
+        world,
+        [advised_line("msg-v1", calls=0, field=False)],
+        sub=[
+            usage_line("2026-11-01T13:00:00.000Z", "msg-h", "req-h", fresh=20, out=4, model="m-2")
+        ],
+    )
+    meta = world.projects / "proj-b" / "sb" / "subagents" / "agent-1.meta.json"
+    meta.write_text(
+        json.dumps({"agentType": "hacf-scout", "model": "m-2", "description": SENTINEL})
+    )
+    code, card = run_window(world, "--prices", str(write_prices(world)))
+    assert code == 0
+    entry = b_entry(card)
+    assert (entry["helper_fresh_in"], entry["helper_output"], entry["helper_tokens"]) == (20, 4, 24)
+    assert entry["helper_models"] == ["m-2"] and entry["helper_usd"] == 20 * 3 + 4 * 30
+    assert entry["subagents_by_type"]["hacf-scout"]["turns"] == 1
+    assert entry["subagents_by_type"]["hacf-scout"]["meta_models"] == ["m-2"]
+    assert entry["fresh_in"] == 30, "the seat totals keep their meaning"
+    assert SENTINEL not in json.dumps(card)
+
+
+def test_client_cost_residual_is_an_estimate(world: World) -> None:
+    """Residual = client cost - priced cost, labelled estimate; unknown without a figure."""
+    saved = world.tmp / "cost.json"
+    rows = [
+        {"seatSession": "b@hacf", "costUsd": value, "window": {"nativeSessionId": "sb"}}
+        for value in (50.0, 100.0)
+    ]
+    saved.write_text(json.dumps({"seats": rows}))
+    card = advisor_card(world, [advised_line("msg-v1")], "--client-cost-json", str(saved))
+    assert card["client_cost"]["sb"] == {
+        "seat": "b@hacf",
+        "client_usd": 100.0,
+        "priced_usd": 30.0,
+        "advisor_residual_usd": 70.0,
+        "label": "estimate",
+    }
+    other = card["client_cost"]["sa"]
+    assert other["advisor_residual_usd"] == "unknown" and other["client_usd"] == "unknown"
+
+
+def test_residual_without_a_file_is_unknown(world: World) -> None:
+    """With advisor activity and no cost file, the residual is unknown, never 0."""
+    card = advisor_card(world, [advised_line("msg-v1")])
+    assert card["client_cost"]["sb"]["advisor_residual_usd"] == "unknown"
+
+
+def test_no_advisor_columns_without_advisor_evidence(world: World) -> None:
+    """The additions are optional: a plain fixture's scorecard gains no key."""
+    build_db(world)
+    _code, card = run_window(world, "--prices", str(write_prices(world)))
+    text = json.dumps(card)
+    assert "advisor_tokens" not in text and "helper_" not in text and "client_cost" not in text
+
+
+@pytest.mark.parametrize("flag", ["--client-cost-json", "--advisor-configured-json"])
+def test_unreadable_advisor_input_exits_2(world: World, capsys, flag: str) -> None:
+    """A named file that cannot be read is a usage error."""
+    build_db(world)
+    code = cm.main(world.args("--since", SINCE, "--until", UNTIL, flag, str(world.tmp / "none")))
+    assert code == 2 and flag in capsys.readouterr().err
+    assert world.outputs() == []

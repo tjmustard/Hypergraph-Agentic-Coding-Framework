@@ -10,7 +10,10 @@ What it reads, and nothing else:
   columns named in REQUIRED_COLUMNS and the `sessions` columns named in SESSION_COLUMNS are
   selected; never a text column such as `queue_items.body`.
 - from the seats' Claude Code JSONL transcripts: per assistant record only the timestamp, request
-  id, message id, model id and the four `usage` token counts. Never message text.
+  id, message id, model id and the four `usage` token counts; the model and the same four counts
+  of each `usage.iterations` entry of type `advisor_message`; and whether the record carries an
+  `advisorModel` field (its value is not read). Never message text.
+- from a subagent transcript's `<name>.meta.json`: only `agentType` and `model`.
 - `git log` of the repository (commit times, subjects, trailers) and the slices' PROGRESS.md
   `audit_failed` and `blocked` Outcomes lines.
 - only when `--loops-dir <dir>` is given (it has no default): the audit's loop records
@@ -38,6 +41,16 @@ in the window give unknown token totals, never 0.
 OpenRig's `provider_window` samples (the rate-limit windows) carry no session and no tokens by
 OpenRig's design, so they are not a gap. A `context` sample without a session is counted in the
 scorecard's `samples` and never attributed to a session by time.
+
+v0.6.8 (OPR.99.0.16.12), additive and only where there is something to say: a per-seat entry
+with advisor evidence gets `advisor_*` columns (priced at each iteration's own model, never added
+to the seat's columns) and `advisor_model_field_records`; subagents with a meta file are split in
+`subagents_by_type`, and `hacf-scout`'s sums also appear as `helper_*` (both stay inside the
+seat's totals). `--advisor-configured-json <file>` names the sessions the runner configured with
+an advisor: one without any advisor iteration has `unknown` advisor tokens, never 0. The
+`advisorModel` record field never marks a session configured. `--client-cost-json <file>` (saved
+`rig usage cost --json` answers) adds `client_cost`: per session the client's figure minus the
+priced cost, labelled `estimate`, or `unknown`.
 
 Usage:
   collect_metrics.py --since <ISO> --until <ISO> [--label <name>] [options]   one scorecard
@@ -82,6 +95,15 @@ PRICES_SCHEMA = "hacf.prices/v1"
 RATE_KEYS = ("fresh_in", "cache_write", "cache_read", "output")
 UNATTRIBUTED = "unattributed"
 UNKNOWN = "unknown"
+ADVISOR_STEP = "advisor_message"
+HELPER_TYPE = "hacf-scout"
+# column -> usage key, for the advisor_* and helper_* columns
+SPLIT_COLUMNS = {
+    "fresh_in": "input_tokens",
+    "cache_write": "cache_creation_input_tokens",
+    "cache_read": "cache_read_input_tokens",
+    "output": "output_tokens",
+}
 DEFAULT_ADVISOR = "advisor-lead@kernel"
 TARGET_REDUCTION = 0.30
 MIN_N = 3
@@ -451,11 +473,33 @@ def find_transcripts(
     return [main, *subagents]
 
 
+def usage_counts(usage: dict) -> dict[str, int]:
+    """Return the four token counts of a usage mapping; a missing or bad one is 0."""
+    counts = {}
+    for key in USAGE_KEYS:
+        value = usage.get(key)
+        counts[key] = value if isinstance(value, int) and value >= 0 else 0
+    return counts
+
+
+def advisor_steps(usage: dict) -> list[dict]:
+    """Return the model and counts of each `advisor_message` entry of `usage.iterations`."""
+    steps = usage.get("iterations")
+    found = []
+    for step in steps if isinstance(steps, list) else []:
+        if isinstance(step, dict) and step.get("type") == ADVISOR_STEP:
+            model = step.get("model")
+            model = model if isinstance(model, str) else None
+            found.append({"model": model, **usage_counts(step)})
+    return found
+
+
 def read_usage(path: Path, since: datetime, until: datetime, unknowns: list[str]) -> list[dict]:
     """Return the usage records of one transcript inside [since, until).
 
     Only assistant lines with a `message.usage` object count, and only the timestamp, request id,
-    message id, model id and four token counts are kept; nothing else of a line is retained.
+    message id, model id, four token counts, advisor iterations (model and counts) and the
+    presence of an `advisorModel` field are kept; nothing else of a line is retained.
     """
     records: list[dict] = []
     bad = 0
@@ -485,11 +529,13 @@ def read_usage(path: Path, since: datetime, until: datetime, unknowns: list[str]
                 continue
             if not since <= when < until:
                 continue
-            counts = {}
-            for key in USAGE_KEYS:
-                value = usage.get(key)
-                counts[key] = value if isinstance(value, int) and value >= 0 else 0
+            counts = usage_counts(usage)
             model = message.get("model")
+            extra = {}
+            if advisor := advisor_steps(usage):
+                extra["advisor"] = advisor
+            if "advisorModel" in entry:
+                extra["advisor_field"] = True
             records.append(
                 {
                     "ts": when,
@@ -501,6 +547,7 @@ def read_usage(path: Path, since: datetime, until: datetime, unknowns: list[str]
                         if not (isinstance(usage.get(key), int) and usage.get(key) >= 0)
                     ],
                     **counts,
+                    **extra,
                 }
             )
     if bad:
@@ -509,17 +556,44 @@ def read_usage(path: Path, since: datetime, until: datetime, unknowns: list[str]
 
 
 def dedupe(records: list[dict]) -> list[dict]:
-    """Keep one record per (message.id, requestId); records with neither id are all kept."""
-    seen: set[tuple] = set()
-    kept = []
+    """Keep one record per (message.id, requestId); records with neither id are all kept.
+
+    A message's advisor iterations may be on a later line than its first: the kept record takes
+    the longest list, and the `advisorModel` mark of any of its lines.
+    """
+    seen: dict[tuple, int] = {}
+    kept: list[dict] = []
     for record in sorted(records, key=lambda r: r["ts"]):
         key = record["key"]
         if key != (None, None):
             if key in seen:
+                first = dict(kept[seen[key]])
+                if len(record.get("advisor", [])) > len(first.get("advisor", [])):
+                    first["advisor"] = record["advisor"]
+                if record.get("advisor_field"):
+                    first["advisor_field"] = True
+                kept[seen[key]] = first
                 continue
-            seen.add(key)
+            seen[key] = len(kept)
         kept.append(record)
     return kept
+
+
+def agent_meta(transcript: Path) -> dict | None:
+    """Return {agent_type, agent_model} from a subagent transcript's meta file, or None."""
+    try:
+        meta = json.loads(
+            transcript.with_name(f"{transcript.stem}.meta.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
+    if not isinstance(meta, dict) or not isinstance(meta.get("agentType"), str):
+        return None
+    model = meta.get("model")
+    return {
+        "agent_type": meta["agentType"],
+        "agent_model": model if isinstance(model, str) else None,
+    }
 
 
 def turn_context(record: dict) -> int:
@@ -779,6 +853,77 @@ def record_usd(record: dict, model_prices: dict) -> float:
     ) / 1_000_000
 
 
+# --------------------------------------------------------------------------- runner inputs
+
+
+def read_input(flag: str, path: Path) -> object:
+    """Return a runner input file's JSON.
+
+    Raises:
+        UsageError: naming the flag when the file cannot be read or is not JSON.
+    """
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise UsageError(f"cannot read {flag} {path}: {type(exc).__name__}") from None
+
+
+def load_configured(path: Path) -> set[str]:
+    """Return the session ids of --advisor-configured-json: a list, or {"sessions": [...]}.
+
+    Raises:
+        UsageError: when the file is not one of the two shapes.
+    """
+    data = read_input("--advisor-configured-json", path)
+    if isinstance(data, dict):
+        data = data.get("sessions")
+    if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
+        raise UsageError("malformed --advisor-configured-json: want a list of session ids")
+    return set(data)
+
+
+def load_client_costs(path: Path) -> dict[str, tuple[str, float]]:
+    """Return {session id: (seat, highest costUsd)} from saved `rig usage cost --json` answers.
+
+    The file holds one answer ({"seats": [...]}) or a list of them. A row without a number is
+    left out, so its session reads `unknown`.
+
+    Raises:
+        UsageError: when the file holds neither shape.
+    """
+    data = read_input("--client-cost-json", path)
+    answers = data if isinstance(data, list) else [data]
+    if not all(isinstance(a, dict) and isinstance(a.get("seats"), list) for a in answers):
+        raise UsageError('malformed --client-cost-json: want {"seats": [...]} answers')
+    costs: dict[str, tuple[str, float]] = {}
+    for row in (row for answer in answers for row in answer["seats"]):
+        if not isinstance(row, dict):
+            continue
+        value, window = row.get("costUsd"), row.get("window")
+        session = window.get("nativeSessionId") if isinstance(window, dict) else None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if isinstance(session, str) and value >= costs.get(session, ("", 0.0))[1]:
+            costs[session] = (str(row.get("seatSession")), float(value))
+    return costs
+
+
+def client_cost_entry(
+    seat: str, session_id: str, records: list[dict], costs: dict | None, prices: dict | None
+) -> dict:
+    """Return one session's client figure, priced figure and their difference, an estimate."""
+    client = costs.get(session_id, (None, None))[1] if costs is not None else None
+    priced = priced_sum(records, prices)[0] if prices is not None and records else None
+    known = client is not None and priced is not None
+    return {
+        "seat": seat,
+        "client_usd": UNKNOWN if client is None else client,
+        "priced_usd": UNKNOWN if priced is None else priced,
+        "advisor_residual_usd": round(client - priced, 6) if known else UNKNOWN,
+        "label": "estimate",
+    }
+
+
 # --------------------------------------------------------------------------- scorecard
 
 
@@ -838,7 +983,82 @@ def seat_numbers(
             entry["usd"] = round(
                 sum((record_usd(r, prices[r["model"] or UNKNOWN]) for r in priced), 0.0), 6
             )
+    entry.update(advisor_columns(records, prices, reasons, where))
+    entry.update(subagent_columns(records, prices))
     return entry
+
+
+def priced_sum(records: list[dict], prices: dict[str, dict]) -> tuple[float | None, list[str]]:
+    """Return the dollars of records at their own models' rates, else None and the models."""
+    priced = [r for r in records if not zero_token(r)]
+    missing = sorted({(r["model"] or UNKNOWN) for r in priced} - set(prices))
+    if missing:
+        return None, missing
+    usd = sum((record_usd(r, prices[r["model"] or UNKNOWN]) for r in priced), 0.0)
+    return round(usd, 6), []
+
+
+def split_sums(prefix: str, records: list[dict]) -> dict:
+    """Return the `<prefix>_*` token columns and `<prefix>_tokens` of a list of records."""
+    sums = {
+        f"{prefix}_{column}": sum(r[key] for r in records) for column, key in SPLIT_COLUMNS.items()
+    }
+    sums[f"{prefix}_tokens"] = sum(sums.values())
+    return sums
+
+
+def advisor_columns(
+    records: list[dict], prices: dict[str, dict] | None, reasons: list[str] | None, where: str
+) -> dict:
+    """Return the advisor_* columns of an entry, or nothing without any advisor evidence.
+
+    A record of a session the runner configured, which has no advisor iteration anywhere, makes
+    the token columns `unknown` and advisor_usd null.
+    """
+    steps = [step for r in records for step in r.get("advisor", [])]
+    fields = sum(1 for r in records if r.get("advisor_field"))
+    unread = any(r.get("advisor_unread") for r in records)
+    if not (steps or fields or unread):
+        return {}
+    columns = split_sums("advisor", steps)
+    if unread:
+        columns = {name: UNKNOWN for name in columns}
+    columns["advisor_model_field_records"] = fields
+    if prices is not None:
+        usd, missing = (None, []) if unread else priced_sum(steps, prices)
+        columns["advisor_usd"] = usd
+        if reasons is not None and (missing or unread):
+            why = f"no price for {', '.join(missing)}" if missing else "no advisor iterations"
+            reasons.append(f"{where}: advisor usd unknown: {why}")
+    return columns
+
+
+def subagent_columns(records: list[dict], prices: dict[str, dict] | None) -> dict:
+    """Return `subagents_by_type` and the `helper_*` columns, or nothing without a meta file."""
+    by_type: dict[str, list[dict]] = {}
+    for record in records:
+        if "agent_type" in record:
+            by_type.setdefault(record["agent_type"], []).append(record)
+    if not by_type:
+        return {}
+    split = {}
+    for kind, found in sorted(by_type.items()):
+        slot = split_sums("sum", found)
+        slot = {name.removeprefix("sum_"): value for name, value in slot.items()}
+        slot["turns"] = len(found)
+        slot["models"] = sorted({r["model"] for r in found if r["model"]})
+        slot["meta_models"] = sorted({r["agent_model"] for r in found if r.get("agent_model")})
+        if prices is not None:
+            slot["usd"] = priced_sum(found, prices)[0]
+        split[kind] = slot
+    columns: dict = {"subagents_by_type": split}
+    if HELPER_TYPE in by_type:
+        helper = split[HELPER_TYPE]
+        columns.update(split_sums("helper", by_type[HELPER_TYPE]))
+        columns["helper_models"] = helper["models"]
+        if prices is not None:
+            columns["helper_usd"] = helper["usd"]
+    return columns
 
 
 def cost_weighted(fresh: int, cache_write: int, cache_read: int, output: int) -> float | int:
@@ -873,6 +1093,8 @@ def build_scorecard(
     out_dir: Path,
     loops_dir: Path | None = None,
     prices: dict[str, dict] | None = None,
+    configured: set[str] | None = None,
+    client_costs: dict | None = None,
 ) -> tuple[dict, dict]:
     """Build one hacf.telemetry/v1 scorecard and the side facts the B0/B1 aggregate needs.
 
@@ -905,6 +1127,8 @@ def build_scorecard(
     models: dict[str, set[str]] = {}
     context_out: dict[str, dict] = {}
     context_series: dict[str, dict[str, list[list]]] = {}
+    session_costs: dict[str, dict] = {}
+    advised = False  # any advisor iteration or configured session in the window
     for seat in view.seats:
         records: list[dict] = []
         occupants = []
@@ -919,7 +1143,18 @@ def build_scorecard(
                 read = read_usage(path, since, until, unknowns)
                 if index == 0:  # find_transcripts lists the main transcript first
                     main_records = read
+                elif meta := agent_meta(path):
+                    read = [{**record, **meta} for record in read]
                 found.extend(read)
+            has_steps = any(r.get("advisor") for r in found)
+            if configured and session_id in configured:
+                advised = True
+                if not has_steps:
+                    found = [{**record, "advisor_unread": True} for record in found]
+            advised = advised or has_steps
+            session_costs[session_id] = client_cost_entry(
+                seat, session_id, dedupe(found), client_costs, prices
+            )
             if found:
                 sessions_used.setdefault(seat, set()).add(session_id)
             records.extend(found)
@@ -1038,6 +1273,13 @@ def build_scorecard(
         "slices": slices_out,
         "unknowns": unknowns,
     }
+    if client_costs is not None or advised:  # v0.6.8, additive
+        for session_id, (seat, _usd) in (client_costs or {}).items():
+            if session_id not in session_costs and seat.endswith(f"@{rig}"):
+                session_costs[session_id] = client_cost_entry(
+                    seat, session_id, [], client_costs, prices
+                )
+        scorecard["client_cost"] = dict(sorted(session_costs.items()))
     if label:
         scorecard["label"] = label
     scorecard["context"] = context_out  # v0.6.4, additive: after every v0.6.3 key
@@ -1435,6 +1677,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--context-series", action="store_true")
     parser.add_argument("--loops-dir")
     parser.add_argument("--prices")
+    parser.add_argument("--client-cost-json")
+    parser.add_argument("--advisor-configured-json")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--b0", action="store_true")
     mode.add_argument("--b1", action="store_true")
@@ -1513,6 +1757,11 @@ def run(argv: list[str]) -> int:
     prices = None
     if args.prices:
         prices = load_prices(Path(args.prices))
+    configured = client_costs = None
+    if args.advisor_configured_json:
+        configured = load_configured(Path(args.advisor_configured_json))
+    if args.client_cost_json:
+        client_costs = load_client_costs(Path(args.client_cost_json))
 
     cards = []
     for name, since, until in windows:
@@ -1529,6 +1778,8 @@ def run(argv: list[str]) -> int:
             out_dir,
             loops_dir,
             prices,
+            configured,
+            client_costs,
         )
         path = write_json(out_dir, unique_name(out_dir, label or "window"), card)
         print(path)

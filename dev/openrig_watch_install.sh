@@ -6,9 +6,12 @@
 #
 # Installs the daily OpenRig compat watcher for this user (release-0.6.2 R17, R19); idempotent, and
 # it prints every path it writes or removes. Install:
-#   1. resolves npm, node, uv and the host rig with `command -v` (any missing: exit 1, nothing
-#      written), and --notify-cmd and --failure-notify-cmd when given (unresolvable: exit 1,
-#      nothing written);
+#   1. refuses without a user session bus (DBUS_SESSION_BUS_ADDRESS starting `disabled:`, as in
+#      an OpenRig seat, or no XDG_RUNTIME_DIR: exit 1, nothing written); resolves npm, node and uv
+#      with `command -v` and the host rig as the first executable `rig` on PATH whose realpath is
+#      not a seat shim (`/.openrig/run/seat-bin/`), recording that realpath (any missing, or only a
+#      shim: exit 1, nothing written), and --notify-cmd and --failure-notify-cmd when given
+#      (unresolvable: exit 1, nothing written);
 #   2. renders the host-only env file ~/.config/hacf-openrig-watch/env (PATH, HACF_WATCH_RIG,
 #      HACF_WATCH_WORKTREE, and only when given HACF_WATCH_NOTIFY_CMD, HACF_WATCH_ROW_DESTINATION,
 #      HACF_COMPAT_EVIDENCE_ROOT, HACF_WATCH_UPGRADE_DESTINATION, HACF_WATCH_HARNESSES and
@@ -27,7 +30,8 @@
 #      and fails the install if it fails;
 #   7. only with --row-destination: runs the watcher's --row-check under the unit's environment
 #      (one real queue row) and fails the install if the row does not land.
-# --uninstall disables the timer and removes the three units and the env file, then reloads; it keeps
+# --uninstall makes the same bus check (--dry-run does too, for install and uninstall), then
+# disables the timer and removes the three units and the env file, then reloads; it keeps
 # the state dir, the evidence and the worktree with its branch (they may hold unmerged accept
 # commits) and prints the `git worktree remove` command. --dry-run prints the actions and changes
 # nothing: no file, no systemctl, no git. Linger stays off (the maintainer's choice).
@@ -107,11 +111,19 @@ act() {
     "$@" || die "failed: $what"
 }
 
+# require_user_bus: before any systemctl --user or systemd-run, and before anything is written.
+require_user_bus() {
+    local bus=${DBUS_SESSION_BUS_ADDRESS-unset}
+    [[ $bus != disabled:* && -n ${XDG_RUNTIME_DIR-} ]] ||
+        die "no user session bus (DBUS_SESSION_BUS_ADDRESS=$bus); run the installer from a login shell, not a seat. Nothing was written."
+}
+
 # --- --uninstall -------------------------------------------------------------------------------------
 if [[ $uninstall -eq 1 ]]; then
     [[ -z $worktree$base$notify_cmd$row_dest$evidence_root$upgrade_dest$failure_cmd &&
         ${#harnesses[@]} -eq 0 ]] ||
         die "--uninstall takes no install option (--worktree, --base, --notify-cmd, ...)" 2
+    require_user_bus
     old_worktree="" old_evidence=""
     if [[ -f $env_file ]]; then
         old_worktree=$(sed -n 's/^HACF_WATCH_WORKTREE=//p' -- "$env_file" | head -n 1)
@@ -145,9 +157,11 @@ fi
 worktree=$(realpath -m -- "$worktree")
 [[ $base =~ ^[0-9a-fA-F]{7,64}$|^[A-Za-z0-9._/-]{1,200}$ ]] || die "--base $base is not a commit name" 2
 
+require_user_bus
+
 missing=()
 declare -A found=()
-for tool in npm node uv rig; do
+for tool in npm node uv; do
     path=$(command -v -- "$tool" 2>/dev/null || true)
     if [[ -z $path || $path != /* ]]; then
         missing+=("$tool")
@@ -155,7 +169,23 @@ for tool in npm node uv rig; do
         found[$tool]=$(realpath -s -- "$path")
     fi
 done
+# rig: a seat's shim works only inside that seat, so the unit must never get it.
+shim=""
+IFS=: read -r -a path_dirs <<<"$PATH"
+for dir in "${path_dirs[@]}"; do
+    [[ $dir == /* && -f $dir/rig && -x $dir/rig ]] || continue
+    real=$(realpath -- "$dir/rig") || continue
+    if [[ $real == */.openrig/run/seat-bin/* ]]; then
+        shim=${shim:-$dir/rig}
+        continue
+    fi
+    found[rig]=$real
+    break
+done
+[[ -n ${found[rig]-} || -n $shim ]] || missing+=(rig)
 [[ ${#missing[@]} -eq 0 ]] || die "missing on PATH: ${missing[*]} (nothing written)"
+[[ -n ${found[rig]-} ]] ||
+    die "rig resolves only to a seat-bin shim ($shim); run the installer from a login shell, not a seat. Nothing was written."
 notifier=""
 if [[ -n $notify_cmd ]]; then
     notifier=$(command -v -- "$notify_cmd" 2>/dev/null || true)

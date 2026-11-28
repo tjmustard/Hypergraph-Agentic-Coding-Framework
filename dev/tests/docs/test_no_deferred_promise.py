@@ -1,7 +1,7 @@
-"""No document promises a version for an item v0.6.6 or v0.6.7 deferred (OPR.0.6.6.1, OPR.0.6.7.1).
+"""No document promises a version for an item v0.6.6 to v0.6.8 deferred (OPR.0.6.6.1, .7.1, .8.1).
 
-The README and the CHANGELOG's `[Unreleased]`, `[0.6.7]` and `[0.6.6]` sections may name a deferred
-item but never pair one with a `v0.6.` or `v0.7.` version as a target.
+The README and the CHANGELOG's `[Unreleased]` and `[0.6.8]` to `[0.6.6]` sections may name a
+deferred item but never pair one with a `v0.6.` or `v0.7.` version as a target.
 A "line" here is one bullet (a bullet and its wrapped continuation lines). Released sections
 (`[0.6.5]` and older) are history and are not scanned. Stdlib only; reads files, writes nothing.
 """
@@ -24,6 +24,20 @@ DEFERRED = (
     re.compile(r"community harness", re.IGNORECASE),
     re.compile(r"harness: agy"),
     re.compile(r"no `PROGRESS\.md`"),  # the progress report's "tracked" rule (OPR.99.0.15.7)
+    # v0.6.8's deferrals (OPR.0.6.8.1); each matches the deferral's own words, not the feature's.
+    re.compile(r"old-client queue gap", re.IGNORECASE),  # R190 (OPR.99.0.16.3)
+    re.compile(r"[Aa]uto-park is off by default|[Ll]ive auto-park"),  # R181, R195 (.16.11)
+    re.compile(r"best-effort snapshots"),  # the OpenRig gaps U1-U4 (OPR.99.0.16.11)
+    re.compile(r"dry-run trial"),  # the grace fix's second dry run (OPR.99.0.16.18)
+    re.compile(r"0\.7\.24 has not been run live"),  # OPR.99.0.16.18
+    re.compile(r"closing of its open queue rows|row closing"),  # P109 (OPR.99.0.16.18)
+    re.compile(r"`lastActivityAt` again|grace is not re-read"),  # OPR.99.0.16.18
+    re.compile(r"stopped rig (that has|with) no HACF record"),  # P94 (OPR.99.0.16.11)
+    re.compile(r"[Mm]anual park (or|and) restore"),  # P86 (OPR.99.0.16.8)
+    re.compile(r"park conditions"),  # P106 (OPR.99.0.16.11)
+    re.compile(r"straight to the `job run` process"),  # P89 (OPR.99.0.16.9)
+    re.compile(r"host scripts outside HACF"),  # R192 (OPR.99.0.16.11)
+    re.compile(r"advisor experiment's run"),  # R224 (OPR.99.0.16.13)
 )
 TARGET = re.compile(r"\bv0\.[67]\.\d+")
 
@@ -47,12 +61,12 @@ def _bullets(text: str) -> list[str]:
 
 
 def _changelog_sections() -> str:
-    """The `[Unreleased]`, `[0.6.7]` and `[0.6.6]` sections of the CHANGELOG."""
+    """The `[Unreleased]` and `[0.6.8]` to `[0.6.6]` sections of the CHANGELOG."""
     text = CHANGELOG.read_text(encoding="utf-8")
     start = text.index("## [Unreleased]")
     end = text.index("## [0.6.5]")
     section = text[start:end]
-    assert "## [0.6.7]" in section and "## [0.6.6]" in section
+    assert all(f"## [0.6.{n}]" in section for n in (8, 7, 6))
     return section
 
 

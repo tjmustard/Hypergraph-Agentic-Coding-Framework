@@ -108,7 +108,7 @@ USAGE
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-HACF_VERSION="0.6.7"
+HACF_VERSION="0.6.8"
 DEFAULT_REPO_URL="https://github.com/tjmustard/Hypergraph-Agentic-Coding-Framework.git"
 DEFAULT_BRANCH="main"
 CBM_VERSION="0.12.1"

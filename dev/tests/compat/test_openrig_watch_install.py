@@ -53,10 +53,15 @@ class Host:
         path = [self.stubs, *dict.fromkeys(self.dirs.values())]
         self.path = ":".join(str(p) for p in path) + ":/usr/bin:/bin"
 
-    def run(self, *args: str, rc: int = 0) -> subprocess.CompletedProcess:
-        """Run the script; return the completed process."""
+    def run(
+        self, *args: str, rc: int = 0, env_extra: dict[str, str | None] | None = None
+    ) -> subprocess.CompletedProcess:
+        """Run the script; return the completed process. A None in env_extra unsets the name."""
         env = {"HOME": str(self.home), "PATH": self.path, "STUB_LOG": str(self.log),
-               "STUB_RC": str(rc), "LANG": "C.UTF-8"}  # fmt: skip
+               "STUB_RC": str(rc), "LANG": "C.UTF-8",
+               "XDG_RUNTIME_DIR": str(self.home.parent / "xdg-runtime")}  # fmt: skip
+        env.update(env_extra or {})
+        env = {name: value for name, value in env.items() if value is not None}
         return subprocess.run(["bash", str(INSTALL), *args], capture_output=True, text=True,
                               env=env, timeout=60, check=False)  # fmt: skip
 
@@ -454,3 +459,128 @@ def test_installer_and_watcher_hold_no_host_path() -> None:
         for needle in ("/home/", ".nvm", "hacf-py310"):
             assert needle not in text, (path.name, needle)
         assert account_hits(text.encode(), account_name()) == [], path.name
+
+
+# --- the seat-bin shim and the user bus (OPR.99.0.16.10, MR 4) ------------------------------------
+
+
+def _shim(tmp_path: Path, node: str = "n1") -> Path:
+    """A seat's `rig` shim, under a fake seat-bin dir."""
+    return _exe(tmp_path / "seat" / ".openrig" / "run" / "seat-bin" / node / "rig")
+
+
+def _nothing_written(host: Host) -> None:
+    assert host.files() == [] and host.calls() == [] and not host.worktree.exists()
+    assert list(host.home.iterdir()) == []
+
+
+@pytest.mark.parametrize("dry", [True, False])
+def test_the_seat_bin_shim_is_passed_over(dry: bool, tmp_path: Path) -> None:
+    """The first `rig` on PATH whose realpath is no seat shim is recorded."""
+    host = Host(tmp_path)
+    shim = _shim(tmp_path)
+    linked = tmp_path / "linked-bin"
+    linked.mkdir()
+    (linked / "rig").symlink_to(shim)  # a link to a shim is a shim
+    path = f"{shim.parent}:{linked}:{host.path}"
+    extra = ["--dry-run"] if dry else []
+    proc = host.run(*_install_args(host, *extra), env_extra={"PATH": path})
+    assert proc.returncode == 0, proc.stderr
+    assert f" rig={host.dirs['rig']}/rig " in proc.stdout
+    if not dry:
+        env_file = host.home / ".config/hacf-openrig-watch/env"
+        assert f"HACF_WATCH_RIG={host.dirs['rig']}/rig" in env_file.read_text().splitlines()
+        assert "seat-bin" not in env_file.read_text()
+
+
+def test_the_rigs_realpath_is_recorded(tmp_path: Path) -> None:
+    """A `rig` that is a link is recorded as what it points at."""
+    host = Host(tmp_path, tools=("npm", "node", "uv"))
+    real = _exe(tmp_path / "lib" / "rig-real")
+    host.dirs["rig"].mkdir(parents=True)
+    (host.dirs["rig"] / "rig").symlink_to(real)
+    proc = host.run(*_install_args(host, "--dry-run"))
+    assert proc.returncode == 0, proc.stderr
+    assert f"    HACF_WATCH_RIG={real}" in proc.stdout.splitlines()
+
+
+def test_a_rig_that_is_not_executable_or_a_dir_is_passed_over(tmp_path: Path) -> None:
+    """Only an executable file counts."""
+    host = Host(tmp_path)
+    (tmp_path / "noexec").mkdir()
+    (tmp_path / "noexec" / "rig").write_text("#!/bin/sh\n")
+    (tmp_path / "isdir" / "rig").mkdir(parents=True)
+    path = f"{tmp_path / 'noexec'}:{tmp_path / 'isdir'}:{host.path}"
+    proc = host.run(*_install_args(host, "--dry-run"), env_extra={"PATH": path})
+    assert proc.returncode == 0, proc.stderr
+    assert f"    HACF_WATCH_RIG={host.dirs['rig']}/rig" in proc.stdout.splitlines()
+
+
+@pytest.mark.parametrize("dry", [True, False])
+def test_only_the_shim_refuses_with_nothing_written(dry: bool, tmp_path: Path) -> None:
+    """Every `rig` on PATH is a seat shim: exit 1 naming the first, nothing written."""
+    host = Host(tmp_path, tools=("npm", "node", "uv"))
+    first, second = _shim(tmp_path), _shim(tmp_path, "n2")
+    path = f"{first.parent}:{second.parent}:{host.path}"
+    extra = ["--dry-run"] if dry else []
+    proc = host.run(*_install_args(host, *extra), env_extra={"PATH": path})
+    assert proc.returncode == 1
+    assert proc.stderr == (
+        f"openrig_watch_install.sh: rig resolves only to a seat-bin shim ({first}); run the "
+        "installer from a login shell, not a seat. Nothing was written.\n"
+    )
+    _nothing_written(host)
+
+
+NO_BUS = [
+    ({"DBUS_SESSION_BUS_ADDRESS": "disabled:"}, "disabled:"),
+    ({"DBUS_SESSION_BUS_ADDRESS": "disabled:x=1"}, "disabled:x=1"),
+    ({"XDG_RUNTIME_DIR": None}, "unset"),
+    ({"XDG_RUNTIME_DIR": "", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/x"}, "unix:path=/x"),
+]
+
+
+def _bus_message(value: str) -> str:
+    return (
+        f"openrig_watch_install.sh: no user session bus (DBUS_SESSION_BUS_ADDRESS={value}); run "
+        "the installer from a login shell, not a seat. Nothing was written.\n"
+    )
+
+
+@pytest.mark.parametrize(("env", "value"), NO_BUS)
+@pytest.mark.parametrize("dry", [True, False])
+def test_no_user_bus_refuses_the_install_before_anything(
+    env: dict, value: str, dry: bool, tmp_path: Path
+) -> None:
+    """A disabled bus or no runtime dir: exit 1, no file, no systemctl, no git."""
+    host = Host(tmp_path)
+    extra = ["--dry-run"] if dry else []
+    proc = host.run(*_install_args(host, *extra), env_extra=env)
+    assert proc.returncode == 1 and proc.stderr == _bus_message(value)
+    assert proc.stdout == ""
+    _nothing_written(host)
+
+
+@pytest.mark.parametrize(("env", "value"), NO_BUS)
+@pytest.mark.parametrize("dry", [True, False])
+def test_no_user_bus_refuses_the_uninstall(
+    env: dict, value: str, dry: bool, tmp_path: Path
+) -> None:
+    """--uninstall gets the same check: nothing removed, no systemctl."""
+    host = Host(tmp_path)
+    assert host.run(*_install_args(host)).returncode == 0
+    files, calls = host.files(), host.calls()
+    extra = ["--dry-run"] if dry else []
+    proc = host.run("--uninstall", *extra, env_extra=env)
+    assert proc.returncode == 1 and proc.stderr == _bus_message(value)
+    assert proc.stdout == ""
+    assert host.files() == files and host.calls() == calls
+
+
+def test_a_reachable_bus_address_installs(tmp_path: Path) -> None:
+    """Any address that is not `disabled:` passes."""
+    host = Host(tmp_path)
+    proc = host.run(
+        *_install_args(host), env_extra={"DBUS_SESSION_BUS_ADDRESS": "unix:path=/x/bus"}
+    )
+    assert proc.returncode == 0, proc.stderr
